@@ -14,4 +14,3 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>("Error occurred: " + ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }
-
