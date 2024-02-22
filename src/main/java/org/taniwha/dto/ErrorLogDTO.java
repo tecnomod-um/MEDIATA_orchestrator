@@ -2,7 +2,7 @@ package org.taniwha.dto;
 
 public class ErrorLogDTO {
     private String error;
-    private String info; // Additional info, such as component stack
+    private String info;
     private String timestamp;
 
     public String getError() {

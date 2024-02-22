@@ -1,14 +1,13 @@
 package org.taniwha.controller;
 
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.service.AnalyticsService;
 import org.springframework.beans.factory.annotation.Autowired;
+import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/api/data")
@@ -22,16 +21,22 @@ public class AnalyticsController {
     }
 
     @PostMapping("/process")
-    public ResponseEntity<AnalyticsResponseDTO> processAnalytics(@RequestParam("file") MultipartFile file) {
-        // Check if the file is valid
+    public CompletableFuture<ResponseEntity<AnalyticsResponseDTO>> processAnalytics(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty())
-            return ResponseEntity.badRequest().body(new AnalyticsResponseDTO("File is empty"));
+            return CompletableFuture.completedFuture(ResponseEntity.badRequest().body(new AnalyticsResponseDTO("File is empty")));
         String fileName = file.getOriginalFilename();
-        if (fileName == null || !fileName.endsWith(".csv"))
-            return ResponseEntity.status(415).body(new AnalyticsResponseDTO("Unsupported file type"));
+        if (fileName == null || !fileName.endsWith(".csv")) {
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(415).body(new AnalyticsResponseDTO("Unsupported file type"))
+            );
+        }
 
         System.out.println("Processing file: " + file.getOriginalFilename());
-        AnalyticsResponseDTO response = analyticsService.processAnalytics(file);
-        return ResponseEntity.ok(response);
+        // Call the async service and then apply the response from the service
+        return analyticsService.processAnalytics(file)
+                .thenApply(ResponseEntity::ok)
+                .exceptionally(ex -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(new AnalyticsResponseDTO("Error processing file: " + ex.getMessage())));
     }
+
 }
