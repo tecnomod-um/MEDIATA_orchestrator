@@ -1,10 +1,8 @@
 package org.taniwha.service;
 
-import org.taniwha.service.FeatureStatistics;
 import java.util.List;
 import java.util.Map;
 
-// ContinuousFeatureStatistics class
 public class ContinuousFeatureStatistics extends FeatureStatistics {
     private int cardinality;
     private Map<String, Object> statistics;

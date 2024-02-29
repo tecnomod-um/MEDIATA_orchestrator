@@ -1,8 +1,13 @@
 package org.taniwha.service;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.util.List;
 import java.util.Map;
 
+@Setter
+@Getter
 public class DateFeatureStatistics extends FeatureStatistics {
     private String earliestDate;
     private String latestDate;
@@ -42,75 +47,4 @@ public class DateFeatureStatistics extends FeatureStatistics {
         );
     }
 
-    public String getEarliestDate() {
-        return earliestDate;
-    }
-
-    public void setEarliestDate(String earliestDate) {
-        this.earliestDate = earliestDate;
-    }
-
-    public String getLatestDate() {
-        return latestDate;
-    }
-
-    public void setLatestDate(String latestDate) {
-        this.latestDate = latestDate;
-    }
-
-    public Map<String, Long> getDateHistogram() {
-        return dateHistogram;
-    }
-
-    public void setDateHistogram(Map<String, Long> dateHistogram) {
-        this.dateHistogram = dateHistogram;
-    }
-
-    public String getMean() {
-        return mean;
-    }
-
-    public void setMean(String mean) {
-        this.mean = mean;
-    }
-
-    public List<String> getOutliers() {
-        return outliers;
-    }
-
-    public void setOutliers(List<String> outliers) {
-        this.outliers = outliers;
-    }
-
-    public double getStdDev() {
-        return stdDev;
-    }
-
-    public void setStdDev(double stdDev) {
-        this.stdDev = stdDev;
-    }
-
-    public String getQ1() {
-        return q1;
-    }
-
-    public void setQ1(String q1) {
-        this.q1 = q1;
-    }
-
-    public String getMedian() {
-        return median;
-    }
-
-    public void setMedian(String median) {
-        this.median = median;
-    }
-
-    public String getQ3() {
-        return q3;
-    }
-
-    public void setQ3(String q3) {
-        this.q3 = q3;
-    }
 }
