@@ -11,6 +11,8 @@ import org.taniwha.util.DateUtils;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,6 +20,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -27,31 +30,23 @@ public class AnalyticsService {
     public CompletableFuture<AnalyticsResponseDTO> processAnalytics(MultipartFile file) {
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
-            // Detect the separator char of the csv
             CSVFormat csvFormat = CSVFormat.DEFAULT.withFirstRecordAsHeader().withIgnoreEmptyLines(true).withDelimiter(autoDetectDelimiter(reader));
             CSVParser csvParser = new CSVParser(reader, csvFormat);
 
-            // Data structures for analytics
             Map<String, List<Double>> continuousData = new ConcurrentHashMap<>();
             Map<String, Map<String, Integer>> categoricalData = new ConcurrentHashMap<>();
             Map<String, List<String>> dateData = new ConcurrentHashMap<>();
             Map<String, Long> missingValueCounts = new ConcurrentHashMap<>();
-            Map<String, List<Double>> histograms = new ConcurrentHashMap<>();
-            Map<String, List<Integer>> barCharts = new ConcurrentHashMap<>();
 
-            // Preprocess each record in parallel
             csvParser.getRecords().parallelStream().forEach(record -> processRecord(record, continuousData, categoricalData, dateData, missingValueCounts));
 
-            // Generate analytics
-            Map<String, DateStatistics> dateStatistics = processDateData(dateData, missingValueCounts, csvParser.getRecordNumber());
-            List<FeatureStatistics> continuousStatistics = processContinuousData(continuousData, histograms, missingValueCounts, csvParser.getRecordNumber());
-            List<FeatureStatistics> categoricalStatistics = processCategoricalData(categoricalData, barCharts, missingValueCounts, csvParser.getRecordNumber());
+            List<FeatureStatistics> continuousStatistics = processContinuousData(continuousData, missingValueCounts, csvParser.getRecordNumber());
+            List<FeatureStatistics> categoricalStatistics = processCategoricalData(categoricalData, missingValueCounts, csvParser.getRecordNumber());
+            Map<String, DateFeatureStatistics> dateStatistics = processDateData(dateData, missingValueCounts, csvParser.getRecordNumber());
 
-            // Set analytics to response object
             response.setDateStatistics(dateStatistics);
             response.setContinuousFeatures(continuousStatistics);
             response.setCategoricalFeatures(categoricalStatistics);
-            response.setHistograms(histograms);
             response.setMessage("Data processed successfully.");
         } catch (Exception e) {
             response.setMessage("Error processing file: " + e.getMessage());
@@ -68,9 +63,7 @@ public class AnalyticsService {
         for (char delimiter : delimiters) {
             int count = 0;
             for (char c : line.toCharArray()) {
-                if (c == delimiter) {
-                    count++;
-                }
+                if (c == delimiter) count++;
             }
             if (count > maxCount) {
                 maxCount = count;
@@ -91,6 +84,7 @@ public class AnalyticsService {
                     LocalDateTime parsedDate = parsedDateOpt.get();
                     dateData.computeIfAbsent(column, k -> new CopyOnWriteArrayList<>()).add(parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE));
                 } else if (trimmedValue.matches("-?\\d+(\\.\\d+)?"))
+                    // TODO manually define categories
                     continuousData.computeIfAbsent(column, k -> new CopyOnWriteArrayList<>()).add(Double.parseDouble(trimmedValue));
                 else
                     categoricalData.computeIfAbsent(column, k -> new ConcurrentHashMap<>()).merge(trimmedValue, 1, Integer::sum);
@@ -100,23 +94,34 @@ public class AnalyticsService {
         });
     }
 
+    // Process categorical data for analytics
+    private List<FeatureStatistics> processCategoricalData(Map<String, Map<String, Integer>> categoricalData, Map<String, Long> missingValueCounts, long totalRecords) {
+        List<FeatureStatistics> statisticsList = new ArrayList<>();
+        categoricalData.forEach((key, valueMap) -> {
+            long missingValues = missingValueCounts.getOrDefault(key, 0L);
+            double percentMissing = (double) missingValues / totalRecords * 100;
+            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).toList();
+            Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
+            String mode = modeEntry.getKey();
+            int modeFrequency = modeEntry.getValue();
+            double modePercentage = (double) modeFrequency / totalRecords * 100;
+            String secondMode = sortedEntries.size() > 1 ? sortedEntries.get(1).getKey() : null;
+            Integer secondModeFrequency = secondMode != null ? valueMap.get(secondMode) : null;
+            Double secondModePercentage = secondModeFrequency != null ? (double) secondModeFrequency / totalRecords * 100 : null;
+            CategoricalFeatureStatistics stats = new CategoricalFeatureStatistics(key, totalRecords - missingValues, percentMissing, missingValues, valueMap.size(), mode, modeFrequency, modePercentage, secondMode, secondModeFrequency, secondModePercentage, new HashMap<>(valueMap));
+            statisticsList.add(stats);
+        });
+        return statisticsList;
+    }
+
     // Process continuous data for analytics
-    private List<FeatureStatistics> processContinuousData(Map<String, List<Double>> continuousData, Map<String, List<Double>> histograms, Map<String, Long> missingValueCounts, long totalRecords) {
+    private List<FeatureStatistics> processContinuousData(Map<String, List<Double>> continuousData, Map<String, Long> missingValueCounts, long totalRecords) {
         List<FeatureStatistics> statisticsList = new ArrayList<>();
         continuousData.forEach((key, valueList) -> {
-            // Sort the data for percentile calculation
-            Collections.sort(valueList);
-            double q1 = getPercentile(valueList, 25);
-            double q3 = getPercentile(valueList, 75);
-            double iqr = q3 - q1;
-            double lowerBound = q1 - 1.5 * iqr;
-            double upperBound = q3 + 1.5 * iqr;
-            // Detect outliers
-            List<Double> outliers = valueList.stream().filter(x -> x < lowerBound || x > upperBound).collect(Collectors.toList());
-            // Calculate statistics
+            // frequency distribution analysis
+            List<Double> outliers = identifyOutliers(valueList);
             double mean = valueList.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
-            double variance = valueList.stream().mapToDouble(v -> Math.pow(v - mean, 2)).sum() / valueList.size();
-            double stddev = Math.sqrt(variance);
+            double stddev = Math.sqrt(valueList.stream().mapToDouble(v -> Math.pow(v - mean, 2)).sum() / valueList.size());
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
 
@@ -127,50 +132,64 @@ public class AnalyticsService {
             statistics.put("Mean", mean);
             statistics.put("StdDev", stddev);
             statistics.put("MissingValues", missingValues);
-            statistics.put("Outliers", outliers);
-
-            histograms.put(key, generateHistogram(valueList));
-            statisticsList.add(new FeatureStatistics(statistics, valueList.size(), percentMissing, valueList.size(), missingValues, key, outliers));
-        });
-        return statisticsList;
-    }
-
-    // Process categorical data for analytics
-    private List<FeatureStatistics> processCategoricalData(Map<String, Map<String, Integer>> categoricalData, Map<String, List<Integer>> barCharts, Map<String, Long> missingValueCounts, long totalRecords) {
-        List<FeatureStatistics> statisticsList = new ArrayList<>();
-        categoricalData.forEach((key, valueMap) -> {
-            long missingValues = missingValueCounts.getOrDefault(key, 0L);
-            double percentMissing = (double) missingValues / totalRecords * 100;
-            Map<String, Object> statistics = new HashMap<>(valueMap);
-            statistics.put("MissingValues", missingValues);
-            barCharts.put(key, new ArrayList<>(valueMap.values()));
-            statisticsList.add(new FeatureStatistics(statistics, valueMap.size(), percentMissing, valueMap.values().stream().mapToInt(Integer::intValue).sum(), missingValues, key, new ArrayList<>()));
+            double q1 = getPercentile(valueList, 25);
+            double median = getPercentile(valueList, 50);
+            double q3 = getPercentile(valueList, 75);
+            statistics.put("Qrt1", q1);
+            statistics.put("Median", median);
+            statistics.put("Qrt3", q3);
+            Map<String, Object> histogramInfo = generateHistogram(valueList);
+            statistics.put("Histogram", histogramInfo.get("bins"));
+            statistics.put("BinRanges", histogramInfo.get("binRanges"));
+            statisticsList.add(new ContinuousFeatureStatistics(key, valueList.size(), percentMissing, missingValues, valueList.size(), statistics, outliers));
         });
         return statisticsList;
     }
 
     // Process date data for analytics
-    private Map<String, DateStatistics> processDateData(Map<String, List<String>> dateData, Map<String, Long> missingValueCounts, long totalRecords) {
-        Map<String, DateStatistics> dateStatisticsMap = new HashMap<>();
-        dateData.forEach((key, dateList) -> {
-            LocalDate earliestDate = dateList.stream().map(LocalDate::parse).min(LocalDate::compareTo).orElse(null);
-            LocalDate latestDate = dateList.stream().map(LocalDate::parse).max(LocalDate::compareTo).orElse(null);
+    private Map<String, DateFeatureStatistics> processDateData(Map<String, List<String>> dateData, Map<String, Long> missingValueCounts, long totalRecords) {
+        Map<String, DateFeatureStatistics> dateStatisticsMap = new HashMap<>();
+        dateData.forEach((key, dateStringList) -> {
+            List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
+            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().collect(Collectors.toList());
+            List<Double> outliers = identifyOutliers(dateValues);
+
+            LocalDate earliestDate = dates.stream().min(LocalDate::compareTo).orElse(null);
+            LocalDate latestDate = dates.stream().max(LocalDate::compareTo).orElse(null);
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
-            Map<String, Long> histogram = new HashMap<>();
-            dateList.forEach(date -> histogram.merge(date, 1L, Long::sum));
-            DateStatistics statistics = new DateStatistics(dateList.size(), missingValues, earliestDate != null ? earliestDate.toString() : "N/A", latestDate != null ? latestDate.toString() : "N/A");
-            statistics.setDateHistogram(histogram);
-            dateStatisticsMap.put(key, statistics);
+            double percentMissing = (double) missingValues / totalRecords * 100;
+            double meanEpoch = dateValues.stream().mapToDouble(v -> v).average().orElse(Double.NaN);
+            LocalDate meanDate = LocalDate.ofEpochDay((long) meanEpoch);
+            double medianEpoch = getPercentile(dateValues, 50);
+            LocalDate medianDate = LocalDate.ofEpochDay((long) medianEpoch);
+            double q1Epoch = getPercentile(dateValues, 25);
+            LocalDate q1Date = LocalDate.ofEpochDay((long) q1Epoch);
+            double q3Epoch = getPercentile(dateValues, 75);
+            LocalDate q3Date = LocalDate.ofEpochDay((long) q3Epoch);
+            double stdDevEpoch = Math.sqrt(dateValues.stream().mapToDouble(v -> Math.pow(v - meanEpoch, 2)).sum() / dateValues.size());
+
+            List<String> outlierDates = outliers.stream().map(outlier -> LocalDate.ofEpochDay(outlier.longValue()).format(DateTimeFormatter.ISO_LOCAL_DATE)).collect(Collectors.toList());
+            DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE;
+            dateStatisticsMap.put(key, new DateFeatureStatistics(key, dateStringList.size(), percentMissing, missingValues, earliestDate != null ? earliestDate.format(formatter) : "N/A", latestDate != null ? latestDate.format(formatter) : "N/A", dateStringList.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting())), outlierDates, meanDate.format(formatter), stdDevEpoch, medianDate.format(formatter), q1Date.format(formatter), q3Date.format(formatter)));
         });
         return dateStatisticsMap;
     }
 
     // Generate histogram for continuous data
-    private List<Double> generateHistogram(List<Double> data) {
-        if (data.isEmpty()) return Collections.emptyList();
+    private Map<String, Object> generateHistogram(List<Double> data) {
+        Map<String, Object> histogramInfo = new HashMap<>();
+        if (data.isEmpty()) {
+            histogramInfo.put("bins", Collections.emptyList());
+            histogramInfo.put("binRanges", Collections.emptyList());
+            return histogramInfo;
+        }
         double min = Collections.min(data);
         double max = Collections.max(data);
-        if (max == min) return Collections.singletonList((double) data.size());
+        if (max == min) {
+            histogramInfo.put("bins", Collections.singletonList((double) data.size()));
+            histogramInfo.put("binRanges", Collections.singletonList(String.format("[%f - %f]", min, max)));
+            return histogramInfo;
+        }
         double range = max - min;
         double q1 = getPercentile(data, 25);
         double q3 = getPercentile(data, 75);
@@ -178,13 +197,23 @@ public class AnalyticsService {
         double binWidth = 2.0 * iqr / Math.cbrt(data.size());
         binWidth = Math.max(binWidth, range / 10.0);
         int binCount = (int) Math.ceil(range / binWidth);
-        List<Double> histogram = new ArrayList<>(Collections.nCopies(binCount, 0.0));
+        List<Double> bins = new ArrayList<>(Collections.nCopies(binCount, 0.0));
         for (Double value : data) {
             int binIndex = (int) ((value - min) / binWidth);
             binIndex = Math.min(binIndex, binCount - 1);
-            histogram.set(binIndex, histogram.get(binIndex) + 1);
+            bins.set(binIndex, bins.get(binIndex) + 1);
         }
-        return histogram;
+        DecimalFormat df = new DecimalFormat("0.##", new DecimalFormatSymbols(Locale.US));
+        List<String> binRanges = new ArrayList<>();
+        for (int i = 0; i < binCount; i++) {
+            double binMin = min + (i * binWidth);
+            double binMax = binMin + binWidth;
+            binRanges.add(String.format("[%s - %s]", df.format(binMin), df.format(binMax)));
+        }
+
+        histogramInfo.put("bins", bins);
+        histogramInfo.put("binRanges", binRanges);
+        return histogramInfo;
     }
 
     // Calculate percentile of data
@@ -194,5 +223,15 @@ public class AnalyticsService {
         Collections.sort(sortedData);
         int index = (int) ((percentile / 100.0) * sortedData.size());
         return sortedData.get(Math.min(index, sortedData.size() - 1));
+    }
+
+    private List<Double> identifyOutliers(List<Double> data) {
+        Collections.sort(data);
+        double q1 = getPercentile(data, 25);
+        double q3 = getPercentile(data, 75);
+        double iqr = q3 - q1;
+        double lowerBound = q1 - 1.5 * iqr;
+        double upperBound = q3 + 1.5 * iqr;
+        return data.stream().filter(x -> x < lowerBound || x > upperBound).collect(Collectors.toList());
     }
 }
