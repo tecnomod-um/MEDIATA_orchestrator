@@ -1,30 +1,35 @@
 package org.taniwha.service;
 
+import lombok.Getter;
+
 import java.util.List;
-import java.util.Map;
 
+@Getter
 public class ContinuousFeatureStatistics extends FeatureStatistics {
-    private int cardinality;
-    private Map<String, Object> statistics;
-    private List<Double> outliers;
+    private final int cardinality;
+    private final double min;
+    private final double max;
+    private final double mean;
+    private final double stdDev;
+    private final double qrt1;
+    private final double median;
+    private final double qrt3;
+    private final List<Double> histogram;
+    private final List<String> binRanges;
+    private final List<Double> outliers;
 
-    public ContinuousFeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount, int cardinality, Map<String, Object> statistics, List<Double> outliers) {
+    public ContinuousFeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount, int cardinality, double min, double max, double mean, double stdDev, double qrt1, double median, double qrt3, List<Double> histogramBins, List<String> binRanges, List<Double> outliers) {
         super(featureName, count, percentMissing, missingValuesCount);
         this.cardinality = cardinality;
-        this.statistics = statistics;
+        this.min = min;
+        this.max = max;
+        this.mean = mean;
+        this.stdDev = stdDev;
+        this.qrt1 = qrt1;
+        this.median = median;
+        this.qrt3 = qrt3;
+        this.histogram = histogramBins;
+        this.binRanges = binRanges;
         this.outliers = outliers;
-    }
-
-    @Override
-    public Map<String, Object> getTypeStatistics() {
-        return statistics;
-    }
-
-    public int getCardinality() {
-        return cardinality;
-    }
-
-    public List<Double> getOutliers() {
-        return outliers;
     }
 }

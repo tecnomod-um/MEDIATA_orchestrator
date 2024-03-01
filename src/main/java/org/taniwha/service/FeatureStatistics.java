@@ -2,14 +2,12 @@ package org.taniwha.service;
 
 import lombok.Getter;
 
-import java.util.Map;
-
 @Getter
 public abstract class FeatureStatistics {
-    protected String featureName;
-    protected long count;
-    protected double percentMissing;
-    protected long missingValuesCount;
+    final String featureName;
+    final long count;
+    final double percentMissing;
+    final long missingValuesCount;
 
     public FeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount) {
         this.featureName = featureName;
@@ -17,6 +15,4 @@ public abstract class FeatureStatistics {
         this.percentMissing = percentMissing;
         this.missingValuesCount = missingValuesCount;
     }
-
-    public abstract Map<String, Object> getTypeStatistics();
 }
