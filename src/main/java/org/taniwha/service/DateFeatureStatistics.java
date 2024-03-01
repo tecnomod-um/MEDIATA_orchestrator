@@ -1,23 +1,20 @@
 package org.taniwha.service;
 
 import lombok.Getter;
-import lombok.Setter;
-
 import java.util.List;
 import java.util.Map;
 
-@Setter
 @Getter
 public class DateFeatureStatistics extends FeatureStatistics {
-    private String earliestDate;
-    private String latestDate;
-    private Map<String, Long> dateHistogram;
-    private List<String> outliers;
-    private String mean;
-    private double stdDev;
-    private String median;
-    private String q1;
-    private String q3;
+    private final String earliestDate;
+    private final String latestDate;
+    private final Map<String, Long> dateHistogram;
+    private final List<String> outliers;
+    private final String mean;
+    private final double stdDev;
+    private final String median;
+    private final String q1;
+    private final String q3;
 
     public DateFeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount, String earliestDate, String latestDate, Map<String, Long> dateHistogram, List<String> outliers, String mean, double stdDev, String median, String q1, String q3) {
         super(featureName, count, percentMissing, missingValuesCount);
@@ -31,20 +28,4 @@ public class DateFeatureStatistics extends FeatureStatistics {
         this.q1 = q1;
         this.q3 = q3;
     }
-
-    @Override
-    public Map<String, Object> getTypeStatistics() {
-        return Map.of(
-                "EarliestDate", earliestDate,
-                "LatestDate", latestDate,
-                "DateHistogram", dateHistogram,
-                "Outliers", outliers,
-                "Mean", mean,
-                "StdDev", stdDev,
-                "Median", median,
-                "Qrt1", q1,
-                "Qrt3", q3
-        );
-    }
-
 }

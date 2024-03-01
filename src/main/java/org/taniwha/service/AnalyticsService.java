@@ -100,7 +100,9 @@ public class AnalyticsService {
         categoricalData.forEach((key, valueMap) -> {
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
-            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).toList();
+            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream()
+                    .sorted((entry1, entry2) -> entry2.getValue().compareTo(entry1.getValue()))
+                    .toList();
             Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
             String mode = modeEntry.getKey();
             int modeFrequency = modeEntry.getValue();
@@ -108,7 +110,12 @@ public class AnalyticsService {
             String secondMode = sortedEntries.size() > 1 ? sortedEntries.get(1).getKey() : null;
             Integer secondModeFrequency = secondMode != null ? valueMap.get(secondMode) : null;
             Double secondModePercentage = secondModeFrequency != null ? (double) secondModeFrequency / totalRecords * 100 : null;
-            CategoricalFeatureStatistics stats = new CategoricalFeatureStatistics(key, totalRecords - missingValues, percentMissing, missingValues, valueMap.size(), mode, modeFrequency, modePercentage, secondMode, secondModeFrequency, secondModePercentage, new HashMap<>(valueMap));
+
+            CategoricalFeatureStatistics stats = new CategoricalFeatureStatistics(
+                    key, totalRecords - missingValues, percentMissing, missingValues, valueMap.size(),
+                    mode, modeFrequency, modePercentage, secondMode, secondModeFrequency,
+                    secondModePercentage, valueMap);
+
             statisticsList.add(stats);
         });
         return statisticsList;
@@ -118,30 +125,24 @@ public class AnalyticsService {
     private List<FeatureStatistics> processContinuousData(Map<String, List<Double>> continuousData, Map<String, Long> missingValueCounts, long totalRecords) {
         List<FeatureStatistics> statisticsList = new ArrayList<>();
         continuousData.forEach((key, valueList) -> {
-            // frequency distribution analysis
             List<Double> outliers = identifyOutliers(valueList);
             double mean = valueList.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
             double stddev = Math.sqrt(valueList.stream().mapToDouble(v -> Math.pow(v - mean, 2)).sum() / valueList.size());
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
-
-            Map<String, Object> statistics = new HashMap<>();
-            statistics.put("Count", valueList.size());
-            statistics.put("Min", Collections.min(valueList));
-            statistics.put("Max", Collections.max(valueList));
-            statistics.put("Mean", mean);
-            statistics.put("StdDev", stddev);
-            statistics.put("MissingValues", missingValues);
+            double min = Collections.min(valueList);
+            double max = Collections.max(valueList);
             double q1 = getPercentile(valueList, 25);
             double median = getPercentile(valueList, 50);
             double q3 = getPercentile(valueList, 75);
-            statistics.put("Qrt1", q1);
-            statistics.put("Median", median);
-            statistics.put("Qrt3", q3);
             Map<String, Object> histogramInfo = generateHistogram(valueList);
-            statistics.put("Histogram", histogramInfo.get("bins"));
-            statistics.put("BinRanges", histogramInfo.get("binRanges"));
-            statisticsList.add(new ContinuousFeatureStatistics(key, valueList.size(), percentMissing, missingValues, valueList.size(), statistics, outliers));
+
+            List<Double> bins = (List<Double>) histogramInfo.get("bins");
+            List<String> binRanges = (List<String>) histogramInfo.get("binRanges");
+
+            statisticsList.add(new ContinuousFeatureStatistics(
+                    key, valueList.size(), percentMissing, missingValues, valueList.size(),
+                    min, max, mean, stddev, q1, median, q3, bins, binRanges, outliers));
         });
         return statisticsList;
     }
@@ -183,32 +184,39 @@ public class AnalyticsService {
             histogramInfo.put("binRanges", Collections.emptyList());
             return histogramInfo;
         }
+
         double min = Collections.min(data);
         double max = Collections.max(data);
+        // Handle case where all data points are identical
         if (max == min) {
             histogramInfo.put("bins", Collections.singletonList((double) data.size()));
-            histogramInfo.put("binRanges", Collections.singletonList(String.format("[%f - %f]", min, max)));
+            histogramInfo.put("binRanges", Collections.singletonList(String.format(Locale.US, "[%f - %f]", min, max)));
             return histogramInfo;
         }
+
+        // Calculate histogram bin width using the Freedman-Diaconis rule as a basis
         double range = max - min;
         double q1 = getPercentile(data, 25);
         double q3 = getPercentile(data, 75);
         double iqr = q3 - q1;
         double binWidth = 2.0 * iqr / Math.cbrt(data.size());
-        binWidth = Math.max(binWidth, range / 10.0);
+        binWidth = Math.max(binWidth, range / 10.0); // Ensure binWidth is not too small
         int binCount = (int) Math.ceil(range / binWidth);
+
         List<Double> bins = new ArrayList<>(Collections.nCopies(binCount, 0.0));
-        for (Double value : data) {
-            int binIndex = (int) ((value - min) / binWidth);
-            binIndex = Math.min(binIndex, binCount - 1);
+        double finalBinWidth = binWidth;
+        data.forEach(value -> {
+            int binIndex = (int) ((value - min) / finalBinWidth);
+            binIndex = Math.min(binIndex, binCount - 1); // Ensure binIndex does not exceed binCount - 1
             bins.set(binIndex, bins.get(binIndex) + 1);
-        }
+        });
+
         DecimalFormat df = new DecimalFormat("0.##", new DecimalFormatSymbols(Locale.US));
         List<String> binRanges = new ArrayList<>();
         for (int i = 0; i < binCount; i++) {
             double binMin = min + (i * binWidth);
             double binMax = binMin + binWidth;
-            binRanges.add(String.format("[%s - %s]", df.format(binMin), df.format(binMax)));
+            binRanges.add(String.format(Locale.US, "[%s - %s]", df.format(binMin), df.format(binMax)));
         }
 
         histogramInfo.put("bins", bins);
