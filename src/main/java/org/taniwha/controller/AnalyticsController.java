@@ -39,4 +39,23 @@ public class AnalyticsController {
                         .body(new AnalyticsResponseDTO("Error processing file: " + ex.getMessage())));
     }
 
+    @PostMapping("/reprocess")
+    public CompletableFuture<ResponseEntity<AnalyticsResponseDTO>> recalculateFeature(@RequestParam("file") MultipartFile file, @RequestParam("featureName") String featureName, @RequestParam("featureType") String featureType) {
+        if (file.isEmpty()) {
+            return CompletableFuture.completedFuture(ResponseEntity.badRequest().body(new AnalyticsResponseDTO("File is empty")));
+        }
+        String fileName = file.getOriginalFilename();
+        if (fileName == null || !fileName.endsWith(".csv")) {
+            return CompletableFuture.completedFuture(ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(new AnalyticsResponseDTO("Unsupported file type")));
+        }
+
+        if (!featureType.equalsIgnoreCase("continuous") && !featureType.equalsIgnoreCase("categorical")) {
+            return CompletableFuture.completedFuture(ResponseEntity.badRequest().body(new AnalyticsResponseDTO("Invalid feature type")));
+        }
+
+        return analyticsService.recalculateFeatureAsType(file, featureName, featureType)
+                .thenApply(ResponseEntity::ok)
+                .exceptionally(ex -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(new AnalyticsResponseDTO("Error processing file: " + ex.getMessage())));
+    }
 }
