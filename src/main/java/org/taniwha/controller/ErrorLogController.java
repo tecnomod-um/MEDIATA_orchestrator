@@ -7,8 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.taniwha.dto.ErrorLogDTO;
 
-import java.util.concurrent.CompletableFuture;
-
 @RestController
 @RequestMapping("/api/error")
 public class ErrorLogController {
@@ -17,12 +15,12 @@ public class ErrorLogController {
 
     @PostMapping
     @Async
-    public CompletableFuture<ResponseEntity<String>> logError(@RequestBody ErrorLogDTO errorLog) {
+    public ResponseEntity<String> logError(@RequestBody ErrorLogDTO errorLog) {
         logger.error("Error received from frontend:\n {}\n Info: {}\n Timestamp: {}",
                 errorLog.getError(),
                 errorLog.getInfo(),
                 errorLog.getTimestamp());
 
-        return CompletableFuture.completedFuture(ResponseEntity.ok("Error logged successfully"));
+        return ResponseEntity.ok("Error logged successfully");
     }
 }

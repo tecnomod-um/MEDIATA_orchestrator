@@ -59,7 +59,6 @@ public class AnalyticsService {
             long totalRecords = csvParser.getRecordNumber();
             if (overrideFeatureName.isPresent() && overrideFeatureType.isPresent()) {
 
-
                 switch (overrideFeatureType.get().toLowerCase()) {
                     case "continuous":
                         // Check if the field was processed as date
@@ -116,8 +115,8 @@ public class AnalyticsService {
 
             switch (featureType) {
                 case "date":
-                    LocalDateTime parsedDate = DateUtils.parseDate(trimmedValue).orElseThrow();
-                    dateData.computeIfAbsent(column, k -> new CopyOnWriteArrayList<>()).add(parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE));
+                    Optional<LocalDateTime> parsedDate = DateUtils.parseDate(trimmedValue);
+                    dateData.computeIfAbsent(column, k -> new CopyOnWriteArrayList<>()).add(parsedDate.get().format(DateTimeFormatter.ISO_LOCAL_DATE));
                     continuousData.remove(column);
                     categoricalData.remove(column);
                     break;
@@ -157,7 +156,7 @@ public class AnalyticsService {
         categoricalData.forEach((key, valueMap) -> {
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
-            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream().sorted((entry1, entry2) -> entry2.getValue().compareTo(entry1.getValue())).toList();
+            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream().sorted((entry1, entry2) -> entry2.getValue().compareTo(entry1.getValue())).collect(Collectors.toList());
             Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
             String mode = modeEntry.getKey();
             int modeFrequency = modeEntry.getValue();
@@ -201,7 +200,7 @@ public class AnalyticsService {
     public List<DateFeatureStatistics> processDateData(Map<String, List<String>> dateData, Map<String, Long> missingValueCounts, long totalRecords) {
         List<DateFeatureStatistics> dateStatisticsList = new ArrayList<>();
         dateData.forEach((key, dateStringList) -> {
-            List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
+            List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).collect(Collectors.toList());
             List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().collect(Collectors.toList());
             List<Double> outliers = identifyOutliers(dateValues);
 
