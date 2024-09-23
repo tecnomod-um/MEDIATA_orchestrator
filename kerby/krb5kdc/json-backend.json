@@ -1,0 +1,78 @@
+{
+  "kadmin/TANIWHA-REALM@TANIWHA-REALM": {
+    "principal": "kadmin/TANIWHA-REALM@TANIWHA-REALM",
+    "keyVersion": 1,
+    "kdcFlags": 0,
+    "disabled": false,
+    "locked": false,
+    "expireTime": "253402300799900",
+    "createdTime": "1720538455670",
+    "keys": {
+      "AES128_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3019A003020111A1120410C3B5A9EF13355E716A240AD36CDEA6C4"
+      },
+      "AES256_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3029A003020112A12204202900A5EF385680C56A8B8D4C6DDB91A5D5F6655453908804CF316908FE25BD50"
+      }
+    }
+  },
+  "admin@TANIWHA-REALM": {
+    "principal": "admin@TANIWHA-REALM",
+    "keyVersion": 1,
+    "kdcFlags": 0,
+    "disabled": false,
+    "locked": false,
+    "expireTime": "253402300799900",
+    "createdTime": "1720538488771",
+    "keys": {
+      "AES128_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3019A003020111A1120410D94553BF4A4808F4727C61E02262F1D5"
+      },
+      "AES256_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3029A003020112A12204206501412FC0FEA87EA63AE8BD8D3DFFE18B519725AD0897F4864831D4F80E4B76"
+      }
+    }
+  },
+  "krbtgt/TANIWHA-REALM@TANIWHA-REALM": {
+    "principal": "krbtgt/TANIWHA-REALM@TANIWHA-REALM",
+    "keyVersion": 1,
+    "kdcFlags": 0,
+    "disabled": false,
+    "locked": false,
+    "expireTime": "253402300799900",
+    "createdTime": "1720538455630",
+    "keys": {
+      "AES128_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3019A003020111A1120410541FFD3CC39E0F8243179364C38FA85E"
+      },
+      "AES256_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3029A003020112A12204209D321167DB3CFE1FE0C77576088ADA000D6B0F9492BBC7FD0F919D62639776BE"
+      }
+    }
+  },
+  "HTTP/localhost@TANIWHA-REALM": {
+    "principal": "HTTP/localhost@TANIWHA-REALM",
+    "keyVersion": 1,
+    "kdcFlags": 0,
+    "disabled": false,
+    "locked": false,
+    "expireTime": "253402300799900",
+    "createdTime": "1727107423118",
+    "keys": {
+      "AES256_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3029A003020112A12204201B89D0AACF0A0D4EC3A2A991B4FB47EC870C86F8D7529010454123741CC1FF24"
+      },
+      "AES128_CTS_HMAC_SHA1_96": {
+        "kvno": 1,
+        "key": "3019A003020111A1120410140DD41454BD46225604681D8BA2C121"
+      }
+    }
+  }
+}
