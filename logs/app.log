@@ -397,3 +397,11 @@ Caused by: java.lang.NoSuchMethodException: org.taniwha.model.NodeInfo.<init>()
 2024-09-23T18:13:43.495+02:00 DEBUG 2921013 --- [http-nio-8088-exec-4] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
 2024-09-23T18:14:43.486+02:00 DEBUG 2921013 --- [http-nio-8088-exec-5] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
 2024-09-23T18:15:43.487+02:00 DEBUG 2921013 --- [http-nio-8088-exec-6] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:16:43.495+02:00 DEBUG 2921013 --- [http-nio-8088-exec-7] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:17:43.489+02:00 DEBUG 2921013 --- [http-nio-8088-exec-8] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:18:43.489+02:00 DEBUG 2921013 --- [http-nio-8088-exec-9] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:19:43.493+02:00 DEBUG 2921013 --- [http-nio-8088-exec-10] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:20:43.491+02:00 DEBUG 2921013 --- [http-nio-8088-exec-1] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:21:43.487+02:00 DEBUG 2921013 --- [http-nio-8088-exec-2] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:22:43.485+02:00 DEBUG 2921013 --- [http-nio-8088-exec-3] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
+2024-09-23T18:23:43.488+02:00 DEBUG 2921013 --- [http-nio-8088-exec-4] o.t.controller.NodeManagerController     : Heartbeat received for node: 66f1915ed742886d643d7a44
