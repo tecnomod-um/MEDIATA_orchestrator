@@ -55,24 +55,5 @@
         "key": "3029A003020112A12204209D321167DB3CFE1FE0C77576088ADA000D6B0F9492BBC7FD0F919D62639776BE"
       }
     }
-  },
-  "HTTP/localhost@TANIWHA-REALM": {
-    "principal": "HTTP/localhost@TANIWHA-REALM",
-    "keyVersion": 1,
-    "kdcFlags": 0,
-    "disabled": false,
-    "locked": false,
-    "expireTime": "253402300799900",
-    "createdTime": "1727107423118",
-    "keys": {
-      "AES256_CTS_HMAC_SHA1_96": {
-        "kvno": 1,
-        "key": "3029A003020112A12204201B89D0AACF0A0D4EC3A2A991B4FB47EC870C86F8D7529010454123741CC1FF24"
-      },
-      "AES128_CTS_HMAC_SHA1_96": {
-        "kvno": 1,
-        "key": "3019A003020111A1120410140DD41454BD46225604681D8BA2C121"
-      }
-    }
   }
 }
