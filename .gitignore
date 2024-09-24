@@ -1,5 +1,6 @@
 .env
 /logs
+/kerby
 nohup.out
 target/
 !.mvn/wrapper/maven-wrapper.jar
