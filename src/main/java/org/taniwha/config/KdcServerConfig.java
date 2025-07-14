@@ -1,9 +1,12 @@
 package org.taniwha.config;
 
 import jakarta.annotation.PreDestroy;
+import org.apache.kerby.kerberos.kdc.identitybackend.JsonIdentityBackend;
 import org.apache.kerby.kerberos.kerb.KrbException;
 import org.apache.kerby.kerberos.kerb.identity.backend.BackendConfig;
-import org.apache.kerby.kerberos.kerb.server.*;
+import org.apache.kerby.kerberos.kerb.server.KdcConfig;
+import org.apache.kerby.kerberos.kerb.server.KdcConfigKey;
+import org.apache.kerby.kerberos.kerb.server.KdcSetting;
 import org.apache.kerby.kerberos.kerb.server.impl.DefaultInternalKdcServerImpl;
 import org.apache.kerby.kerberos.kerb.type.base.EncryptionType;
 import org.slf4j.Logger;
@@ -11,7 +14,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.apache.kerby.kerberos.kdc.identitybackend.JsonIdentityBackend;
 import org.taniwha.kerberos.CustomKdcServer;
 import org.taniwha.kerberos.KerberosConfigFileGenerator;
 
@@ -43,7 +45,6 @@ public class KdcServerConfig {
     public CustomKdcServer kdcServer() throws KrbException, IOException {
 
         prepareWorkDir();
-
         // Create and configure KdcConfig
         KdcConfig kdcConfig = new KdcConfig();
         kdcConfig.setString(KdcConfigKey.KDC_REALM.getPropertyKey(), realm);
@@ -86,9 +87,16 @@ public class KdcServerConfig {
                 logger.error("Failed to create work directory: {}", workDir.getAbsolutePath());
         } else
             logger.debug("Work directory already exists: {}", workDir.getAbsolutePath());
-        if (!workDir.setWritable(true, false) || !workDir.setReadable(true, false) || !workDir.setExecutable(true, false)) {
-            logger.error("Failed to set permissions on work directory: {}", workDir.getAbsolutePath());
-            throw new IOException("Failed to set permissions on work directory");
+
+        if (!System.getProperty("os.name").toLowerCase().contains("win")) {
+            if (!workDir.setWritable(true, false) ||
+                    !workDir.setReadable(true, false) ||
+                    !workDir.setExecutable(true, false)) {
+                logger.error("Failed to set permissions on work directory: {}", workDir.getAbsolutePath());
+                throw new IOException("Failed to set permissions on work directory");
+            }
+        } else {
+            logger.warn("Skipping permission adjustments as the application is running on Windows");
         }
 
         // Ensure krb5kdc directory exists
@@ -106,7 +114,6 @@ public class KdcServerConfig {
         File krb5ConfDir = new File(workDirPath);
         if (!krb5ConfDir.exists() && !krb5ConfDir.mkdirs())
             throw new IOException("Failed to create directory: " + krb5ConfDir.getAbsolutePath());
-
         String krb5ConfContent = KerberosConfigFileGenerator.generateKrb5ConfContent(realm, kdcPort);
         File krb5ConfFile = Paths.get(workDirPath, "krb5.conf").toFile();
         if (krb5ConfFile.getParentFile() != null && !krb5ConfFile.getParentFile().exists() && !krb5ConfFile.getParentFile().mkdirs())

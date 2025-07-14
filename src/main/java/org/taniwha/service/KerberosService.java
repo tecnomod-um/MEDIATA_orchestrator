@@ -4,11 +4,14 @@ import lombok.Getter;
 import org.apache.kerby.kerberos.kerb.KrbException;
 import org.apache.kerby.kerberos.kerb.client.KrbClient;
 import org.apache.kerby.kerberos.kerb.identity.IdentityService;
+import org.apache.kerby.kerberos.kerb.type.base.PrincipalName;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncAsRepPart;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncKdcRepPart;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncTgsRepPart;
-import org.apache.kerby.kerberos.kerb.type.ticket.*;
-import org.apache.kerby.kerberos.kerb.type.base.*;
+import org.apache.kerby.kerberos.kerb.type.ticket.KrbTicket;
+import org.apache.kerby.kerberos.kerb.type.ticket.SgtTicket;
+import org.apache.kerby.kerberos.kerb.type.ticket.TgtTicket;
+import org.apache.kerby.kerberos.kerb.type.ticket.Ticket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -130,11 +133,13 @@ public class KerberosService {
         objStream.writeInt(encKdcRepPartBytes.length);
         objStream.write(encKdcRepPartBytes);
 
-        if (krbTicket instanceof TgtTicket tgtTicket) {
+        if (krbTicket instanceof TgtTicket) {
+            TgtTicket tgtTicket = (TgtTicket) krbTicket;
             byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes();
             objStream.writeInt(clientPrincipalBytes.length);
             objStream.write(clientPrincipalBytes);
-        } else if (krbTicket instanceof SgtTicket sgtTicket) {
+        } else if (krbTicket instanceof SgtTicket) {
+            SgtTicket sgtTicket = (SgtTicket) krbTicket;
             byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes();
             objStream.writeInt(clientPrincipalBytes.length);
             objStream.write(clientPrincipalBytes);

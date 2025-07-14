@@ -1,13 +1,13 @@
 package org.taniwha.config;
 
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.beans.factory.annotation.Value;
 
 //MongoDB instance configurations
 @Configuration

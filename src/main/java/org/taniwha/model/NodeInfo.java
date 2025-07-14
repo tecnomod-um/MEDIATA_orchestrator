@@ -17,7 +17,6 @@ public class NodeInfo {
     @Id
     private String nodeId;
     private String ip;
-    private int port;
     private String name;
     private String password;
     private String description;
@@ -25,7 +24,7 @@ public class NodeInfo {
     private String publicKey;
 
     public String getServiceUrl() {
-        return ip + ":" + port;
+        return ip;
     }
 
     @Override
@@ -33,7 +32,6 @@ public class NodeInfo {
         return "NodeInfo{" +
                 "nodeId='" + nodeId + '\'' +
                 ", ip='" + ip + '\'' +
-                ", port=" + port +
                 ", name='" + name + '\'' +
                 ", description='" + description + '\'' +
                 ", color='" + color + '\'' +

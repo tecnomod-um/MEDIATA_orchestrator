@@ -36,8 +36,10 @@ public class NodeHealthCheckService {
                 nodeService.updateHeartbeat(node.getNodeId(), now);
                 logger.debug("Initialized heartbeat for node {} at {}", node.getNodeId(), now);
             } else if (ChronoUnit.MINUTES.between(lastHeartbeat, now) > heartbeatTimeoutMinutes) {
+
                 nodeService.deregisterNode(node.getNodeId());
                 logger.warn("Deregistered node {} due to heartbeat timeout.", node.getNodeId());
+
             }
         }
     }

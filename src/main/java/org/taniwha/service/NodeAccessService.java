@@ -1,17 +1,19 @@
 package org.taniwha.service;
 
 import org.apache.kerby.kerberos.kerb.KrbException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.util.JwtTokenUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -27,16 +29,20 @@ public class NodeAccessService {
     private final JwtTokenUtil jwtTokenUtil;
     private final KerberosService kerberosService;
     private final UserService userService;
+    private final RestTemplateConfig restTemplateConfig;
+
     private final String realm;
+
 
     @Autowired
     public NodeAccessService(NodeRepository nodeRepository, JwtTokenUtil jwtTokenUtil,
-                             KerberosService kerberosService, UserService userService,
+                             KerberosService kerberosService, UserService userService, RestTemplateConfig restTemplateConfig,
                              @Value("${kerberos.realm}") String realm) {
         this.nodeRepository = nodeRepository;
         this.jwtTokenUtil = jwtTokenUtil;
         this.kerberosService = kerberosService;
         this.userService = userService;
+        this.restTemplateConfig = restTemplateConfig;
         this.realm = realm;
     }
 
@@ -49,19 +55,48 @@ public class NodeAccessService {
         return nodeRepository.findById(nodeId).orElse(null);
     }
 
+    public NodeMetadata getMetadata(String nodeId) {
+        NodeInfo nodeInfo = getNodeInfo(nodeId);
+        if (nodeInfo == null) {
+            logger.warn("Node not found: {}", nodeId);
+            return null;
+        }
+
+        String url = nodeInfo.getServiceUrl() + "/taniwha/node/metadata";
+
+        try {
+            RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
+            ResponseEntity<NodeMetadata> response = restTemplate.getForEntity(url, NodeMetadata.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                return response.getBody();
+            } else {
+                logger.error("Non-200 status fetching node metadata: {} => {}",
+                        url, response.getStatusCode());
+                return null;
+            }
+        } catch (Exception e) {
+            logger.error("Error fetching node metadata for nodeId {} with url {}", nodeId, url, e);
+            return null;
+        }
+    }
+
     public Map<String, Object> getServiceToken(String nodeId, String userTgtToken) {
         NodeInfo nodeInfo = getNodeInfo(nodeId);
         Map<String, Object> response = new HashMap<>();
 
-        if (nodeInfo != null) {
+        if (nodeInfo == null) {
+            logger.error("Tried fetching node that doesnt exist");
+            response.put(ERROR, "Node not found");
+        } else {
             // Access the node's principal
             String serviceToken;
-
             try {
                 serviceToken = kerberosService.requestSgt(userTgtToken, kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
             } catch (IOException | KrbException e) {
                 logger.error("Error requesting the Sgt token", e);
-                return new HashMap<>();
+                response.put(ERROR, "Node not found");
+                return response;
             }
 
             if (serviceToken != null) {
@@ -72,9 +107,7 @@ public class NodeAccessService {
                     response.put(ERROR, "Failed to connect to node " + nodeInfo.getName());
             } else
                 response.put(ERROR, "Failed to generate token. Node can't be reached");
-            return response;
         }
-        response.put(ERROR, "Node not found");
         return response;
     }
 
@@ -87,7 +120,8 @@ public class NodeAccessService {
         HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
         try {
             logger.debug("Sending token to node URL: {}", url);
-            ResponseEntity<String> response = new RestTemplate().exchange(url, HttpMethod.POST, request, String.class);
+            RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, request, String.class);
             logger.debug("Sending token to node URL: {} with response: {}", url, response.getStatusCode());
             return response.getStatusCode().is2xxSuccessful();
         } catch (RestClientException e) {

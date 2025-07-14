@@ -9,7 +9,6 @@ public class NodeDTO {
 
     private String nodeId;
     private String ip;
-    private int port;
     private String name;
     private String password;
     private String description;

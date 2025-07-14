@@ -2,6 +2,11 @@
 .env
 /logs
 /kerby
+/csv_files
+
+# Modules
+/InteroperabilityFHIRAPI
+/mediata-rdf-builder
 
 nohup.out
 target/
