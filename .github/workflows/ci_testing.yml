@@ -34,17 +34,5 @@ jobs:
           ref: main
           path: monorepo
           fetch-depth: 0
-
-      - name: Bump submodule pointer
-        working-directory: monorepo
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git submodule update --init --remote MEDIATA_orchestrator
-          git add MEDIATA_orchestrator
-          if ! git diff --cached --quiet; then
-            git commit -m "ci: bump MEDIATA_orchestrator to ${{ github.sha }}"
-            git push origin main
-          else
-            echo "No changes to submodule"
-          fi
+          submodules: recursive
+          persist-credentials: true
