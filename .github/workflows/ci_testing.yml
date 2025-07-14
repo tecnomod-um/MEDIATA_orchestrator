@@ -42,8 +42,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git - C MEDIATA_orchestrator fetch origin "${{ github.sha }}"
-          git - C MEDIATA_orchestrator checkout "${{ github.sha }}"
+          git -C MEDIATA_orchestrator fetch origin "${{ github.sha }}"
+          git -C MEDIATA_orchestrator checkout "${{ github.sha }}"
           
           git add MEDIATA_orchestrator
           if ! git diff --cached --quiet; then
