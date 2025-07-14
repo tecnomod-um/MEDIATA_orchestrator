@@ -36,3 +36,19 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: true
+
+      - name: Bump parent
+        working-directory: monorepo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com
+          git - C MEDIATA_orchestrator fetch origin ${{ github.sha }}
+          git - C MEDIATA_orchestrator checkout ${{ github.sha }}
+          
+          git add MEDIATA_orchestrator
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: bump MEDIATA_orchestrator to ${{ github.sha }}
+            git push origin main
+          else
+            echo "No changes to submodule"
+          fi
