@@ -1,15 +1,16 @@
-# TANIWHA:<br>Tool for Analyzing aNd Interpreting Whole Healthcare Annotations
+# MEDIATA Central Orchestrator
 
-## Overview
+This is the central backend service of the MEDIATA platform. It handles user authentication via Kerberos, manages node registration, and orchestrates harmonization tasks.
 
-This backend implementation is the central part of the TANIWHA tool, dedicated to managing data operations regarding registered nodes and users, API endpoints, and general server-side functionalities.
+## Features
 
-## How to Use
-
-Detailed usage instructions will be provided soon. For a comprehensive guide on how to use TANIWHA, please refer to our [Usage Documentation](DOCUMENTATION.md).
-
-You can also read our [contribution and coding guidelines](GUIDELINES.md).
-
-## License
+- Kerberos-based user authentication (KDC-hosted)
+- Node registration and heartbeat monitoring
+- Centralized orchestration of semantic alignment and mapping pipelines
+- API endpoints for:
+    - Mapping rule generation (YARRRML, RDF)
+    - HL7 FHIR clustering and profile generation
+    - Node and user management
+    - Log collection and monitoring
 
 This project is developed under the [MIT License](LICENSE.md).
