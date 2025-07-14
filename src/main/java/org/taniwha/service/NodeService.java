@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 // All node related operations go here
 @Service
@@ -43,9 +44,9 @@ public class NodeService {
     }
 
     public String registerNode(NodeInfo nodeInfo) {
-        if (nodeRepository.existsByIpAndPort(nodeInfo.getIp(), nodeInfo.getPort())) {
+        if (nodeRepository.existsByIp(nodeInfo.getIp())) {
             if (overwriteNode) {
-                NodeInfo existingNode = nodeRepository.findByIpAndPort(nodeInfo.getIp(), nodeInfo.getPort());
+                NodeInfo existingNode = nodeRepository.findByIp(nodeInfo.getIp());
                 deregisterNode(existingNode.getNodeId());
             } else {
                 logger.error("Node with the same IP and port is already registered");
@@ -56,7 +57,6 @@ public class NodeService {
         nodeRepository.save(nodeInfo);
         Instant now = Instant.now();
         nodeHeartbeats.put(nodeInfo.getNodeId(), now);
-
 
         String rawPassword = RandomStringUtils.randomAlphanumeric(16);
         String encodedPassword = passwordEncoder.encode(rawPassword);
@@ -110,6 +110,6 @@ public class NodeService {
 
     public List<NodeSummary> getNodeSummaries() {
         return nodeRepository.findAll().stream()
-                .map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).toList();
+                .map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
     }
 }

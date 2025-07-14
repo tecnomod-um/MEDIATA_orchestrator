@@ -3,6 +3,10 @@ package org.taniwha.security;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.SignatureException;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,10 +21,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.taniwha.service.UserService;
 import org.taniwha.util.JwtTokenUtil;
 
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
 @Component
@@ -57,7 +57,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
         String requestURI = request.getRequestURI();
-        return requestURI.equals("/taniwha/api/user/login") || requestURI.equals("/taniwha/api/user/register");
+        return requestURI.equals("/taniwha/api/user/login") || requestURI.equals("/taniwha/api/user/register") || requestURI.startsWith("/taniwha/api/error");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -65,7 +65,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         if (requestTokenHeader != null && requestTokenHeader.startsWith("Bearer "))
             return requestTokenHeader.substring(7);
-         else {
+        else {
             filterLogger.warn("JWT Token does not begin with Bearer String");
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token does not begin with Bearer String");
             return null;

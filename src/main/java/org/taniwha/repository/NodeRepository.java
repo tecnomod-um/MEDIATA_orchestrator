@@ -6,6 +6,7 @@ import org.taniwha.model.NodeInfo;
 
 @Repository
 public interface NodeRepository extends MongoRepository<NodeInfo, String> {
-    boolean existsByIpAndPort(String ip, int port);
-    NodeInfo findByIpAndPort(String ip, int port);
+    boolean existsByIp(String ip);
+
+    NodeInfo findByIp(String ip);
 }

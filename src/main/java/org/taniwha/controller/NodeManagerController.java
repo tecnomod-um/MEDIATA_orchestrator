@@ -33,7 +33,7 @@ public class NodeManagerController {
 
     @PostMapping("/nodes/register")
     public ResponseEntity<RegisterResponseDTO> registerNode(@RequestBody NodeDTO node) {
-        if (node.getIp() == null || node.getPort() <= 0) {
+        if (node.getIp() == null) {
             logger.error("Invalid node information: {}", node);
             RegisterResponseDTO responseDTO = new RegisterResponseDTO();
             responseDTO.setMessage("Invalid node information");
@@ -43,7 +43,6 @@ public class NodeManagerController {
             NodeInfo nodeInfo = new NodeInfo(
                     node.getNodeId(),
                     node.getIp(),
-                    node.getPort(),
                     node.getName(),
                     node.getPassword(),
                     node.getDescription(),
@@ -55,8 +54,6 @@ public class NodeManagerController {
             logger.info("New node registered: {} ({})", node.getName(), node.getNodeId());
             RegisterResponseDTO responseDTO = new RegisterResponseDTO();
             responseDTO.setMessage("Node registered successfully");
-
-            // Encode the keytab to Base64 and add it to the response
             String keytabContent = encodeKeytabToBase64(keytabPath);
             responseDTO.setKeytab(keytabContent);
 

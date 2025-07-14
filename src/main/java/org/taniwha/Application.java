@@ -15,18 +15,18 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableMongoRepositories(basePackages = "org.taniwha.repository")
 public class Application extends SpringBootServletInitializer {
 
-    @Override
-    protected SpringApplicationBuilder configure(SpringApplicationBuilder application) {
-        return application
-                .initializers(new DotenvApplicationInitializer())
-                .sources(Application.class);
-    }
-
     public static void main(String[] args) {
         System.setProperty("java.security.krb5.conf", "src/main/resources/krb5.conf");
 
         SpringApplication application = new SpringApplication(Application.class);
         application.addInitializers(new DotenvApplicationInitializer());
         application.run(args);
+    }
+
+    @Override
+    protected SpringApplicationBuilder configure(SpringApplicationBuilder application) {
+        return application
+                .initializers(new DotenvApplicationInitializer())
+                .sources(Application.class);
     }
 }

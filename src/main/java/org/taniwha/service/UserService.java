@@ -67,7 +67,7 @@ public class UserService implements UserDetailsService {
             } else {
                 roles = registerRequest.getRoles().stream()
                         .map(this::findRoleByName)
-                        .toList();
+                        .collect(Collectors.toList());
             }
         } else {
             Role userRole = findRoleByName("ROLE_USER");
