@@ -47,7 +47,7 @@ jobs:
           
           git add MEDIATA_orchestrator
           if ! git diff --cached --quiet; then
-            git commit -m "ci: bump MEDIATA_orchestrator to "${{ github.sha }}"
+            git commit -m "ci: bump MEDIATA_orchestrator to ${{ github.sha }}"
             git push origin main
           else
             echo "No changes to submodule"
