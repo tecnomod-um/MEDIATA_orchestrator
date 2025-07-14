@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KdcClientConfigTest {
 
     @Test
-    void krbClientBean_isCreatedWithTcpEnabledAndUdpDisabled() throws Exception {
+    void krbClientBean_isCreatedWithTcpEnabledAndUdpDisabled() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
             ctx.getEnvironment().getSystemProperties().put("kerberos.realm", "EXAMPLE.COM");
             ctx.getEnvironment().getSystemProperties().put("kerberos.kdc.port", "8800");
