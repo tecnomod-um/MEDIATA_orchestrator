@@ -30,8 +30,6 @@ jobs:
         uses: cicirello/jacoco-badge-generator@v2
         with:
           generate-branches-badge: false
-          jacoco-csv-file: ""
-          fail-if-no-report: true
 
       - name: Prepare badges folder
         run: |
