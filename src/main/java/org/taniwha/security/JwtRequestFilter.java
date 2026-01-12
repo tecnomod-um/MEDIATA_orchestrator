@@ -52,7 +52,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         if (username == null) return;
 
         if (!authenticateUser(request, response, jwtToken, username)) return;
-        
+
         chain.doFilter(request, response);
     }
 
