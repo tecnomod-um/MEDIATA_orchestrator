@@ -202,8 +202,8 @@ class JwtRequestFilterTest {
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
         verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
-        // The filter chain is still called after user not found (it doesn't return early in authenticateUser)
-        verify(filterChain).doFilter(request, response);
+        // After authentication failure, filter chain should NOT continue
+        verify(filterChain, never()).doFilter(any(), any());
     }
 
     @Test
@@ -221,7 +221,10 @@ class JwtRequestFilterTest {
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
+        // Token validation fails but we still continue - Spring Security will handle unauthorized
         verify(filterChain).doFilter(request, response);
         verify(jwtTokenUtil).validateToken(token, username);
+        // No error is sent for invalid token - Spring Security handles it
+        verify(response, never()).sendError(anyInt(), anyString());
     }
 }
