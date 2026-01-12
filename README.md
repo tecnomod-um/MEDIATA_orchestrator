@@ -23,4 +23,30 @@ This is the central backend service of the MEDIATA platform. It handles user aut
     - Node and user management
     - Log collection and monitoring
 
+## Getting Started
+
+### Using Docker Compose (Recommended)
+
+The easiest way to run the entire MEDIATA stack is with Docker Compose:
+
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Edit .env and set your JWT secret
+# Start all services
+docker-compose up -d
+
+# Check status
+docker-compose ps
+```
+
+See [DOCKER.md](DOCKER.md) for detailed Docker setup instructions.
+
+### Local Development
+
+For local development without Docker, see [DOCKER.md](DOCKER.md#development) for instructions on running individual services.
+
+## License
+
 This project is developed under the [MIT License](LICENSE.md).
