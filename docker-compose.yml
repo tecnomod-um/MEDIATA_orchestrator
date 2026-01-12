@@ -69,6 +69,8 @@ services:
       - "@/app/jib-classpath-file"
       - org.snomed.snowstorm.SnowstormApplication
       - --elasticsearch.urls=http://elasticsearch:9200
+      # Note: Security is disabled for internal use. In production, enable authentication
+      # and configure proper access controls via environment variables or reverse proxy
       - --spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
     environment:
       - SNOMED_SERVER_BRANCH=MAIN
