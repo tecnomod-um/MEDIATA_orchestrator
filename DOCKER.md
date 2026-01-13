@@ -123,6 +123,47 @@ For local development without Docker Compose:
 
 ## Troubleshooting
 
+### SSL Certificate Issues During Build
+
+If you encounter SSL certificate errors when building the orchestrator image (e.g., "unable to find valid certification path"), you have two options:
+
+**Option 1: Use the updated Dockerfile with CA certificate updates**
+The main `Dockerfile` has been updated to refresh CA certificates before downloading dependencies. Simply rebuild:
+```bash
+docker-compose build --no-cache orchestrator
+```
+
+**Option 2: Build locally and use pre-built JAR**
+This is the recommended approach for environments with strict SSL policies:
+
+1. Build the application locally:
+   ```bash
+   mvn clean package -DskipTests
+   ```
+
+2. Edit `docker-compose.yml` and change the orchestrator build configuration:
+   ```yaml
+   orchestrator:
+     build:
+       context: .
+       dockerfile: Dockerfile.prebuilt  # Use pre-built JAR
+   ```
+
+3. Build and start:
+   ```bash
+   docker-compose up -d --build orchestrator
+   ```
+
+**Option 3: Use existing JAR from target directory**
+If you already have a built JAR file:
+```bash
+# Ensure target/taniwha.war exists
+ls -lh target/taniwha.war
+
+# Build with pre-built Dockerfile
+docker-compose build --no-cache orchestrator
+```
+
 ### Services not starting
 Check service logs:
 ```bash
