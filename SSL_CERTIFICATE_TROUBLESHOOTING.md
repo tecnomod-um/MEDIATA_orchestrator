@@ -10,54 +10,130 @@ sun.security.validator.ValidatorException: PKIX path building failed
 sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target
 ```
 
-This occurs when Maven tries to download dependencies during the Docker build in environments with strict SSL/TLS policies or certificate issues.
+This occurs when Maven tries to download dependencies during the Docker build in environments with strict SSL/TLS policies, sandboxed networks, or certificate issues.
 
-## Solutions
+## Recommended Solution: Pre-Built JAR Approach
 
-We provide three solutions, in order of recommendation:
+The **pre-built JAR approach** is the **only reliable method** in restricted environments. This is now the default in `docker-compose.yml`.
 
-### Solution 1: Use Pre-Built JAR (Recommended)
+### Quick Start (Automated)
 
-This is the most reliable approach for environments with SSL issues.
+Use the provided build script for one-command deployment:
 
-**Step 1: Build locally**
+```bash
+# 1. Configure environment
+cp .env.example .env
+nano .env  # Set JWT_SECRET (32+ characters)
+
+# 2. Build and deploy
+./build-and-deploy.sh
+```
+
+### Manual Steps
+
+If you prefer manual control:
+
+**Step 1: Build JAR locally**
 ```bash
 mvn clean package -DskipTests
 ```
 
-**Step 2: Update docker-compose.yml**
+**Step 2: Verify `docker-compose.yml` uses Dockerfile.prebuilt**
 
-Edit `docker-compose.yml` and change the orchestrator build configuration:
-
+The default configuration should already be:
 ```yaml
 orchestrator:
   build:
     context: .
-    dockerfile: Dockerfile.prebuilt  # Change from Dockerfile to Dockerfile.prebuilt
+    dockerfile: Dockerfile.prebuilt  # Pre-built JAR approach (default)
 ```
 
-**Step 3: Build Docker image**
+**Step 3: Start services**
 ```bash
-docker-compose build orchestrator
+docker-compose up -d --build
 ```
 
-**Step 4: Start services**
-```bash
-docker-compose up -d
+### Why This Works
+
+The pre-built approach:
+- ✅ Builds JAR on your host machine (uses your existing Maven cache)
+- ✅ Bypasses Docker SSL certificate issues entirely
+- ✅ Works in sandboxed, corporate, and restricted network environments
+- ✅ Faster subsequent builds (reuses local JAR)
+- ✅ Production-ready deployment pattern
+
+## Alternative: Standard Dockerfile
+
+### Status
+
+The standard `Dockerfile` **does not work reliably** in sandboxed or restricted network environments due to SSL certificate validation issues when Maven downloads dependencies.
+
+### When It Might Work
+
+The standard Dockerfile may work in:
+- Unrestricted network environments
+- Environments with properly configured SSL certificates
+- Networks with corporate certificate authorities properly installed
+
+### Attempting Standard Build
+
+If you want to try the standard Dockerfile (not recommended):
+
+**Step 1: Update docker-compose.yml**
+```yaml
+orchestrator:
+  build:
+    context: .
+    dockerfile: Dockerfile  # Standard build (may fail with SSL issues)
 ```
 
-### Solution 2: Use Updated Dockerfile with CA Certificates
-
-The main `Dockerfile` has been updated to refresh CA certificates before downloading dependencies.
-
-**Step 1: Clean Docker cache**
+**Step 2: Try building**
 ```bash
 docker-compose build --no-cache orchestrator
 ```
 
-**Step 2: Start services**
-```bash
-docker-compose up -d
+If this fails with SSL errors, **use the pre-built JAR approach** instead.
+
+## Troubleshooting
+
+### Build Script Fails
+
+If `./build-and-deploy.sh` fails:
+
+1. Make it executable:
+   ```bash
+   chmod +x build-and-deploy.sh
+   ```
+
+2. Check Maven is installed:
+   ```bash
+   mvn --version
+   ```
+
+3. Build manually:
+   ```bash
+   mvn clean package -DskipTests
+   docker-compose up -d --build
+   ```
+
+### Docker Build Fails
+
+If Docker build fails even with pre-built JAR:
+
+1. Verify WAR file exists:
+   ```bash
+   ls -lh target/taniwha.war
+   ```
+
+2. Check Dockerfile.prebuilt is being used:
+   ```bash
+   grep dockerfile docker-compose.yml | grep orchestrator -A1
+   ```
+
+3. Rebuild with verbose output:
+   ```bash
+   docker-compose build --no-cache --progress=plain orchestrator
+   ```
 ```
 
 If this still fails, proceed to Solution 1.
