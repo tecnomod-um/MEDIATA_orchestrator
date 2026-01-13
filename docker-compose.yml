@@ -122,10 +122,20 @@ services:
       start_period: 60s
 
   # MEDIATA Orchestrator (main application)
+  # 
+  # Build options:
+  # 1. Using Dockerfile (builds from source with Maven):
+  #    docker-compose up -d orchestrator
+  # 
+  # 2. Using pre-built JAR (if SSL certificate issues occur):
+  #    First build locally: mvn clean package -DskipTests
+  #    Then uncomment dockerfile: Dockerfile.prebuilt below
+  # 
   orchestrator:
     build:
       context: .
       dockerfile: Dockerfile
+      # dockerfile: Dockerfile.prebuilt  # Use this if encountering SSL certificate issues
     container_name: mediata-orchestrator
     restart: unless-stopped
     depends_on:
