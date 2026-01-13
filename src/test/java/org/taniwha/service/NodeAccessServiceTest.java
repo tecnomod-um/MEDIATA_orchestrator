@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.util.JwtTokenUtil;
 
@@ -147,5 +148,51 @@ class NodeAccessServiceTest {
         assertTrue(result.containsKey("error"));
         assertTrue(result.get("error").toString().contains("Failed to connect to node TestNode"));
         verify(nodeRepository).findById("node123");
+    }
+
+    @Test
+    void testCheckUserAccess_NoAccess() {
+        when(jwtTokenUtil.getUsernameFromToken("token")).thenReturn("user");
+        when(userService.userHasAccessToNode("user", "node123")).thenReturn(false);
+
+        boolean hasAccess = nodeAccessService.checkUserAccess("node123", "token");
+        
+        assertEquals(false, hasAccess);
+    }
+
+    @Test
+    void testGetServiceToken_KrbException() throws IOException, KrbException {
+        NodeInfo nodeInfo = new NodeInfo();
+        nodeInfo.setNodeId("node123");
+        nodeInfo.setIp("http://localhost:8080");
+        nodeInfo.setName("TestNode");
+
+        when(nodeRepository.findById("node123")).thenReturn(Optional.of(nodeInfo));
+        when(kerberosService.getPrincipalName(eq("http://localhost:8080"), eq("TEST.REALM")))
+                .thenReturn("principalName");
+        when(kerberosService.requestSgt(anyString(), anyString()))
+                .thenThrow(new KrbException("Kerberos error"));
+
+        Map<String, Object> result = nodeAccessService.getServiceToken("node123", "mockTgtToken");
+        
+        assertTrue(result.containsKey("error"));
+    }
+
+    @Test
+    void testGetServiceToken_IOException() throws IOException, KrbException {
+        NodeInfo nodeInfo = new NodeInfo();
+        nodeInfo.setNodeId("node123");
+        nodeInfo.setIp("http://localhost:8080");
+        nodeInfo.setName("TestNode");
+
+        when(nodeRepository.findById("node123")).thenReturn(Optional.of(nodeInfo));
+        when(kerberosService.getPrincipalName(eq("http://localhost:8080"), eq("TEST.REALM")))
+                .thenReturn("principalName");
+        when(kerberosService.requestSgt(anyString(), anyString()))
+                .thenThrow(new IOException("IO error"));
+
+        Map<String, Object> result = nodeAccessService.getServiceToken("node123", "mockTgtToken");
+        
+        assertTrue(result.containsKey("error"));
     }
 }
