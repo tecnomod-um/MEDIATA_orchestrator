@@ -23,17 +23,41 @@ This is the central backend service of the MEDIATA platform. It handles user aut
     - Node and user management
     - Log collection and monitoring
 
-## Getting Started
+## Quick Start
 
-### Using Docker Compose (Recommended)
+### Single-Command Deployment (Recommended)
 
-The easiest way to run the entire MEDIATA stack is with Docker Compose:
+Deploy the entire MEDIATA stack with one script:
+
+```bash
+# Copy environment file and set your JWT secret (32+ characters)
+cp .env.example .env
+nano .env  # Edit JWT_SECRET
+
+# Build and deploy everything
+./build-and-deploy.sh
+```
+
+This script:
+1. Builds the application JAR locally
+2. Creates Docker images for all services
+3. Starts the complete stack (MongoDB, Elasticsearch, Snowstorm, RDF Builder, FHIR API, Orchestrator)
+
+Services will be available at:
+- **Orchestrator**: http://localhost:8088/taniwha
+- **MongoDB**: mongodb://localhost:27017/mediata
+- **Snowstorm**: http://localhost:9100
+
+### Alternative: Manual Docker Compose
 
 ```bash
 # Copy environment file
 cp .env.example .env
+nano .env  # Edit JWT_SECRET (must be 32+ characters)
 
-# Edit .env and set your JWT secret
+# Build JAR locally
+mvn clean package -DskipTests
+
 # Start all services
 docker-compose up -d
 
@@ -41,11 +65,11 @@ docker-compose up -d
 docker-compose ps
 ```
 
-See [DOCKER.md](DOCKER.md) for detailed Docker setup instructions.
+See [DOCKER.md](DOCKER.md) for detailed setup, troubleshooting, and alternative deployment options.
 
 ### Local Development
 
-For local development without Docker, see [DOCKER.md](DOCKER.md#development) for instructions on running individual services.
+For local development without Docker, see [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md) for 5 different deployment configurations including cloud MongoDB options.
 
 ## License
 

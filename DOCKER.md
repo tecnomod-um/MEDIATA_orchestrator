@@ -17,34 +17,53 @@ The stack includes the following services:
 
 - Docker Engine 20.10+
 - Docker Compose 2.0+
+- Maven 3.6+ (for local JAR build)
 - At least 4GB of RAM available for Docker
 
 ## Quick Start
 
-1. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
+### Method 1: Using the Build Script (Easiest)
 
-2. Edit `.env` and set your JWT secret:
-   ```bash
-   JWT_SECRET=your-secret-key-here
-   ```
+```bash
+# 1. Copy and configure environment
+cp .env.example .env
+nano .env  # Set JWT_SECRET (32+ characters required)
 
-3. Start all services:
-   ```bash
-   docker-compose up -d
-   ```
+# 2. Run the automated build and deploy script
+./build-and-deploy.sh
+```
 
-4. Check service status:
-   ```bash
-   docker-compose ps
-   ```
+This script handles everything: builds the JAR locally, creates Docker images, and starts all services.
 
-5. View logs:
-   ```bash
-   docker-compose logs -f orchestrator
-   ```
+### Method 2: Manual Steps
+
+```bash
+# 1. Copy and configure environment
+cp .env.example .env
+nano .env  # Set JWT_SECRET (32+ characters required)
+
+# 2. Build the application JAR locally
+mvn clean package -DskipTests
+
+# 3. Start all services
+docker-compose up -d
+```
+
+### Why Build JAR Locally?
+
+The `docker-compose.yml` uses `Dockerfile.prebuilt` by default, which requires a pre-built JAR file. This approach:
+- ✅ Avoids SSL certificate issues in restricted environments
+- ✅ Faster subsequent builds (uses cached JAR)
+- ✅ More reliable in sandboxed/corporate networks
+- ✅ Production-ready deployment pattern
+
+> **Note**: The standard `Dockerfile` attempts to build from source inside Docker, but may fail due to SSL certificate issues when downloading Maven dependencies in restricted environments. For maximum reliability, always use the pre-built approach.
+
+### Check Service Status
+
+```bash
+docker-compose ps
+```
 
 ## Service URLs
 
