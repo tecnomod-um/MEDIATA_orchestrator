@@ -25,8 +25,6 @@ This is the central backend service of the MEDIATA platform. It handles user aut
 
 ## Deployment Options
 
-> **Note**: Due to the automated build process for RDF Builder and FHIR API services (which clone external repositories), the full Docker deployment requires network access during build. In restricted environments, you may need to run the orchestrator in standalone mode or manually clone the repositories first.
-
 ### Option 1: Full Docker Stack (Recommended)
 
 Deploy everything including MongoDB with one script:
@@ -36,7 +34,11 @@ Deploy everything including MongoDB with one script:
 cp .env.example .env
 nano .env  # Set JWT_SECRET (must be 32+ characters)
 
-# 2. Build and deploy
+# 2. Clone required Python service repositories
+git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
+git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
+
+# 3. Build and deploy
 ./build-and-deploy.sh
 ```
 

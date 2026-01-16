@@ -2,18 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies and update CA certificates
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
     build-essential \
     ca-certificates \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone the FHIR API repository
-# Note: SSL verification is disabled due to sandboxed environment limitations
-# In production, ensure proper CA certificates are installed
-RUN git -c http.sslVerify=false clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git /app
+# Copy the FHIR API repository from local clone
+# Users must clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git locally first
+# See README.md for instructions
+COPY ./InteroperabilityFHIRAPI/ /app/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
