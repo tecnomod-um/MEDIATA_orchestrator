@@ -1,74 +1,40 @@
-# Docker Compose Setup
+# Docker Deployment Guide
 
-This directory contains the complete Docker Compose setup for the MEDIATA Orchestrator and all its dependencies.
-
-## Architecture
-
-The stack includes the following services:
-
-1. **orchestrator** - The main Spring Boot application (port 8088, Kerberos port 8089)
-2. **mongodb** - MongoDB database (port 27017)
-3. **elasticsearch** - Elasticsearch for Snowstorm (port 9200)
-4. **snowstorm** - SNOMED CT terminology server (port 9100)
-5. **rdf-builder** - Python RDF/YARRRML builder service (port 8000)
-6. **fhir-api** - Python FHIR clustering API service (port 8001)
+This guide explains how to deploy the MEDIATA Orchestrator.
 
 ## Prerequisites
 
-- Docker Engine 20.10+
-- Docker Compose 2.0+
-- Maven 3.6+ (for local JAR build)
-- At least 4GB of RAM available for Docker
+- Docker Engine 20.10+ (for full Docker deployment)
+- Maven 3.6+
+- Java 17+
+- At least 4GB of RAM available for Docker (if using Docker deployment)
 
-## Quick Start
+## Deployment Options
 
-### Method 1: Using the Build Script (Easiest)
+### Option 1: Full Docker Stack
+
+Deploy all services including MongoDB in Docker:
+
+> **Network Access Required**: This deployment clones external repositories during the Docker build process (rdf-builder and FHIR API services). It requires network access and may not work in highly restricted environments.
 
 ```bash
-# 1. Copy and configure environment
+# 1. Configure environment
 cp .env.example .env
 nano .env  # Set JWT_SECRET (32+ characters required)
 
-# 2. Run the automated build and deploy script
+# 2. Build and deploy
 ./build-and-deploy.sh
 ```
 
-This script handles everything: builds the JAR locally, creates Docker images, and starts all services.
+**What gets deployed:**
+- MongoDB 7.0
+- Elasticsearch 8.11.1
+- Snowstorm (SNOMED CT server)
+- RDF Builder (Python service)
+- FHIR API (Python service)
+- MEDIATA Orchestrator
 
-### Method 2: Manual Steps
-
-```bash
-# 1. Copy and configure environment
-cp .env.example .env
-nano .env  # Set JWT_SECRET (32+ characters required)
-
-# 2. Build the application JAR locally
-mvn clean package -DskipTests
-
-# 3. Start all services
-docker-compose up -d
-```
-
-### Why Build JAR Locally?
-
-The `docker-compose.yml` uses `Dockerfile.prebuilt` by default, which requires a pre-built JAR file. This approach:
-- ✅ Avoids SSL certificate issues in restricted environments
-- ✅ Faster subsequent builds (uses cached JAR)
-- ✅ More reliable in sandboxed/corporate networks
-- ✅ Production-ready deployment pattern
-
-> **Note**: The standard `Dockerfile` attempts to build from source inside Docker, but may fail due to SSL certificate issues when downloading Maven dependencies in restricted environments. For maximum reliability, always use the pre-built approach.
-
-### Check Service Status
-
-```bash
-docker-compose ps
-```
-
-## Service URLs
-
-Once running, the services are available at:
-
+**Service URLs:**
 - Orchestrator API: http://localhost:8088/taniwha
 - Orchestrator Health: http://localhost:8088/taniwha/actuator/health
 - MongoDB: mongodb://localhost:27017/mediata
@@ -77,141 +43,188 @@ Once running, the services are available at:
 - RDF Builder: http://localhost:8000/docs
 - FHIR API: http://localhost:8001/docs
 
+### Option 2: Local Orchestrator with External/Cloud MongoDB
+
+Run the orchestrator locally (no Docker required for orchestrator). Works with cloud MongoDB (MongoDB Atlas) or local MongoDB:
+
+```bash
+# 1. Configure with your MongoDB URI
+cp .env.example .env
+nano .env
+# Set:
+#   MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/mediata
+#   # Or for local: mongodb://localhost:27017/mediata
+#   JWT_SECRET=your-32-character-secret-here
+
+# 2. Clone required service repositories (one-time setup)
+git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
+git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
+
+# 3. Run the orchestrator
+mvn spring-boot:run
+```
+
+**What gets launched automatically:**
+- Elasticsearch (in Docker)
+- Snowstorm (in Docker)
+- RDF Builder (Python service from cloned repo)
+- FHIR API (Python service from cloned repo)
+- MEDIATA Orchestrator (local Java process)
+
+**Service URLs:**
+- Orchestrator API: http://localhost:8088/taniwha
+- Orchestrator Health: http://localhost:8088/taniwha/actuator/health
+- MongoDB: Your configured URI
+- Elasticsearch: http://localhost:9200
+- Snowstorm: http://localhost:9100
+- RDF Builder: http://localhost:8000/docs
+- FHIR API: http://localhost:8001/docs
+
 ## Port Mapping
 
-| Service       | Container Port | Host Port | Description                    |
-|---------------|----------------|-----------|--------------------------------|
-| orchestrator  | 8088           | 8088      | Main application API           |
-| orchestrator  | 8089           | 8089      | Kerberos KDC                   |
-| mongodb       | 27017          | 27017     | MongoDB database               |
-| elasticsearch | 9200           | 9200      | Elasticsearch                  |
-| snowstorm     | 8080           | 9100      | Snowstorm API                  |
-| rdf-builder   | 8000           | 8000      | RDF Builder API                |
-| fhir-api      | 8001           | 8001      | FHIR Clustering API            |
+| Service       | Port  | Description             |
+|---------------|-------|-------------------------|
+| orchestrator  | 8088  | Main application API    |
+| orchestrator  | 8089  | Kerberos KDC            |
+| mongodb       | 27017 | MongoDB database        |
+| elasticsearch | 9200  | Elasticsearch           |
+| snowstorm     | 9100  | Snowstorm API           |
+| rdf-builder   | 8000  | RDF Builder API         |
+| fhir-api      | 8001  | FHIR Clustering API     |
 
 ## Useful Commands
 
-### Start services
+### Docker Deployment (Option 1)
+
 ```bash
-docker-compose up -d
+# Start services
+docker compose up -d
+
+# Stop services
+docker compose down
+
+# View status
+docker compose ps
+
+# View logs
+docker compose logs -f
+docker compose logs -f orchestrator
+
+# Restart a service
+docker compose restart orchestrator
+
+# Rebuild after code changes
+mvn clean package -DskipTests
+docker compose up -d --build orchestrator
+
+# Clean up everything (including data)
+docker compose down -v
 ```
 
-### Stop services
+### Local Deployment (Option 2)
+
 ```bash
-docker-compose down
+# Start orchestrator
+mvn spring-boot:run
+
+# View logs
+tail -f logs/app.log
+
+# Stop services (Ctrl+C to stop orchestrator, then manually stop Docker services)
+docker ps
+docker stop mediata-snowstorm mediata-elasticsearch
 ```
-
-### Restart a specific service
-```bash
-docker-compose restart orchestrator
-```
-
-### View logs
-```bash
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f orchestrator
-```
-
-### Rebuild after code changes
-```bash
-docker-compose up -d --build orchestrator
-```
-
-### Clean up everything (including volumes)
-```bash
-docker-compose down -v
-```
-
-## Development
-
-For local development without Docker Compose:
-
-1. Ensure MongoDB, Elasticsearch, and Snowstorm are running
-2. Clone the Python service repositories:
-   ```bash
-   git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
-   git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
-   ```
-3. Run the application with the default profile:
-   ```bash
-   mvn spring-boot:run
-   ```
 
 ## Troubleshooting
 
-### SSL Certificate Issues During Build
+### Docker Build Fails (Network/SSL Issues)
 
-If you encounter SSL certificate errors when building the orchestrator image (e.g., "unable to find valid certification path"), you have two options:
+If the Docker build fails due to network access or SSL certificate issues when cloning repositories:
 
-**Option 1: Use the updated Dockerfile with CA certificate updates**
-The main `Dockerfile` has been updated to refresh CA certificates before downloading dependencies. Simply rebuild:
-```bash
-docker-compose build --no-cache orchestrator
-```
-
-**Option 2: Build locally and use pre-built JAR**
-This is the recommended approach for environments with strict SSL policies:
-
-1. Build the application locally:
-   ```bash
-   mvn clean package -DskipTests
-   ```
-
-2. Edit `docker-compose.yml` and change the orchestrator build configuration:
-   ```yaml
-   orchestrator:
-     build:
-       context: .
-       dockerfile: Dockerfile.prebuilt  # Use pre-built JAR
-   ```
-
-3. Build and start:
-   ```bash
-   docker-compose up -d --build orchestrator
-   ```
-
-**Option 3: Use existing JAR from target directory**
-If you already have a built JAR file:
-```bash
-# Ensure target/taniwha.war exists
-ls -lh target/taniwha.war
-
-# Build with pre-built Dockerfile
-docker-compose build --no-cache orchestrator
-```
+**Solution**: Use Option 2 (Local Orchestrator) instead, which clones repositories to your local machine first.
 
 ### Services not starting
+
 Check service logs:
 ```bash
-docker-compose logs <service-name>
+# Docker
+docker compose logs <service-name>
+
+# Local
+tail -f logs/app.log
 ```
 
 ### Port conflicts
-If ports are already in use, edit `.env` and change the port mappings.
+
+If ports are already in use:
+1. Edit `.env` to change port mappings
+2. Or stop the conflicting service
 
 ### Memory issues
-Increase Docker's memory limit in Docker Desktop settings or adjust Elasticsearch memory in `docker-compose.yml`:
+
+For Docker deployment, increase Docker's memory limit in Docker Desktop settings.
+
+For Elasticsearch specifically, edit `docker-compose.yml`:
 ```yaml
 environment:
   - ES_JAVA_OPTS=-Xms512m -Xmx512m
 ```
 
-### Snowstorm not responding
+### Snowstorm takes time to start
+
 Snowstorm may take 1-2 minutes to fully start. Check its logs:
 ```bash
-docker-compose logs -f snowstorm
+# Docker
+docker compose logs -f snowstorm
+
+# Local
+docker logs mediata-snowstorm
 ```
 
-## Network
+### MongoDB connection issues
 
-All services communicate through the `mediata-network` bridge network. Services can reference each other by their service names (e.g., `mongodb`, `elasticsearch`, `rdf-builder`).
+Test your MongoDB connection:
+```bash
+# For local Docker MongoDB
+mongosh mongodb://localhost:27017/mediata
 
-## Volumes
+# For MongoDB Atlas
+mongosh "mongodb+srv://username:password@cluster.mongodb.net/mediata"
+```
 
-Persistent data is stored in Docker volumes:
+### Python services fail to launch (Local mode)
+
+Ensure repositories are cloned in the project root:
+```bash
+ls -la mediata-rdf-builder/
+ls -la InteroperabilityFHIRAPI/
+```
+
+Check Python version (3.11+ required):
+```bash
+python3 --version
+```
+
+## Data Persistence
+
+### Docker Deployment
+
+Data is stored in Docker volumes:
 - `mongodb-data` - MongoDB database files
 - `elasticsearch-data` - Elasticsearch indices
 - `kerby-data` - Kerberos configuration and data
+
+These volumes persist across container restarts. To remove them:
+```bash
+docker compose down -v
+```
+
+### Local Deployment
+
+- MongoDB: Data stored according to your MongoDB configuration
+- Elasticsearch: Docker volume `elasticsearch-data`
+- Orchestrator: Logs in `logs/` directory
+
+## Network
+
+For Docker deployment, all services communicate through the `mediata-network` bridge network. Services reference each other by their service names (e.g., `mongodb`, `elasticsearch`, `rdf-builder`).

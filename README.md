@@ -23,53 +23,76 @@ This is the central backend service of the MEDIATA platform. It handles user aut
     - Node and user management
     - Log collection and monitoring
 
-## Quick Start
+## Deployment Options
 
-### Single-Command Deployment (Recommended)
+> **Note**: Due to the automated build process for RDF Builder and FHIR API services (which clone external repositories), the full Docker deployment requires network access during build. In restricted environments, you may need to run the orchestrator in standalone mode or manually clone the repositories first.
 
-Deploy the entire MEDIATA stack with one script:
+### Option 1: Full Docker Stack (Recommended)
+
+Deploy everything including MongoDB with one script:
 
 ```bash
-# Copy environment file and set your JWT secret (32+ characters)
+# 1. Configure environment
 cp .env.example .env
-nano .env  # Edit JWT_SECRET
+nano .env  # Set JWT_SECRET (must be 32+ characters)
 
-# Build and deploy everything
+# 2. Build and deploy
 ./build-and-deploy.sh
 ```
-
-This script:
-1. Builds the application JAR locally
-2. Creates Docker images for all services
-3. Starts the complete stack (MongoDB, Elasticsearch, Snowstorm, RDF Builder, FHIR API, Orchestrator)
 
 Services will be available at:
 - **Orchestrator**: http://localhost:8088/taniwha
 - **MongoDB**: mongodb://localhost:27017/mediata
 - **Snowstorm**: http://localhost:9100
+- **RDF Builder**: http://localhost:8000
+- **FHIR API**: http://localhost:8001
 
-### Alternative: Manual Docker Compose
+### Option 2: Orchestrator with Cloud/Local MongoDB (No Docker)
+
+If you have your own MongoDB instance and want to run the orchestrator locally:
 
 ```bash
-# Copy environment file
+# 1. Configure environment with your MongoDB URI
 cp .env.example .env
-nano .env  # Edit JWT_SECRET (must be 32+ characters)
+nano .env
+# Set:
+#   MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/mediata
+#   # Or local: mongodb://localhost:27017/mediata
+#   JWT_SECRET=your-32-character-secret-key
 
-# Build JAR locally
-mvn clean package -DskipTests
+# 2. Clone required service repositories (if not already cloned)
+git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
+git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
 
-# Start all services
-docker-compose up -d
-
-# Check status
-docker-compose ps
+# 3. Run the orchestrator (auto-launches services)
+mvn spring-boot:run
 ```
 
-See [DOCKER.md](DOCKER.md) for detailed setup, troubleshooting, and alternative deployment options.
+The orchestrator will automatically:
+- ✅ Launch Elasticsearch and Snowstorm in Docker containers
+- ✅ Launch Python RDF Builder service (requires local repo clone)
+- ✅ Launch Python FHIR API service (requires local repo clone)
+- ✅ Connect to your specified MongoDB instance
 
-### Local Development
+Services will be available at:
+- **Orchestrator**: http://localhost:8088/taniwha
+- **MongoDB**: Your configured URI
+- **Snowstorm**: http://localhost:9100
+- **RDF Builder**: http://localhost:8000
+- **FHIR API**: http://localhost:8001
 
-For local development without Docker, see [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md) for 5 different deployment configurations including cloud MongoDB options.
+### Check Status
+
+```bash
+# For Docker deployment
+docker compose ps
+docker compose logs -f orchestrator
+
+# For standalone
+# Check logs in logs/app.log
+```
+
+See [DOCKER.md](DOCKER.md) for detailed setup and troubleshooting.
 
 ## License
 
