@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone the FHIR API repository
+# Note: SSL verification is disabled due to sandboxed environment limitations
+# In production, ensure proper CA certificates are installed
 RUN git -c http.sslVerify=false clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git /app
 
 # Install Python dependencies

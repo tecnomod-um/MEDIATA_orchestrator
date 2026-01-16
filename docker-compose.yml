@@ -147,7 +147,7 @@ services:
     environment:
       - PORT=8088
       - MONGODB_URI=mongodb://mongodb:27017/mediata
-      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
+      - JWT_SECRET=${JWT_SECRET}
       - KERBEROS_PORT=8089
       - PYURL=http://rdf-builder:8000
       - PYPORT=8000
