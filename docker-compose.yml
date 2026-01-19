@@ -16,7 +16,7 @@ services:
     container_name: mediata-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "${MONGODB_HOST_PORT:-27017}:27017"
     volumes:
       - mongodb-data:/data/db
     networks:
@@ -29,7 +29,7 @@ services:
 
   # Elasticsearch for Snowstorm
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    image: ${SNOWSTORM_ES_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.11.1}
     container_name: mediata-elasticsearch
     restart: unless-stopped
     environment:
@@ -40,7 +40,7 @@ services:
       - node.name=snowstorm
       - cluster.name=snowstorm-cluster
     ports:
-      - "9200:9200"
+      - "${SNOWSTORM_ES_HOST_PORT:-9200}:9200"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
     networks:
@@ -53,7 +53,7 @@ services:
 
   # Snowstorm SNOMED CT terminology server
   snowstorm:
-    image: snomedinternational/snowstorm:latest
+    image: ${SNOWSTORM_IMAGE:-snomedinternational/snowstorm:latest}
     container_name: mediata-snowstorm
     restart: unless-stopped
     depends_on:
@@ -75,7 +75,7 @@ services:
     environment:
       - SNOMED_SERVER_BRANCH=MAIN
     ports:
-      - "9100:8080"
+      - "${SNOWSTORM_HOST_PORT:-9100}:8080"
     networks:
       - mediata-network
     healthcheck:
@@ -93,7 +93,7 @@ services:
     container_name: mediata-rdf-builder
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${RDF_BUILDER_HOST_PORT:-8000}:8000"
     networks:
       - mediata-network
     healthcheck:
@@ -111,7 +111,7 @@ services:
     container_name: mediata-fhir-api
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "${FHIR_API_HOST_PORT:-8001}:8001"
     networks:
       - mediata-network
     healthcheck:
@@ -142,18 +142,18 @@ services:
       fhir-api:
         condition: service_healthy
     ports:
-      - "8088:8088"
-      - "8089:8089"  # Kerberos KDC port
+      - "${ORCHESTRATOR_HOST_PORT:-8088}:8088"
+      - "${KERBEROS_HOST_PORT:-8089}:8089"  # Kerberos KDC port
     environment:
-      - PORT=8088
-      - MONGODB_URI=mongodb://mongodb:27017/mediata
+      - PORT=${PORT:-8088}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
       - JWT_SECRET=${JWT_SECRET}
-      - KERBEROS_PORT=8089
-      - PYURL=http://rdf-builder:8000
-      - PYPORT=8000
-      - FHIRPORT=8001
-      - SNOWSTORM_HOST_PORT=9100
-      - SNOWSTORM_ES_HOST_PORT=9200
+      - KERBEROS_PORT=${KERBEROS_PORT:-8089}
+      - PYURL=${PYURL:-http://rdf-builder:8000}
+      - PYPORT=${PYPORT:-8000}
+      - FHIRPORT=${FHIRPORT:-8001}
+      - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
+      - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
     volumes:
       - kerby-data:/app/kerby
     networks:
