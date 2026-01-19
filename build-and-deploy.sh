@@ -33,7 +33,7 @@ echo ""
 
 if [ -f "target/taniwha.war" ]; then
     echo "✓ Found existing taniwha.war"
-    read -p "Do you want to rebuild it? (y/N): " rebuild
+    read -r -p "Do you want to rebuild it? (y/N): " rebuild
     if [[ $rebuild =~ ^[Yy]$ ]]; then
         echo "Rebuilding application..."
         mvn clean package -DskipTests -B
