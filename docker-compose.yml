@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   mediata-network:
     driver: bridge
@@ -10,7 +8,6 @@ volumes:
   kerby-data:
 
 services:
-  # MongoDB database
   mongodb:
     image: mongo:7.0
     container_name: mediata-mongodb
@@ -27,7 +24,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Elasticsearch for Snowstorm
   elasticsearch:
     image: ${SNOWSTORM_ES_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.11.1}
     container_name: mediata-elasticsearch
@@ -51,7 +47,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Snowstorm SNOMED CT terminology server
   snowstorm:
     image: ${SNOWSTORM_IMAGE:-snomedinternational/snowstorm:latest}
     container_name: mediata-snowstorm
@@ -69,8 +64,6 @@ services:
       - "@/app/jib-classpath-file"
       - org.snomed.snowstorm.SnowstormApplication
       - --elasticsearch.urls=http://elasticsearch:9200
-      # Note: Security is disabled for internal use. In production, enable authentication
-      # and configure proper access controls via environment variables or reverse proxy
       - --spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
     environment:
       - SNOMED_SERVER_BRANCH=MAIN
@@ -85,7 +78,6 @@ services:
       retries: 5
       start_period: 60s
 
-  # RDF Builder Python service
   rdf-builder:
     build:
       context: .
@@ -103,7 +95,6 @@ services:
       retries: 3
       start_period: 30s
 
-  # FHIR API Python service
   fhir-api:
     build:
       context: .
@@ -121,11 +112,6 @@ services:
       retries: 3
       start_period: 60s
 
-  # MEDIATA Orchestrator (main application)
-  #
-  # Uses Dockerfile.prebuilt which requires a pre-built JAR
-  # Run ./build-and-deploy.sh OR manually build first: mvn clean package -DskipTests
-  #
   orchestrator:
     build:
       context: .
@@ -143,7 +129,7 @@ services:
         condition: service_healthy
     ports:
       - "${ORCHESTRATOR_HOST_PORT:-8088}:8088"
-      - "${KERBEROS_HOST_PORT:-8089}:8089"  # Kerberos KDC port
+      - "${KERBEROS_HOST_PORT:-8089}:8089"
     environment:
       - PORT=${PORT:-8088}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
