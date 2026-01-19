@@ -1,41 +1,12 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates \
+    curl && update-ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    && update-ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy the FHIR API repository from local clone
-# Users must clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git locally first
-# See README.md for instructions
 COPY ./InteroperabilityFHIRAPI/ /app/
+RUN python -m pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir \
-    numpy \
-    spacy \
-    nltk \
-    scikit-learn \
-    sentence-transformers \
-    openai \
-    torch \
-    requests \
-    farm-haystack[openai] \
-    fastapi \
-    uvicorn
-
-# Download spacy model
-RUN python -m spacy download en_core_web_sm
-
-# Download NLTK data
-RUN python -c "import nltk; nltk.download('stopwords'); nltk.download('punkt')"
-
-# Expose the service port
+RUN python -m spacy download en_core_web_sm && python -m nltk.downloader stopwords punkt
 EXPOSE 8001
-
-# Run the FastAPI application
-CMD ["uvicorn", "api.main_api_clustering:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+CMD ["uvicorn", "api.main_api_clustering:app", "--host", "0.0.0.0", "--port", "8001"]

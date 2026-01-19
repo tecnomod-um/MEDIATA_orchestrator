@@ -1,27 +1,14 @@
 # Alternative Dockerfile using pre-built JAR
 # This avoids Maven SSL certificate issues during Docker build
-# 
-# Usage:
-# 1. Build locally: mvn clean package -DskipTests
-# 2. Build Docker image: docker build -f Dockerfile.prebuilt -t mediata-orchestrator .
 
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
-# Install curl for healthchecks
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-
-# Create directories for Kerberos
 RUN mkdir -p /app/kerby /app/logs
 
-# Copy the pre-built WAR file
 COPY target/taniwha.war /app/taniwha.war
-
-# Copy Kerberos configuration
 COPY krb5.conf /etc/krb5.conf
-
-# Expose the application port and Kerberos port
 EXPOSE 8088 8089
 
-# Run the application with docker profile
 ENTRYPOINT ["java", "-jar", "/app/taniwha.war", "--spring.profiles.active=docker"]
