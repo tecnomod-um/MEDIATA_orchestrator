@@ -100,7 +100,7 @@ public class KerberosService {
             TgtTicket tgtTicket = krbClient.requestTgt(userPrincipal, password);
             logger.debug("TGT acquired for user principal: {}", userPrincipal);
             return encodeKrbTicket(tgtTicket);
-        } catch (Exception e) {
+        } catch (KrbException | IOException e) {
             logger.error("Error generating Kerberos TGT", e);
         }
         return null;

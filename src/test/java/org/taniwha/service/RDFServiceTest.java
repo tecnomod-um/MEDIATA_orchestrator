@@ -43,22 +43,35 @@ class RDFServiceTest {
 
     @Test
     void getClassSuggestions_filtersByQuery_andHandlesErrors() {
-        ResponseEntity<List> ok = new ResponseEntity<>(
+        ResponseEntity<List<String>> ok = new ResponseEntity<>(
                 Arrays.asList("FooType", "Other"),
                 HttpStatus.OK
         );
-        when(rest.getForEntity(base + "/types", List.class)).thenReturn(ok);
+        when(rest.exchange(
+                eq(base + "/types"),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenReturn(ok);
         assertThat(svc.getClassSuggestions("")).hasSize(2);
         assertThat(svc.getClassSuggestions("foo"))
                 .extracting(OntologyTermDTO::getLabel)
                 .containsExactly("FooType");
 
-        when(rest.getForEntity(base + "/types", List.class))
-                .thenReturn(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
+        when(rest.exchange(
+                eq(base + "/types"),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenReturn(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
         assertThat(svc.getClassSuggestions(null)).isEmpty();
 
-        when(rest.getForEntity(base + "/types", List.class))
-                .thenThrow(new RestClientException("fail"));
+        when(rest.exchange(
+                eq(base + "/types"),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenThrow(new RestClientException("fail"));
         assertThat(svc.getClassSuggestions("x")).isEmpty();
     }
 
@@ -101,23 +114,36 @@ class RDFServiceTest {
     @Test
     void getSNOMEDTermSuggestions_splitsAndHandlesErrors() {
         String q = "Q";
-        ResponseEntity<List> ok = new ResponseEntity<>(
+        ResponseEntity<List<String>> ok = new ResponseEntity<>(
                 Arrays.asList("123|Foo", "456Only"),
                 HttpStatus.OK
         );
-        when(rest.getForEntity(base + "/term/" + q, List.class)).thenReturn(ok);
+        when(rest.exchange(
+                eq(base + "/term/" + q),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenReturn(ok);
 
         List<OntologyTermDTO> out = svc.getSNOMEDTermSuggestions(q);
         assertThat(out).hasSize(2);
         assertThat(out).extracting(OntologyTermDTO::getLabel)
                 .containsExactly("Foo", "456Only");
 
-        when(rest.getForEntity(base + "/term/" + q, List.class))
-                .thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
+        when(rest.exchange(
+                eq(base + "/term/" + q),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
 
-        when(rest.getForEntity(base + "/term/" + q, List.class))
-                .thenThrow(new RestClientException("nope"));
+        when(rest.exchange(
+                eq(base + "/term/" + q),
+                eq(HttpMethod.GET),
+                eq(null),
+                any(ParameterizedTypeReference.class)
+        )).thenThrow(new RestClientException("nope"));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
     }
 
