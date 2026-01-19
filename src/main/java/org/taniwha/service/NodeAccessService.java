@@ -76,7 +76,7 @@ public class NodeAccessService {
                         url, response.getStatusCode());
                 return null;
             }
-        } catch (Exception e) {
+        } catch (RestClientException e) {
             logger.error("Error fetching node metadata for nodeId {} with url {}", nodeId, url, e);
             return null;
         }

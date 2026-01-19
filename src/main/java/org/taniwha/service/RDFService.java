@@ -47,7 +47,12 @@ public class RDFService {
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         List<OntologyTermDTO> suggestions = new ArrayList<>();
         try {
-            ResponseEntity<List> response = restTemplate.getForEntity(url, List.class);
+            ResponseEntity<List<String>> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    null,
+                    new ParameterizedTypeReference<List<String>>() {}
+            );
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<String> types = response.getBody();
                 if (types != null) {
@@ -142,7 +147,12 @@ public class RDFService {
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         List<OntologyTermDTO> suggestions = new ArrayList<>();
         try {
-            ResponseEntity<List> response = restTemplate.getForEntity(url, List.class);
+            ResponseEntity<List<String>> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    null,
+                    new ParameterizedTypeReference<List<String>>() {}
+            );
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<String> terms = response.getBody();
                 logger.info(response.getBody().toString());
