@@ -83,6 +83,15 @@ Services will be available at:
 - **RDF Builder**: http://localhost:8000
 - **FHIR API**: http://localhost:8001
 
+### Default Admin Credentials
+
+On first deployment, a default admin user is automatically created:
+
+- **Username**: `admin`
+- **Password**: `admin`
+
+⚠️ **IMPORTANT**: Change this password immediately after first login in production environments!
+
 ### Check Status
 
 ```bash
