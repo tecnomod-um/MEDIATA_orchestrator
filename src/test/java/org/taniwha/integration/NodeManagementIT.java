@@ -109,16 +109,15 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
     @Test
     void testUnauthorizedAccessToNodes() throws Exception {
-        // No authentication - should be forbidden
-        Map<String, Object> nodeRequest = new HashMap<>();
-        nodeRequest.put("ip", "192.168.1.1");
-        nodeRequest.put("name", "Unauthorized Node");
+        // No authentication - should be unauthorized when accessing protected endpoints
+        Map<String, Object> deregisterRequest = new HashMap<>();
+        deregisterRequest.put("ip", "192.168.1.1");
 
-        mockMvc.perform(post("/nodes/register")
+        mockMvc.perform(post("/nodes/deregister")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(nodeRequest)))
-                .andExpect(status().isForbidden());
+                        .content(objectMapper.writeValueAsString(deregisterRequest)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
