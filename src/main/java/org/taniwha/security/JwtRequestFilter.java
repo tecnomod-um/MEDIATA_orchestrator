@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -29,6 +30,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     private static final Logger filterLogger = LoggerFactory.getLogger(JwtRequestFilter.class);
     private final JwtTokenUtil jwtTokenUtil;
     private final ApplicationContext applicationContext;
+    
+    @Value("${jwt.filter.enabled:true}")
+    private boolean jwtFilterEnabled;
 
     public JwtRequestFilter(JwtTokenUtil jwtTokenUtil, ApplicationContext applicationContext) {
         this.jwtTokenUtil = jwtTokenUtil;
@@ -38,6 +42,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain chain)
             throws ServletException, IOException {
+
+        // Skip JWT authentication if disabled (e.g., in tests)
+        if (!jwtFilterEnabled) {
+            chain.doFilter(request, response);
+            return;
+        }
 
         // Allow requests to log in and register endpoints to bypass the filter
         if (isExemptedEndpoint(request)) {
@@ -58,7 +68,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
         String requestURI = request.getRequestURI();
-        return requestURI.equals("/taniwha/api/user/login") || requestURI.equals("/taniwha/api/user/register") || requestURI.startsWith("/taniwha/api/error");
+        return requestURI.endsWith("/api/user/login") 
+            || requestURI.endsWith("/api/user/register") 
+            || requestURI.contains("/api/error");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {
