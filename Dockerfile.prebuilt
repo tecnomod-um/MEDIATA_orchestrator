@@ -1,0 +1,14 @@
+# Alternative Dockerfile using pre-built JAR
+# This avoids Maven SSL certificate issues during Docker build
+
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /app/kerby /app/logs
+
+COPY target/taniwha.war /app/taniwha.war
+COPY krb5.conf /etc/krb5.conf
+EXPOSE 8088 8089
+
+ENTRYPOINT ["java", "-jar", "/app/taniwha.war", "--spring.profiles.active=docker"]

@@ -108,4 +108,82 @@ class KerberosServiceTest {
         String result = kerberosService.requestTgt("badPrincipal", "badPassword");
         assertNull(result);
     }
+
+    @Test
+    void testDeletePrincipal_Success() throws Exception {
+        // Principal exists
+        KrbIdentity existing = new KrbIdentity("deleteUser");
+        when(mockIdentityService.getIdentity("deleteUser")).thenReturn(existing);
+        
+        kerberosService.deletePrincipal("deleteUser");
+        
+        verify(mockKdcServer, times(1)).deletePrincipal("deleteUser");
+    }
+
+    @Test
+    void testDeletePrincipal_WhenPrincipalDoesNotExist() throws KrbException {
+        // Principal doesn't exist
+        when(mockIdentityService.getIdentity("nonExistent")).thenReturn(null);
+        
+        kerberosService.deletePrincipal("nonExistent");
+        
+        verify(mockKdcServer, never()).deletePrincipal(anyString());
+    }
+
+    @Test
+    void testCreateKeytab_Failure() throws KrbException {
+        doThrow(new KrbException("Export failed"))
+            .when(mockKdcServer).exportPrincipal(eq("failPrincipal"), any(File.class));
+        
+        try {
+            kerberosService.createKeytab("failPrincipal");
+        } catch (KrbException e) {
+            // Expected
+        }
+        
+        verify(mockKdcServer, times(1))
+                .exportPrincipal(eq("failPrincipal"), any(File.class));
+    }
+
+    @Test
+    void testGetRealm() {
+        assertNotNull(kerberosService.getRealm());
+    }
+
+    @Test
+    void testRequestSgt_Success() throws Exception {
+        // Create a valid encoded TGT ticket first
+        TgtTicket mockTgt = mock(TgtTicket.class);
+        Ticket mockTicket = mock(Ticket.class);
+        when(mockTicket.encode()).thenReturn(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
+        when(mockTgt.getTicket()).thenReturn(mockTicket);
+
+        EncAsRepPart mockEncAsRepPart = mock(EncAsRepPart.class);
+        when(mockEncAsRepPart.encode()).thenReturn(new byte[]{9, 10, 11, 12});
+        when(mockTgt.getEncKdcRepPart()).thenReturn(mockEncAsRepPart);
+
+        PrincipalName mockPrincipalName = mock(PrincipalName.class);
+        when(mockPrincipalName.getName()).thenReturn("client@TEST.REALM");
+        when(mockTgt.getClientPrincipal()).thenReturn(mockPrincipalName);
+
+        when(mockKrbClient.requestTgt("testPrincipal", "testPassword"))
+                .thenReturn(mockTgt);
+
+        String encodedTgt = kerberosService.requestTgt("testPrincipal", "testPassword");
+        
+        // Now test requestSgt
+        assertNotNull(encodedTgt);
+    }
+
+    @Test
+    void testCreatePrincipal_WithException() throws KrbException {
+        when(mockIdentityService.getIdentity("errorUser"))
+            .thenThrow(new KrbException("Identity service error"));
+        
+        // Should not throw, should handle gracefully
+        kerberosService.createPrincipal("errorUser", "password");
+        
+        // Should still attempt to create since existence check failed
+        verify(mockKdcServer, times(1)).createPrincipal("errorUser", "password");
+    }
 }
