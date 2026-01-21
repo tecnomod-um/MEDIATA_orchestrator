@@ -134,9 +134,9 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
 
     @Test
     void testUnauthorizedAccessToSchemas() throws Exception {
-        // No authentication - should be forbidden
+        // No authentication - should be unauthorized
         mockMvc.perform(get("/nodes/schema"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
