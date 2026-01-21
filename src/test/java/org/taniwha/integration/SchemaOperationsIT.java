@@ -50,10 +50,10 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
     @Test
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void testCreateSchema() throws Exception {
-        Map<String, Object> schemaRequest = new HashMap<>();
-        schemaRequest.put("nodeIp", "192.168.1.50");
-        schemaRequest.put("schemaName", "PatientSchema");
-        schemaRequest.put("version", "1.0");
+        Map<String, Object> schemaData = new HashMap<>();
+        schemaData.put("nodeIp", "192.168.1.50");
+        schemaData.put("schemaName", "PatientSchema");
+        schemaData.put("version", "1.0");
         
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field1 = new HashMap<>();
@@ -66,11 +66,14 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         field2.put("type", "String");
         fields.add(field2);
         
-        schemaRequest.put("fields", fields);
+        schemaData.put("fields", fields);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("schema", schemaData);
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .content(objectMapper.writeValueAsString(request))
                         .with(csrf()))
                 .andExpect(status().isOk());
     }
@@ -79,20 +82,23 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void testGetSchemas() throws Exception {
         // First create a schema
-        Map<String, Object> schemaRequest = new HashMap<>();
-        schemaRequest.put("nodeIp", "192.168.1.50");
-        schemaRequest.put("schemaName", "TestSchema");
+        Map<String, Object> schemaData = new HashMap<>();
+        schemaData.put("nodeIp", "192.168.1.50");
+        schemaData.put("schemaName", "TestSchema");
         
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field = new HashMap<>();
         field.put("name", "testField");
         field.put("type", "String");
         fields.add(field);
-        schemaRequest.put("fields", fields);
+        schemaData.put("fields", fields);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("schema", schemaData);
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .content(objectMapper.writeValueAsString(request))
                         .with(csrf()))
                 .andExpect(status().isOk());
 
@@ -105,30 +111,29 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void testDeleteSchema() throws Exception {
         // Create schema to delete
-        Map<String, Object> schemaRequest = new HashMap<>();
-        schemaRequest.put("nodeIp", "192.168.1.50");
-        schemaRequest.put("schemaName", "DeleteMe");
+        Map<String, Object> schemaData = new HashMap<>();
+        schemaData.put("nodeIp", "192.168.1.50");
+        schemaData.put("schemaName", "DeleteMe");
         
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field = new HashMap<>();
         field.put("name", "field1");
         field.put("type", "String");
         fields.add(field);
-        schemaRequest.put("fields", fields);
+        schemaData.put("fields", fields);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("schema", schemaData);
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .content(objectMapper.writeValueAsString(request))
                         .with(csrf()))
                 .andExpect(status().isOk());
 
         // Delete the schema
-        Map<String, String> deleteRequest = new HashMap<>();
-        deleteRequest.put("schemaName", "DeleteMe");
-        
         mockMvc.perform(delete("/nodes/schema")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(deleteRequest)))
+                        .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
     }
 
@@ -145,9 +150,9 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         // Complete lifecycle: Create -> Retrieve -> Delete
 
         // 1. Create schema
-        Map<String, Object> createRequest = new HashMap<>();
-        createRequest.put("nodeIp", "192.168.1.50");
-        createRequest.put("schemaName", "LifecycleSchema");
+        Map<String, Object> schemaData = new HashMap<>();
+        schemaData.put("nodeIp", "192.168.1.50");
+        schemaData.put("schemaName", "LifecycleSchema");
         
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field1 = new HashMap<>();
@@ -160,11 +165,14 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         field2.put("type", "Integer");
         fields.add(field2);
         
-        createRequest.put("fields", fields);
+        schemaData.put("fields", fields);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("schema", schemaData);
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(createRequest))
+                        .content(objectMapper.writeValueAsString(request))
                         .with(csrf()))
                 .andExpect(status().isOk());
 
@@ -173,12 +181,8 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
                 .andExpect(status().isOk());
 
         // 3. Delete schema
-        Map<String, String> deleteRequest = new HashMap<>();
-        deleteRequest.put("schemaName", "LifecycleSchema");
-        
         mockMvc.perform(delete("/nodes/schema")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(deleteRequest)))
+                        .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
     }
 }

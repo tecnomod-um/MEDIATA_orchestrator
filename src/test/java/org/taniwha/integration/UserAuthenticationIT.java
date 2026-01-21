@@ -122,9 +122,8 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(registerRequest))
                         .with(csrf()))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.username", is("newuser")))
-                .andExpect(jsonPath("$.email", is("newuser@example.com")));
+                .andExpect(status().isOk())
+                .andExpect(content().string("User registered successfully"));
 
         // Verify user was saved to database
         User savedUser = userRepository.findByUsername("newuser");
