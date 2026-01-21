@@ -2,7 +2,7 @@ package org.taniwha.security;
 
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.SignatureException;
+import io.jsonwebtoken.security.SignatureException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -51,7 +51,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String username = validateTokenAndExtractUsername(jwtToken, response);
         if (username == null) return;
 
-        authenticateUser(request, response, jwtToken, username);
+        if (!authenticateUser(request, response, jwtToken, username)) return;
+
         chain.doFilter(request, response);
     }
 
@@ -92,7 +93,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void authenticateUser(HttpServletRequest request, HttpServletResponse response, String jwtToken, String username)
+    private boolean authenticateUser(HttpServletRequest request, HttpServletResponse response, String jwtToken, String username)
             throws IOException {
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserService userService = applicationContext.getBean(UserService.class);
@@ -103,11 +104,18 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                     authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                    return true;
+                } else {
+                    // Token validation failed - don't authenticate but don't send error
+                    // (let Spring Security handle it)
+                    return true;
                 }
             } catch (UsernameNotFoundException e) {
                 filterLogger.warn("User not found: {}", username);
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "User not found");
+                return false;
             }
         }
+        return true;
     }
 }

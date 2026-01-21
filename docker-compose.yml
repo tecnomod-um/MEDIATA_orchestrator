@@ -1,26 +1,56 @@
-version: '3.8'
+networks:
+  mediata-network:
+    driver: bridge
+
+volumes:
+  mongodb-data:
+  elasticsearch-data:
+  kerby-data:
 
 services:
+  mongodb:
+    image: mongo:7.0
+    container_name: mediata-mongodb
+    restart: unless-stopped
+    ports:
+      - "${MONGODB_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
-    container_name: elasticsearch
+    image: ${SNOWSTORM_ES_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.11.1}
+    container_name: mediata-elasticsearch
+    restart: unless-stopped
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
-      # run in NIOFS mode, skip vm.max_map_count check
       - node.store.allow_mmap=false
+      - node.name=snowstorm
+      - cluster.name=snowstorm-cluster
     ports:
-      - "9200:9200"
+      - "${SNOWSTORM_ES_HOST_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - mediata-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9200/"]
       interval: 15s
+      timeout: 5s
       retries: 5
 
   snowstorm:
-    image: snomedinternational/snowstorm:latest
-    container_name: snowstorm
+    image: ${SNOWSTORM_IMAGE:-snomedinternational/snowstorm:latest}
+    container_name: mediata-snowstorm
+    restart: unless-stopped
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -34,9 +64,89 @@ services:
       - "@/app/jib-classpath-file"
       - org.snomed.snowstorm.SnowstormApplication
       - --elasticsearch.urls=http://elasticsearch:9200
+      - --spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
     environment:
-      # after you load RF2 into MAIN, this branch will become non-null
       - SNOMED_SERVER_BRANCH=MAIN
     ports:
-      - "9100:8080"
-    restart: always
+      - "${SNOWSTORM_HOST_PORT:-9100}:8080"
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  rdf-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.rdf-builder
+    container_name: mediata-rdf-builder
+    restart: unless-stopped
+    ports:
+      - "${RDF_BUILDER_HOST_PORT:-8000}:8000"
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  fhir-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.fhir-api
+    container_name: mediata-fhir-api
+    restart: unless-stopped
+    ports:
+      - "${FHIR_API_HOST_PORT:-8001}:8001"
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.prebuilt
+    container_name: mediata-orchestrator
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      snowstorm:
+        condition: service_healthy
+      rdf-builder:
+        condition: service_healthy
+      fhir-api:
+        condition: service_healthy
+    ports:
+      - "${ORCHESTRATOR_HOST_PORT:-8088}:8088"
+      - "${KERBEROS_HOST_PORT:-8089}:8089"
+    environment:
+      - PORT=${PORT:-8088}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
+      - JWT_SECRET=${JWT_SECRET}
+      - KERBEROS_PORT=${KERBEROS_PORT:-8089}
+      - PYURL=${PYURL:-http://rdf-builder:8000}
+      - PYPORT=${PYPORT:-8000}
+      - FHIRPORT=${FHIRPORT:-8001}
+      - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
+      - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
+    volumes:
+      - kerby-data:/app/kerby
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/taniwha/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s

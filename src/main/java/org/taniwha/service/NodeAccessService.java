@@ -24,7 +24,8 @@ import java.util.Map;
 public class NodeAccessService {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeAccessService.class);
-    private static final String ERROR = "error";
+    private static final String ERROR_KEY = "error";
+    private static final String NODE_NOT_FOUND_MESSAGE = "Node not found";
     private final NodeRepository nodeRepository;
     private final JwtTokenUtil jwtTokenUtil;
     private final KerberosService kerberosService;
@@ -75,7 +76,7 @@ public class NodeAccessService {
                         url, response.getStatusCode());
                 return null;
             }
-        } catch (Exception e) {
+        } catch (RestClientException e) {
             logger.error("Error fetching node metadata for nodeId {} with url {}", nodeId, url, e);
             return null;
         }
@@ -87,7 +88,7 @@ public class NodeAccessService {
 
         if (nodeInfo == null) {
             logger.error("Tried fetching node that doesnt exist");
-            response.put(ERROR, "Node not found");
+            response.put(ERROR_KEY, NODE_NOT_FOUND_MESSAGE);
         } else {
             // Access the node's principal
             String serviceToken;
@@ -95,18 +96,20 @@ public class NodeAccessService {
                 serviceToken = kerberosService.requestSgt(userTgtToken, kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
             } catch (IOException | KrbException e) {
                 logger.error("Error requesting the Sgt token", e);
-                response.put(ERROR, "Node not found");
+                response.put(ERROR_KEY, NODE_NOT_FOUND_MESSAGE);
                 return response;
             }
 
             if (serviceToken != null) {
                 boolean success = sendTokenToNode(nodeInfo, serviceToken);
-                if (success)
+                if (success) {
                     response.put("token", serviceToken);
-                else
-                    response.put(ERROR, "Failed to connect to node " + nodeInfo.getName());
-            } else
-                response.put(ERROR, "Failed to generate token. Node can't be reached");
+                } else {
+                    response.put(ERROR_KEY, "Failed to connect to node " + nodeInfo.getName());
+                }
+            } else {
+                response.put(ERROR_KEY, "Failed to generate token. Node can't be reached");
+            }
         }
         return response;
     }

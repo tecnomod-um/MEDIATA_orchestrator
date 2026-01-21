@@ -23,4 +23,93 @@ This is the central backend service of the MEDIATA platform. It handles user aut
     - Node and user management
     - Log collection and monitoring
 
+## Deployment Options
+
+### Option 1: Full Docker Stack (Recommended)
+
+Deploy everything including MongoDB with one script:
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+nano .env  # Set JWT_SECRET (must be 32+ characters)
+
+# 2. Clone required Python service repositories
+git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
+git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
+
+# 3. Build and deploy
+./build-and-deploy.sh
+```
+
+Services will be available at:
+- **Orchestrator**: http://localhost:8088/taniwha
+- **MongoDB**: mongodb://localhost:27017/mediata
+- **Snowstorm**: http://localhost:9100
+- **RDF Builder**: http://localhost:8000
+- **FHIR API**: http://localhost:8001
+
+### Option 2: Orchestrator with Cloud/Local MongoDB (No Docker)
+
+If you have your own MongoDB instance and want to run the orchestrator locally:
+
+```bash
+# 1. Configure environment with your MongoDB URI
+cp .env.example .env
+nano .env
+# Set:
+#   MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/mediata
+#   # Or local: mongodb://localhost:27017/mediata
+#   JWT_SECRET=your-32-character-secret-key
+
+# 2. Clone required service repositories (if not already cloned)
+git clone https://github.com/tecnomod-um/mediata-rdf-builder.git
+git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git
+
+# 3. Run the orchestrator (auto-launches services)
+mvn spring-boot:run
+```
+
+The orchestrator will automatically:
+- ✅ Launch Elasticsearch and Snowstorm in Docker containers
+- ✅ Launch Python RDF Builder service (requires local repo clone)
+- ✅ Launch Python FHIR API service (requires local repo clone)
+- ✅ Connect to your specified MongoDB instance
+
+Services will be available at:
+- **Orchestrator**: http://localhost:8088/taniwha
+- **MongoDB**: Your configured URI
+- **Snowstorm**: http://localhost:9100
+- **RDF Builder**: http://localhost:8000
+- **FHIR API**: http://localhost:8001
+
+### Default Admin Credentials
+
+On first deployment, a default admin user is automatically created:
+
+- **Username**: `admin`
+- **Password**: `admin`
+
+⚠️ **IMPORTANT**: Change this password immediately after first login in production environments!
+
+**Node Access**: The admin user automatically gets access to all newly registered nodes. This ensures that nodes deployed for local/development use can be accessed immediately without manual permission setup. In production environments, you should:
+- Change the admin password
+- Remove admin access from sensitive nodes
+- Create specific users with appropriate node permissions
+
+### Check Status
+
+```bash
+# For Docker deployment
+docker compose ps
+docker compose logs -f orchestrator
+
+# For standalone
+# Check logs in logs/app.log
+```
+
+See [DOCKER.md](DOCKER.md) for detailed setup and troubleshooting.
+
+## License
+
 This project is developed under the [MIT License](LICENSE.md).
