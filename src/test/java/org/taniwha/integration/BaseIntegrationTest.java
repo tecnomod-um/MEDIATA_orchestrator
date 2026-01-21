@@ -5,8 +5,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
@@ -16,14 +14,18 @@ import java.time.Duration;
  * All integration tests should extend this class to share the same MongoDB instance.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers
 public abstract class BaseIntegrationTest {
 
-    @Container
-    static GenericContainer<?> mongoDBContainer = new GenericContainer<>(DockerImageName.parse("mongo:7.0"))
-            .withExposedPorts(27017)
-            .waitingFor(Wait.forLogMessage(".*Waiting for connections.*", 1))
-            .withStartupTimeout(Duration.ofSeconds(60));
+    // Singleton container shared across all test classes
+    private static final GenericContainer<?> mongoDBContainer;
+    
+    static {
+        mongoDBContainer = new GenericContainer<>(DockerImageName.parse("mongo:7.0"))
+                .withExposedPorts(27017)
+                .waitingFor(Wait.forLogMessage(".*Waiting for connections.*", 1))
+                .withStartupTimeout(Duration.ofSeconds(60));
+        mongoDBContainer.start();
+    }
 
     @DynamicPropertySource
     static void setProperties(DynamicPropertyRegistry registry) {
