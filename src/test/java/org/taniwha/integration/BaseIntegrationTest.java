@@ -1,14 +1,15 @@
 package org.taniwha.integration;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.MongoDBContainer;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
+
+import java.time.Duration;
 
 /**
  * Base class for integration tests that provides MongoDB test container setup.
@@ -19,16 +20,17 @@ import org.testcontainers.utility.DockerImageName;
 public abstract class BaseIntegrationTest {
 
     @Container
-    static MongoDBContainer mongoDBContainer = new MongoDBContainer(DockerImageName.parse("mongo:7.0"))
-            .waitingFor(Wait.forListeningPort());
+    static GenericContainer<?> mongoDBContainer = new GenericContainer<>(DockerImageName.parse("mongo:7.0"))
+            .withExposedPorts(27017)
+            .waitingFor(Wait.forLogMessage(".*Waiting for connections.*", 1))
+            .withStartupTimeout(Duration.ofSeconds(60));
 
     @DynamicPropertySource
     static void setProperties(DynamicPropertyRegistry registry) {
-        // Use connection string format without replica set to avoid hostname resolution issues
-        registry.add("spring.data.mongodb.uri", () -> 
-            String.format("mongodb://%s:%d/test", 
-                mongoDBContainer.getHost(), 
-                mongoDBContainer.getFirstMappedPort()));
+        String connectionString = String.format("mongodb://%s:%d/test",
+                mongoDBContainer.getHost(),
+                mongoDBContainer.getMappedPort(27017));
+        registry.add("spring.data.mongodb.uri", () -> connectionString);
         registry.add("jwt.secret", () -> "testSecretKeyThatIs32CharsLong!");
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
