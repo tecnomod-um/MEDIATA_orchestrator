@@ -24,7 +24,11 @@ public abstract class BaseIntegrationTest {
 
     @DynamicPropertySource
     static void setProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.data.mongodb.uri", mongoDBContainer::getReplicaSetUrl);
+        // Use connection string format without replica set to avoid hostname resolution issues
+        registry.add("spring.data.mongodb.uri", () -> 
+            String.format("mongodb://%s:%d/test", 
+                mongoDBContainer.getHost(), 
+                mongoDBContainer.getFirstMappedPort()));
         registry.add("jwt.secret", () -> "testSecretKeyThatIs32CharsLong!");
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
