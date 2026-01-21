@@ -58,13 +58,13 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
         testRole.setName("ADMIN");
         testRole = roleRepository.save(testRole);
 
-        // Create test user
+        // Create test user with roles
         testUser = new User(
                 null, // id - let MongoDB generate
                 "testuser",
                 passwordEncoder.encode("testPassword123"),
                 "test@example.com",
-                null, // roles
+                java.util.Arrays.asList(testRole), // Add role
                 null  // nodeIds
         );
         testUser = userRepository.save(testUser);
