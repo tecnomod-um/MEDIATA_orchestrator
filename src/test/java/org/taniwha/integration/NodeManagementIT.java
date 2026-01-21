@@ -71,11 +71,11 @@ public class NodeManagementIT extends BaseIntegrationTest {
         NodeInfo node = new NodeInfo();
         node.setIp("192.168.1.101");
         node.setName("Heartbeat Test Node");
-        nodeRepository.save(node);
+        node = nodeRepository.save(node);
 
         Map<String, Object> heartbeatRequest = new HashMap<>();
-        heartbeatRequest.put("ip", "192.168.1.101");
-        heartbeatRequest.put("status", "ONLINE");
+        heartbeatRequest.put("nodeId", node.getNodeId());
+        heartbeatRequest.put("timestamp", System.currentTimeMillis());
 
         mockMvc.perform(post("/nodes/heartbeat")
                         .with(csrf())
@@ -91,10 +91,10 @@ public class NodeManagementIT extends BaseIntegrationTest {
         NodeInfo node = new NodeInfo();
         node.setIp("192.168.1.102");
         node.setName("Deregister Test Node");
-        nodeRepository.save(node);
+        node = nodeRepository.save(node);
 
         Map<String, Object> deregisterRequest = new HashMap<>();
-        deregisterRequest.put("ip", "192.168.1.102");
+        deregisterRequest.put("nodeId", node.getNodeId());
 
         mockMvc.perform(post("/nodes/deregister")
                         .with(csrf())
@@ -103,21 +103,19 @@ public class NodeManagementIT extends BaseIntegrationTest {
                 .andExpect(status().isOk());
 
         // Verify node was removed
-        NodeInfo removedNode = nodeRepository.findByIp("192.168.1.102");
-        assertNull(removedNode);
+        assertFalse(nodeRepository.existsById(node.getNodeId()));
     }
 
     @Test
     void testUnauthorizedAccessToNodes() throws Exception {
-        // No authentication - should be forbidden
-        Map<String, Object> nodeRequest = new HashMap<>();
-        nodeRequest.put("ip", "192.168.1.1");
-        nodeRequest.put("name", "Unauthorized Node");
+        // No authentication - should be forbidden when accessing protected endpoints
+        Map<String, Object> deregisterRequest = new HashMap<>();
+        deregisterRequest.put("ip", "192.168.1.1");
 
-        mockMvc.perform(post("/nodes/register")
+        mockMvc.perform(post("/nodes/deregister")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(nodeRequest)))
+                        .content(objectMapper.writeValueAsString(deregisterRequest)))
                 .andExpect(status().isForbidden());
     }
 
@@ -145,8 +143,8 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
         // 2. Heartbeat
         Map<String, Object> heartbeatRequest = new HashMap<>();
-        heartbeatRequest.put("ip", "192.168.1.200");
-        heartbeatRequest.put("status", "ONLINE");
+        heartbeatRequest.put("nodeId", registeredNode.getNodeId());
+        heartbeatRequest.put("timestamp", System.currentTimeMillis());
 
         mockMvc.perform(post("/nodes/heartbeat")
                         .with(csrf())
@@ -156,7 +154,7 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
         // 3. Deregister
         Map<String, Object> deregisterRequest = new HashMap<>();
-        deregisterRequest.put("ip", "192.168.1.200");
+        deregisterRequest.put("nodeId", registeredNode.getNodeId());
 
         mockMvc.perform(post("/nodes/deregister")
                         .with(csrf())
@@ -165,6 +163,6 @@ public class NodeManagementIT extends BaseIntegrationTest {
                 .andExpect(status().isOk());
 
         // Verify deregistration
-        assertNull(nodeRepository.findByIp("192.168.1.200"));
+        assertFalse(nodeRepository.existsById(registeredNode.getNodeId()));
     }
 }

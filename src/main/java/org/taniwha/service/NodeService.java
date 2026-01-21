@@ -97,6 +97,7 @@ public class NodeService {
                 
                 // Check if node is already in the list (shouldn't happen, but defensive coding)
                 boolean alreadyHasAccess = nodeAccess.stream()
+                    .filter(node -> node != null && node.getNodeId() != null)
                     .anyMatch(node -> node.getNodeId().equals(nodeInfo.getNodeId()));
                 
                 if (!alreadyHasAccess) {
