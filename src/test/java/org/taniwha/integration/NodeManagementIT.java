@@ -109,7 +109,7 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
     @Test
     void testUnauthorizedAccessToNodes() throws Exception {
-        // No authentication - should be unauthorized when accessing protected endpoints
+        // No authentication - should be forbidden when accessing protected endpoints
         Map<String, Object> deregisterRequest = new HashMap<>();
         deregisterRequest.put("ip", "192.168.1.1");
 
@@ -117,7 +117,7 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
     }
 
     @Test
