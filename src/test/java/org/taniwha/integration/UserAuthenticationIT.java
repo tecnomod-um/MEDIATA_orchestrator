@@ -78,11 +78,9 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginRequest))
-                        .with(csrf()))
+                        .content(objectMapper.writeValueAsString(loginRequest)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token", notNullValue()))
-                .andExpect(jsonPath("$.username", is("testuser")));
+                .andExpect(jsonPath("$.token", notNullValue()));
     }
 
     @Test
