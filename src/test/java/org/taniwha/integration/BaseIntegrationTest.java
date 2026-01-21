@@ -33,7 +33,7 @@ public abstract class BaseIntegrationTest {
                 mongoDBContainer.getHost(),
                 mongoDBContainer.getMappedPort(27017));
         registry.add("spring.data.mongodb.uri", () -> connectionString);
-        registry.add("jwt.secret", () -> "testSecretKeyThatIs32CharsLong!");
+        registry.add("jwt.secret", () -> "testSecretKeyThatIsExactly32!!!!");
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
         registry.add("python.launcher.enabled", () -> "false");
