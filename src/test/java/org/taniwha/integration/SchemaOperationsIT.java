@@ -16,6 +16,7 @@ import java.util.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.hamcrest.Matchers.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 
 /**
  * Integration tests for schema operations.
@@ -69,7 +70,8 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest)))
+                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .with(csrf()))
                 .andExpect(status().isOk());
     }
 
@@ -90,7 +92,8 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest)))
+                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .with(csrf()))
                 .andExpect(status().isOk());
 
         // Then retrieve it
@@ -115,7 +118,8 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(schemaRequest)))
+                        .content(objectMapper.writeValueAsString(schemaRequest))
+                        .with(csrf()))
                 .andExpect(status().isOk());
 
         // Delete the schema
@@ -160,7 +164,8 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/schema")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(createRequest)))
+                        .content(objectMapper.writeValueAsString(createRequest))
+                        .with(csrf()))
                 .andExpect(status().isOk());
 
         // 2. Retrieve schema
