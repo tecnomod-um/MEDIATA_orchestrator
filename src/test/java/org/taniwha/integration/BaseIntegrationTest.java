@@ -19,7 +19,8 @@ public abstract class BaseIntegrationTest {
 
     @Container
     static MongoDBContainer mongoDBContainer = new MongoDBContainer(DockerImageName.parse("mongo:7.0"))
-            .withExposedPorts(27017);
+            .withExposedPorts(27017)
+            .withReuse(true);
 
     @DynamicPropertySource
     static void setProperties(DynamicPropertyRegistry registry) {
@@ -28,10 +29,5 @@ public abstract class BaseIntegrationTest {
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
         registry.add("python.launcher.enabled", () -> "false");
-    }
-
-    @BeforeAll
-    static void setUp() {
-        mongoDBContainer.start();
     }
 }
