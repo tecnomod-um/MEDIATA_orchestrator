@@ -92,6 +92,11 @@ On first deployment, a default admin user is automatically created:
 
 ⚠️ **IMPORTANT**: Change this password immediately after first login in production environments!
 
+**Node Access**: The admin user automatically gets access to all newly registered nodes. This ensures that nodes deployed for local/development use can be accessed immediately without manual permission setup. In production environments, you should:
+- Change the admin password
+- Remove admin access from sensitive nodes
+- Create specific users with appropriate node permissions
+
 ### Check Status
 
 ```bash
