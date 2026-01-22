@@ -7,6 +7,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.nio.file.Paths;
 
 import static org.taniwha.util.PythonLauncherUtil.*;
 
+@Profile("!docker")
 @Configuration
 @ConditionalOnProperty(name = "python.launcher.enabled", havingValue = "true", matchIfMissing = true)
 public class PythonLauncherConfig {
