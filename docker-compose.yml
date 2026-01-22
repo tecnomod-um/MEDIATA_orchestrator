@@ -108,9 +108,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 15s
+      retries: 10
+      start_period: 180s
 
   orchestrator:
     build:
@@ -126,7 +126,7 @@ services:
       rdf-builder:
         condition: service_healthy
       fhir-api:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "${ORCHESTRATOR_HOST_PORT:-8088}:8088"
       - "${KERBEROS_HOST_PORT:-8089}:8089"
