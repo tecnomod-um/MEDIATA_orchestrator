@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -13,6 +14,7 @@ import java.nio.file.Paths;
 
 import static org.taniwha.util.PythonLauncherUtil.*;
 
+@Profile("!docker")
 @Configuration
 public class PythonLauncherConfig {
     private static final Logger logger = LoggerFactory.getLogger(PythonLauncherConfig.class);

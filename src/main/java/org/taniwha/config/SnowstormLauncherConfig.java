@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 import java.io.File;
 import java.net.HttpURLConnection;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
 
+@Profile("!docker")
 @Configuration
 public class SnowstormLauncherConfig {
     private static final Logger logger = LoggerFactory.getLogger(SnowstormLauncherConfig.class);
