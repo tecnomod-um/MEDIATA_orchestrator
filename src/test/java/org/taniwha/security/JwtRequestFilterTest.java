@@ -55,6 +55,8 @@ class JwtRequestFilterTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         jwtRequestFilter = new JwtRequestFilter(jwtTokenUtil, applicationContext);
+        // Set jwtFilterEnabled to true for unit tests (default production behavior)
+        org.springframework.test.util.ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", true);
         SecurityContextHolder.clearContext();
     }
 
