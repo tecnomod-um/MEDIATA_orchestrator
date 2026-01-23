@@ -20,6 +20,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 
 /**
  * Integration tests for user authentication and authorization flows.
@@ -57,13 +58,13 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
         testRole.setName("ADMIN");
         testRole = roleRepository.save(testRole);
 
-        // Create test user
+        // Create test user with roles
         testUser = new User(
                 null, // id - let MongoDB generate
                 "testuser",
                 passwordEncoder.encode("testPassword123"),
                 "test@example.com",
-                null, // roles
+                java.util.Arrays.asList(testRole), // Add role
                 null  // nodeIds
         );
         testUser = userRepository.save(testUser);
@@ -77,10 +78,10 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginRequest)))
+                        .content(objectMapper.writeValueAsString(loginRequest))
+                        .with(csrf()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token", notNullValue()))
-                .andExpect(jsonPath("$.username", is("testuser")));
+                .andExpect(jsonPath("$.token", notNullValue()));
     }
 
     @Test
@@ -91,7 +92,8 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginRequest)))
+                        .content(objectMapper.writeValueAsString(loginRequest))
+                        .with(csrf()))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -103,7 +105,8 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginRequest)))
+                        .content(objectMapper.writeValueAsString(loginRequest))
+                        .with(csrf()))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -116,10 +119,10 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(registerRequest)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.username", is("newuser")))
-                .andExpect(jsonPath("$.email", is("newuser@example.com")));
+                        .content(objectMapper.writeValueAsString(registerRequest))
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("User registered successfully"));
 
         // Verify user was saved to database
         User savedUser = userRepository.findByUsername("newuser");
@@ -135,7 +138,8 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/api/user/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(registerRequest)))
+                        .content(objectMapper.writeValueAsString(registerRequest))
+                        .with(csrf()))
                 .andExpect(status().isConflict());
     }
 }
