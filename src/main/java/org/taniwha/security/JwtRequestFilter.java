@@ -57,8 +57,15 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     }
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
-        String requestURI = request.getRequestURI();
-        return requestURI.equals("/taniwha/api/user/login") || requestURI.equals("/taniwha/api/user/register") || requestURI.startsWith("/taniwha/api/error");
+        String uri = request.getRequestURI();
+
+        return uri.startsWith("/taniwha/actuator/health")
+                || uri.startsWith("/taniwha/actuator/info")
+                || uri.equals("/taniwha/api/user/login")
+                || uri.equals("/taniwha/api/user/register")
+                || uri.startsWith("/taniwha/api/error")
+                || uri.equals("/taniwha/nodes/register")
+                || uri.equals("/taniwha/nodes/heartbeat");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {

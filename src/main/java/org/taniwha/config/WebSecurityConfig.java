@@ -41,6 +41,10 @@ public class WebSecurityConfig {
                 .cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/actuator/health/**", "/actuator/info/**",
+                                "/taniwha/actuator/health/**", "/taniwha/actuator/info/**"
+                        ).permitAll()
                         .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat").permitAll()
                         .requestMatchers("/**").authenticated()
                 )
@@ -68,7 +72,7 @@ public class WebSecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Collections.singletonList("https://semantics.inf.um.es"));
-        // configuration.setAllowedOrigins(Collections.singletonList("http://localhost:3000"));
+        configuration.setAllowedOrigins(Collections.singletonList("http://localhost:3000"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Cache-Control", "Content-Type", "Kerberos-TGT"));
         configuration.setExposedHeaders(Collections.singletonList("Authorization"));
