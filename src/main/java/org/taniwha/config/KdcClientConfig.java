@@ -1,6 +1,5 @@
 package org.taniwha.config;
 
-import org.apache.kerby.kerberos.kerb.KrbException;
 import org.apache.kerby.kerberos.kerb.client.KrbClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,29 +7,29 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-// Kerby client configurations
+import java.io.File;
+import java.nio.file.Paths;
+
 @Configuration
 public class KdcClientConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(KdcClientConfig.class);
 
-    @Value("${kerberos.realm}")
-    private String realm;
-
-    @Value("${kerberos.kdc.port}")
-    private int kdcPort;
+    @Value("${kerberos.workdir}")
+    private String workDirPath;
 
     @Bean
-    public KrbClient krbClient() throws KrbException {
-        KrbClient krbClient = new KrbClient();
-        krbClient.setKdcRealm(realm);
-        krbClient.setKdcHost("localhost");
-        krbClient.setKdcTcpPort(kdcPort);
-        krbClient.setAllowUdp(false);
-        krbClient.setAllowTcp(true);
-        krbClient.init();
+    public KrbClient krbClient() throws Exception {
+        File krb5Conf = Paths.get(workDirPath, "krb5.conf").toFile();
+        if (!krb5Conf.exists()) {
+            throw new IllegalStateException("krb5.conf not found at: " + krb5Conf.getAbsolutePath());
+        }
 
-        logger.info("KDC client initialized for realm: {} on KDC host: {} and port: {}", realm, "localhost", kdcPort);
-        return krbClient;
+        // Kerby supports KrbClient(File). Your compile log confirms this constructor exists.
+        KrbClient client = new KrbClient(krb5Conf);
+        client.init();
+
+        logger.info("Kerberos client initialized using {}", krb5Conf.getAbsolutePath());
+        return client;
     }
 }

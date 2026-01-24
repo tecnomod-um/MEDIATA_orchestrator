@@ -73,33 +73,49 @@ public class UserService implements UserDetailsService {
             Role userRole = findRoleByName("ROLE_USER");
             roles = Collections.singletonList(userRole);
         }
-        String encodedPassword = passwordEncoder.encode(registerRequest.getPassword());
-        User newUser = new User(
-                null,
-                registerRequest.getUsername(),
-                encodedPassword,
-                registerRequest.getEmail(),
-                roles,
-                Collections.emptyList()
-        );
-        userRepository.save(newUser);
-        kerberosService.createPrincipal(kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()), encodedPassword);
-        kerberosService.createKeytab(kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()));
-    }
+       String rawPassword = registerRequest.getPassword();
+		String encodedPassword = passwordEncoder.encode(rawPassword);
 
-    public LoginResponseDTO loginUser(String username, String password) {
-        logger.debug("Authenticating user: {}", username);
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(username, password));
-        final UserDetails userDetails = loadUserByUsername(username);
-        final String token = jwtTokenUtil.generateToken(userDetails.getUsername());
-        String tgtTicket = kerberosService.requestTgt(kerberosService.getPrincipalName(username, kerberosService.getRealm()), findByUsername(username).getPassword());
+		User newUser = new User(
+			null,
+			registerRequest.getUsername(),
+			encodedPassword,
+			registerRequest.getEmail(),
+			roles,
+			Collections.emptyList()
+		);
 
-        if (tgtTicket == null)
-            logger.error("Kerberos TGT request failed for user: {}", username);
+		userRepository.save(newUser);
+		kerberosService.createPrincipal(
+			kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()),
+			rawPassword
+		);
 
-        return new LoginResponseDTO(token, tgtTicket);
-    }
+		kerberosService.createKeytab(
+			kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm())
+		);
+   }
+
+public LoginResponseDTO loginUser(String username, String password) {
+    authenticationManager.authenticate(
+            new UsernamePasswordAuthenticationToken(username, password));
+
+    final UserDetails userDetails = loadUserByUsername(username);
+    final String token = jwtTokenUtil.generateToken(userDetails.getUsername());
+
+    // IMPORTANT: use RAW password from login request
+    String tgtTicket = kerberosService.requestTgt(
+            kerberosService.getPrincipalName(username, kerberosService.getRealm()),
+            password
+    );
+
+    if (tgtTicket == null)
+        logger.error("Kerberos TGT request failed for user: {}", username);
+
+    return new LoginResponseDTO(token, tgtTicket);
+}
+
+
 
     public Role findRoleByName(String roleName) {
         return roleRepository.findByName(roleName);

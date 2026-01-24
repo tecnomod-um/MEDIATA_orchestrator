@@ -140,6 +140,9 @@ services:
       - FHIRPORT=${FHIRPORT:-8001}
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
+      - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
+
+      
     volumes:
       - kerby-data:/app/kerby
     networks:
