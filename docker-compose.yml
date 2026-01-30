@@ -141,7 +141,8 @@ services:
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
       - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
-
+    extra_hosts:
+      - "localhost:host-gateway"
       
     volumes:
       - kerby-data:/app/kerby
