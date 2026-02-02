@@ -114,9 +114,9 @@ class KerberosServiceTest {
         // Principal exists
         KrbIdentity existing = new KrbIdentity("deleteUser");
         when(mockIdentityService.getIdentity("deleteUser")).thenReturn(existing);
-        
+
         kerberosService.deletePrincipal("deleteUser");
-        
+
         verify(mockKdcServer, times(1)).deletePrincipal("deleteUser");
     }
 
@@ -124,23 +124,23 @@ class KerberosServiceTest {
     void testDeletePrincipal_WhenPrincipalDoesNotExist() throws KrbException {
         // Principal doesn't exist
         when(mockIdentityService.getIdentity("nonExistent")).thenReturn(null);
-        
+
         kerberosService.deletePrincipal("nonExistent");
-        
+
         verify(mockKdcServer, never()).deletePrincipal(anyString());
     }
 
     @Test
     void testCreateKeytab_Failure() throws KrbException {
         doThrow(new KrbException("Export failed"))
-            .when(mockKdcServer).exportPrincipal(eq("failPrincipal"), any(File.class));
-        
+                .when(mockKdcServer).exportPrincipal(eq("failPrincipal"), any(File.class));
+
         try {
             kerberosService.createKeytab("failPrincipal");
         } catch (KrbException e) {
             // Expected
         }
-        
+
         verify(mockKdcServer, times(1))
                 .exportPrincipal(eq("failPrincipal"), any(File.class));
     }
@@ -170,7 +170,7 @@ class KerberosServiceTest {
                 .thenReturn(mockTgt);
 
         String encodedTgt = kerberosService.requestTgt("testPrincipal", "testPassword");
-        
+
         // Now test requestSgt
         assertNotNull(encodedTgt);
     }
@@ -178,11 +178,11 @@ class KerberosServiceTest {
     @Test
     void testCreatePrincipal_WithException() throws KrbException {
         when(mockIdentityService.getIdentity("errorUser"))
-            .thenThrow(new KrbException("Identity service error"));
-        
+                .thenThrow(new KrbException("Identity service error"));
+
         // Should not throw, should handle gracefully
         kerberosService.createPrincipal("errorUser", "password");
-        
+
         // Should still attempt to create since existence check failed
         verify(mockKdcServer, times(1)).createPrincipal("errorUser", "password");
     }

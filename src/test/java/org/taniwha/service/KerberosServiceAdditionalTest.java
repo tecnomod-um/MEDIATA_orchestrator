@@ -5,8 +5,6 @@ import org.apache.kerby.kerberos.kerb.client.KrbClient;
 import org.apache.kerby.kerberos.kerb.identity.backend.IdentityBackend;
 import org.apache.kerby.kerberos.kerb.type.base.PrincipalName;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncAsRepPart;
-import org.apache.kerby.kerberos.kerb.type.kdc.EncTgsRepPart;
-import org.apache.kerby.kerberos.kerb.type.ticket.SgtTicket;
 import org.apache.kerby.kerberos.kerb.type.ticket.TgtTicket;
 import org.apache.kerby.kerberos.kerb.type.ticket.Ticket;
 import org.junit.jupiter.api.BeforeEach;
@@ -118,8 +116,8 @@ class KerberosServiceAdditionalTest {
         String path = kerberosService.createKeytab("HTTP/example.com");
 
         assertNotNull(path);
-        assertTrue(path.contains("HTTP_example.com.keytab"), 
-                   "Slashes should be replaced with underscores");
+        assertTrue(path.contains("HTTP_example.com.keytab"),
+                "Slashes should be replaced with underscores");
     }
 
     @Test
@@ -163,7 +161,7 @@ class KerberosServiceAdditionalTest {
         File workDir = new File("target/test-keytabs");
         workDir.mkdirs();
         File keytabFile = new File(workDir, "testuser.keytab");
-        
+
         try (FileWriter fw = new FileWriter(keytabFile)) {
             fw.write("test data");
         }
@@ -196,7 +194,7 @@ class KerberosServiceAdditionalTest {
         TgtTicket mockTgt = mock(TgtTicket.class);
         Ticket mockTicket = mock(Ticket.class);
         EncAsRepPart mockEncAsRepPart = mock(EncAsRepPart.class);
-        
+
         when(mockTicket.encode()).thenReturn(new byte[]{1, 2, 3});
         when(mockEncAsRepPart.encode()).thenThrow(new IOException("Encoding failed"));
         when(mockTgt.getTicket()).thenReturn(mockTicket);

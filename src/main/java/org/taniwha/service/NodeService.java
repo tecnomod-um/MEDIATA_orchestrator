@@ -1,5 +1,6 @@
 package org.taniwha.service;
 
+import lombok.Getter;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.kerby.kerberos.kerb.KrbException;
 import org.slf4j.Logger;
@@ -40,9 +41,11 @@ public class NodeService {
     @Value("${overwrite.node:false}")
     private boolean overwriteNode;
 
+    @Getter
+    private volatile Instant lastNodeListAccess;
+
     @Autowired
-    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, 
-                       KerberosService kerberosService, PasswordEncoder passwordEncoder) {
+    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, KerberosService kerberosService, PasswordEncoder passwordEncoder) {
         this.nodeRepository = nodeRepository;
         this.userRepository = userRepository;
         this.kerberosService = kerberosService;
@@ -67,10 +70,10 @@ public class NodeService {
         String rawPassword = RandomStringUtils.randomAlphanumeric(16);
         String encodedPassword = passwordEncoder.encode(rawPassword);
         nodeInfo.setPassword(encodedPassword);
-        
+
         // Grant access to the default admin user for local/development deployments
         grantAdminAccessToNode(nodeInfo);
-        
+
         try {
             // Create a Kerberos principal for the node
             kerberosService.createPrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm), rawPassword);
@@ -80,12 +83,7 @@ public class NodeService {
             return null;
         }
     }
-    
-    /**
-     * Automatically grants the default admin user access to newly registered nodes.
-     * This is for convenience in development/local deployments where nodes need immediate access.
-     * In production, you should change the admin password or remove admin access as needed.
-     */
+
     private void grantAdminAccessToNode(NodeInfo nodeInfo) {
         try {
             User adminUser = userRepository.findByUsername("admin");
@@ -94,28 +92,22 @@ public class NodeService {
                 if (nodeAccess == null) {
                     nodeAccess = new ArrayList<>();
                 }
-                
-                // Check if node is already in the list (shouldn't happen, but defensive coding)
-                boolean alreadyHasAccess = nodeAccess.stream()
-                    .filter(node -> node != null && node.getNodeId() != null)
-                    .anyMatch(node -> node.getNodeId().equals(nodeInfo.getNodeId()));
-                
+
+                boolean alreadyHasAccess = nodeAccess.stream().filter(node -> node != null && node.getNodeId() != null).anyMatch(node -> node.getNodeId().equals(nodeInfo.getNodeId()));
+
                 if (!alreadyHasAccess) {
                     nodeAccess.add(nodeInfo);
                     adminUser.setNodeIds(nodeAccess);
                     userRepository.save(adminUser);
-                    logger.info("Granted admin user access to node: {} ({})", 
-                        nodeInfo.getName(), nodeInfo.getNodeId());
-                    logger.warn("SECURITY: Default admin user has access to this node. " +
-                        "Change admin password or revoke access in production environments!");
+                    logger.info("Granted admin user access to node: {} ({})", nodeInfo.getName(), nodeInfo.getNodeId());
+                    logger.warn("SECURITY: Default admin user has access to this node. " + "Change admin password or revoke access in production environments!");
                 }
             } else {
                 logger.debug("Admin user not found, skipping automatic node access grant");
             }
         } catch (Exception e) {
             // Don't fail node registration if we can't grant admin access
-            logger.error("Failed to grant admin access to node {}, but node registration continues", 
-                nodeInfo.getNodeId(), e);
+            logger.error("Failed to grant default admin access to node {}", nodeInfo.getNodeId(), e);
         }
     }
 
@@ -157,7 +149,7 @@ public class NodeService {
     }
 
     public List<NodeSummary> getNodeSummaries() {
-        return nodeRepository.findAll().stream()
-                .map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
+        lastNodeListAccess = Instant.now();
+        return nodeRepository.findAll().stream().map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
     }
 }
