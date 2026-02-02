@@ -95,17 +95,29 @@ public class SnowstormLauncherConfig {
         logger.info("Creating and running Elasticsearch container {}...", esContainer);
 
         List<String> cmd = new ArrayList<String>();
-        cmd.add("docker"); cmd.add("run"); cmd.add("-d");
-        cmd.add("--name"); cmd.add(esContainer);
-        cmd.add("--restart"); cmd.add("unless-stopped");
-        cmd.add("--network"); cmd.add(networkName);
-        cmd.add("-p"); cmd.add(esHostPort + ":9200");
-        cmd.add("-e"); cmd.add("discovery.type=single-node");
-        cmd.add("-e"); cmd.add("xpack.security.enabled=false");
-        cmd.add("-e"); cmd.add("node.name=snowstorm");
-        cmd.add("-e"); cmd.add("cluster.name=snowstorm-cluster");
-        cmd.add("-e"); cmd.add("ES_JAVA_OPTS=-Xms2g -Xmx2g");
-        cmd.add("-v"); cmd.add(esVolume + ":/usr/share/elasticsearch/data");
+        cmd.add("docker");
+        cmd.add("run");
+        cmd.add("-d");
+        cmd.add("--name");
+        cmd.add(esContainer);
+        cmd.add("--restart");
+        cmd.add("unless-stopped");
+        cmd.add("--network");
+        cmd.add(networkName);
+        cmd.add("-p");
+        cmd.add(esHostPort + ":9200");
+        cmd.add("-e");
+        cmd.add("discovery.type=single-node");
+        cmd.add("-e");
+        cmd.add("xpack.security.enabled=false");
+        cmd.add("-e");
+        cmd.add("node.name=snowstorm");
+        cmd.add("-e");
+        cmd.add("cluster.name=snowstorm-cluster");
+        cmd.add("-e");
+        cmd.add("ES_JAVA_OPTS=-Xms2g -Xmx2g");
+        cmd.add("-v");
+        cmd.add(esVolume + ":/usr/share/elasticsearch/data");
         cmd.add(esImage);
 
         int rc = runAndLogIfFails(null, cmd.toArray(new String[0]));
@@ -131,11 +143,17 @@ public class SnowstormLauncherConfig {
         logger.info("Creating and running Snowstorm container {}...", snowstormContainer);
 
         List<String> cmd = new ArrayList<String>();
-        cmd.add("docker"); cmd.add("run"); cmd.add("-d");
-        cmd.add("--name"); cmd.add(snowstormContainer);
-        cmd.add("--restart"); cmd.add("unless-stopped");
-        cmd.add("--network"); cmd.add(networkName);
-        cmd.add("-p"); cmd.add(snowstormHostPort + ":" + snowstormContainerPort);
+        cmd.add("docker");
+        cmd.add("run");
+        cmd.add("-d");
+        cmd.add("--name");
+        cmd.add(snowstormContainer);
+        cmd.add("--restart");
+        cmd.add("unless-stopped");
+        cmd.add("--network");
+        cmd.add(networkName);
+        cmd.add("-p");
+        cmd.add(snowstormHostPort + ":" + snowstormContainerPort);
 
         cmd.add(snowstormImage);
 

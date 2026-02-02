@@ -9,7 +9,6 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeSummary;
-import org.taniwha.model.Role;
 import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.UserRepository;
@@ -54,10 +53,10 @@ class NodeServiceTest {
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("1.2.3.4", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/n1.keytab");
-        
+
         // Mock admin user for access grant
-        User adminUser = new User(null, "admin", "pass", "admin@test.com", 
-            Collections.emptyList(), new ArrayList<>());
+        User adminUser = new User(null, "admin", "pass", "admin@test.com",
+                Collections.emptyList(), new ArrayList<>());
         when(userRepo.findByUsername("admin")).thenReturn(adminUser);
 
         String path = svc.registerNode(in);
@@ -68,7 +67,7 @@ class NodeServiceTest {
         verify(krb).createPrincipal(eq("p@REALM"), anyString());
         verify(krb).createKeytab("p@REALM");
         assertThat(svc.getLastHeartbeat("n1")).isNotNull();
-        
+
         // Verify admin user was granted access
         verify(userRepo).findByUsername("admin");
         verify(userRepo).save(adminUser);
@@ -162,94 +161,94 @@ class NodeServiceTest {
                 )
                 .containsExactly("A", "Name", "Desc", "C");
     }
-    
+
     @Test
     void registerNode_grantsAdminAccess_whenAdminUserExists() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("test-node");
         node.setIp("10.0.0.1");
         node.setName("Test Node");
-        
+
         User adminUser = new User(null, "admin", "pass", "admin@test.com",
-            Collections.emptyList(), new ArrayList<>());
-        
+                Collections.emptyList(), new ArrayList<>());
+
         when(repo.existsByIp("10.0.0.1")).thenReturn(false);
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("10.0.0.1", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/test.keytab");
         when(userRepo.findByUsername("admin")).thenReturn(adminUser);
-        
+
         svc.registerNode(node);
-        
+
         verify(userRepo).findByUsername("admin");
         verify(userRepo).save(adminUser);
         assertThat(adminUser.getNodeIds()).hasSize(1);
         assertThat(adminUser.getNodeIds().get(0).getNodeId()).isEqualTo("test-node");
     }
-    
+
     @Test
     void registerNode_doesNotFail_whenAdminUserNotFound() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("test-node");
         node.setIp("10.0.0.1");
-        
+
         when(repo.existsByIp("10.0.0.1")).thenReturn(false);
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("10.0.0.1", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/test.keytab");
         when(userRepo.findByUsername("admin")).thenReturn(null);
-        
+
         String result = svc.registerNode(node);
-        
+
         assertThat(result).isEqualTo("/tmp/test.keytab");
         verify(userRepo).findByUsername("admin");
         verify(userRepo, never()).save(any());
     }
-    
+
     @Test
     void registerNode_doesNotAddDuplicateNodeAccess() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("test-node");
         node.setIp("10.0.0.1");
-        
+
         NodeInfo existingNode = new NodeInfo();
         existingNode.setNodeId("test-node");
-        
+
         List<NodeInfo> nodeAccess = new ArrayList<>();
         nodeAccess.add(existingNode);
-        
+
         User adminUser = new User(null, "admin", "pass", "admin@test.com",
-            Collections.emptyList(), nodeAccess);
-        
+                Collections.emptyList(), nodeAccess);
+
         when(repo.existsByIp("10.0.0.1")).thenReturn(false);
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("10.0.0.1", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/test.keytab");
         when(userRepo.findByUsername("admin")).thenReturn(adminUser);
-        
+
         svc.registerNode(node);
-        
+
         verify(userRepo).findByUsername("admin");
         // Should not save if node already in access list
         verify(userRepo, never()).save(any());
         assertThat(adminUser.getNodeIds()).hasSize(1);
     }
-    
+
     @Test
     void registerNode_continuesOnAccessGrantError() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("test-node");
         node.setIp("10.0.0.1");
-        
+
         when(repo.existsByIp("10.0.0.1")).thenReturn(false);
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("10.0.0.1", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/test.keytab");
         when(userRepo.findByUsername("admin")).thenThrow(new RuntimeException("Database error"));
-        
+
         // Should not fail node registration
         String result = svc.registerNode(node);
-        
+
         assertThat(result).isEqualTo("/tmp/test.keytab");
         verify(repo).save(node);
     }

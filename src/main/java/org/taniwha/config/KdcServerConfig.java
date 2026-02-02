@@ -107,8 +107,8 @@ public class KdcServerConfig {
 
         if (!System.getProperty("os.name").toLowerCase().contains("win")) {
             if (!workDir.setWritable(true, false) ||
-                !workDir.setReadable(true, false) ||
-                !workDir.setExecutable(true, false)) {
+                    !workDir.setReadable(true, false) ||
+                    !workDir.setExecutable(true, false)) {
                 logger.error("Failed to set permissions on work directory: {}", workDir.getAbsolutePath());
                 throw new IOException("Failed to set permissions on work directory");
             }
@@ -137,8 +137,8 @@ public class KdcServerConfig {
 
         File krb5ConfFile = Paths.get(workDirPath, "krb5.conf").toFile();
         if (krb5ConfFile.getParentFile() != null &&
-            !krb5ConfFile.getParentFile().exists() &&
-            !krb5ConfFile.getParentFile().mkdirs()) {
+                !krb5ConfFile.getParentFile().exists() &&
+                !krb5ConfFile.getParentFile().mkdirs()) {
             throw new IOException("Failed to create directory: " + krb5ConfFile.getParentFile().getAbsolutePath());
         }
 

@@ -18,7 +18,7 @@ class FieldMetadataDTOTest {
     @Test
     void testAllArgsConstructor() {
         FieldMetadataDTO dto = new FieldMetadataDTO("fieldName", true, "String");
-        
+
         assertEquals("fieldName", dto.getName());
         assertTrue(dto.isOptional());
         assertEquals("String", dto.getType());
@@ -27,11 +27,11 @@ class FieldMetadataDTOTest {
     @Test
     void testSetters() {
         FieldMetadataDTO dto = new FieldMetadataDTO();
-        
+
         dto.setName("testField");
         dto.setOptional(true);
         dto.setType("Integer");
-        
+
         assertEquals("testField", dto.getName());
         assertTrue(dto.isOptional());
         assertEquals("Integer", dto.getType());
@@ -41,7 +41,7 @@ class FieldMetadataDTOTest {
     void testOptionalField() {
         FieldMetadataDTO required = new FieldMetadataDTO("required", false, "String");
         FieldMetadataDTO optional = new FieldMetadataDTO("optional", true, "String");
-        
+
         assertFalse(required.isOptional());
         assertTrue(optional.isOptional());
     }
@@ -51,7 +51,7 @@ class FieldMetadataDTOTest {
         FieldMetadataDTO stringField = new FieldMetadataDTO("name", false, "String");
         FieldMetadataDTO intField = new FieldMetadataDTO("age", false, "Integer");
         FieldMetadataDTO boolField = new FieldMetadataDTO("active", true, "Boolean");
-        
+
         assertEquals("String", stringField.getType());
         assertEquals("Integer", intField.getType());
         assertEquals("Boolean", boolField.getType());

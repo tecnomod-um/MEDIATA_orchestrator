@@ -18,7 +18,7 @@ public abstract class BaseIntegrationTest {
 
     // Singleton container shared across all test classes
     private static final GenericContainer<?> mongoDBContainer;
-    
+
     static {
         mongoDBContainer = new GenericContainer<>(DockerImageName.parse("mongo:7.0"))
                 .withExposedPorts(27017)

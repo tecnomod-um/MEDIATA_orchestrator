@@ -13,14 +13,15 @@ import org.taniwha.model.User;
 import org.taniwha.repository.RoleRepository;
 import org.taniwha.repository.UserRepository;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
  * Integration tests for user authentication and authorization flows.
@@ -64,7 +65,7 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
                 "testuser",
                 passwordEncoder.encode("testPassword123"),
                 "test@example.com",
-                java.util.Arrays.asList(testRole), // Add role
+                Collections.singletonList(testRole), // Add role
                 null  // nodeIds
         );
         testUser = userRepository.save(testUser);
