@@ -63,7 +63,8 @@ class UserServiceTest {
         userRole.setName("ROLE_USER");
         when(roleRepo.findByName("ROLE_USER")).thenReturn(userRole);
         when(pwdEncoder.encode("pass")).thenReturn("ENC");
-        when(krb.getPrincipalName("bob", null)).thenReturn("bob@null");
+        when(krb.getRealm()).thenReturn("null");
+        when(krb.getPrincipalName("bob", "null")).thenReturn("bob@null");
 
         svc.registerUser(req, null);
 
@@ -74,7 +75,7 @@ class UserServiceTest {
         assertThat(saved.getPassword()).isEqualTo("ENC");
         assertThat(saved.getRoles()).extracting(Role::getName).containsExactly("ROLE_USER");
 
-        verify(krb).createPrincipal("bob@null", "ENC");
+        verify(krb).createPrincipal("bob@null", "pass");
         verify(krb).createKeytab("bob@null");
     }
 
@@ -104,7 +105,8 @@ class UserServiceTest {
         when(roleRepo.findByName("ROLE_ADMIN")).thenReturn(adminR);
 
         when(pwdEncoder.encode("pw")).thenReturn("Epw");
-        when(krb.getPrincipalName("joe", null)).thenReturn("joe@null");
+        when(krb.getRealm()).thenReturn("null");
+        when(krb.getPrincipalName("joe", "null")).thenReturn("joe@null");
 
         svc.registerUser(req, "Bearer admintoken");
 
@@ -128,8 +130,9 @@ class UserServiceTest {
         );
         when(userRepo.findByUsername(username)).thenReturn(stored);
         when(jwtUtil.generateToken(username)).thenReturn("JWT");
-        when(krb.getPrincipalName(username, null)).thenReturn(username + "@null");
-        when(krb.requestTgt(username + "@null", "Epw")).thenReturn("TGT");
+        when(krb.getRealm()).thenReturn("null");
+        when(krb.getPrincipalName(username, "null")).thenReturn(username + "@null");
+        when(krb.requestTgt(username + "@null", password)).thenReturn("TGT");
 
         LoginResponseDTO resp = svc.loginUser(username, password);
 
