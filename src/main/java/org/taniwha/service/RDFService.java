@@ -51,7 +51,8 @@ public class RDFService {
                     url,
                     HttpMethod.GET,
                     null,
-                    new ParameterizedTypeReference<List<String>>() {}
+                    new ParameterizedTypeReference<List<String>>() {
+                    }
             );
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<String> types = response.getBody();
@@ -151,7 +152,8 @@ public class RDFService {
                     url,
                     HttpMethod.GET,
                     null,
-                    new ParameterizedTypeReference<List<String>>() {}
+                    new ParameterizedTypeReference<List<String>>() {
+                    }
             );
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<String> terms = response.getBody();

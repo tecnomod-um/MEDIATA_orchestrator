@@ -11,7 +11,6 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
-import org.taniwha.model.NodeMetadata;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.util.JwtTokenUtil;
 
@@ -19,8 +18,7 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -156,8 +154,8 @@ class NodeAccessServiceTest {
         when(userService.userHasAccessToNode("user", "node123")).thenReturn(false);
 
         boolean hasAccess = nodeAccessService.checkUserAccess("node123", "token");
-        
-        assertEquals(false, hasAccess);
+
+        assertFalse(hasAccess);
     }
 
     @Test
@@ -174,7 +172,7 @@ class NodeAccessServiceTest {
                 .thenThrow(new KrbException("Kerberos error"));
 
         Map<String, Object> result = nodeAccessService.getServiceToken("node123", "mockTgtToken");
-        
+
         assertTrue(result.containsKey("error"));
     }
 
@@ -192,7 +190,7 @@ class NodeAccessServiceTest {
                 .thenThrow(new IOException("IO error"));
 
         Map<String, Object> result = nodeAccessService.getServiceToken("node123", "mockTgtToken");
-        
+
         assertTrue(result.containsKey("error"));
     }
 }

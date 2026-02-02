@@ -58,7 +58,7 @@ class JwtTokenUtilTest {
         JwtTokenUtil util = loadWith("AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH", "3600");
 
         String token = util.generateToken("testuser");
-        
+
         assertThat(token).isNotBlank();
         assertThat(token.split("\\.")).hasSize(3); // JWT has 3 parts separated by dots
     }
@@ -69,7 +69,7 @@ class JwtTokenUtilTest {
 
         String token = util.generateToken("john.doe");
         String extractedUsername = util.getUsernameFromToken(token);
-        
+
         assertThat(extractedUsername).isEqualTo("john.doe");
     }
 
@@ -91,7 +91,7 @@ class JwtTokenUtilTest {
 
         String token = util.generateToken("alice");
         boolean isValid = util.validateToken(token, "bob");
-        
+
         assertThat(isValid).isFalse();
     }
 
@@ -100,7 +100,7 @@ class JwtTokenUtilTest {
         JwtTokenUtil util = loadWith("01234567890123456789012345678901", "86400"); // 24 hours
 
         String token = util.generateToken("longuser");
-        
+
         assertThat(token).isNotBlank();
         boolean isValid = util.validateToken(token, "longuser");
         assertThat(isValid).isTrue();

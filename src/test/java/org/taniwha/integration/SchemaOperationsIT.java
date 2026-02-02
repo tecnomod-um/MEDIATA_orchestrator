@@ -11,12 +11,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.repository.NodeRepository;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.hamcrest.Matchers.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Integration tests for schema operations.
@@ -54,20 +56,20 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         schemaData.put("nodeIp", "192.168.1.50");
         schemaData.put("schemaName", "PatientSchema");
         schemaData.put("version", "1.0");
-        
+
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field1 = new HashMap<>();
         field1.put("name", "patientId");
         field1.put("type", "String");
         fields.add(field1);
-        
+
         Map<String, String> field2 = new HashMap<>();
         field2.put("name", "diagnosis");
         field2.put("type", "String");
         fields.add(field2);
-        
+
         schemaData.put("fields", fields);
-        
+
         Map<String, Object> request = new HashMap<>();
         request.put("schema", schemaData);
 
@@ -85,14 +87,14 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         Map<String, Object> schemaData = new HashMap<>();
         schemaData.put("nodeIp", "192.168.1.50");
         schemaData.put("schemaName", "TestSchema");
-        
+
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field = new HashMap<>();
         field.put("name", "testField");
         field.put("type", "String");
         fields.add(field);
         schemaData.put("fields", fields);
-        
+
         Map<String, Object> request = new HashMap<>();
         request.put("schema", schemaData);
 
@@ -114,14 +116,14 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         Map<String, Object> schemaData = new HashMap<>();
         schemaData.put("nodeIp", "192.168.1.50");
         schemaData.put("schemaName", "DeleteMe");
-        
+
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field = new HashMap<>();
         field.put("name", "field1");
         field.put("type", "String");
         fields.add(field);
         schemaData.put("fields", fields);
-        
+
         Map<String, Object> request = new HashMap<>();
         request.put("schema", schemaData);
 
@@ -153,20 +155,20 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
         Map<String, Object> schemaData = new HashMap<>();
         schemaData.put("nodeIp", "192.168.1.50");
         schemaData.put("schemaName", "LifecycleSchema");
-        
+
         List<Map<String, String>> fields = new ArrayList<>();
         Map<String, String> field1 = new HashMap<>();
         field1.put("name", "name");
         field1.put("type", "String");
         fields.add(field1);
-        
+
         Map<String, String> field2 = new HashMap<>();
         field2.put("name", "age");
         field2.put("type", "Integer");
         fields.add(field2);
-        
+
         schemaData.put("fields", fields);
-        
+
         Map<String, Object> request = new HashMap<>();
         request.put("schema", schemaData);
 
