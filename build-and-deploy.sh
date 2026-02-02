@@ -22,7 +22,7 @@ if [ ! -d "InteroperabilityFHIRAPI" ]; then
     echo ""
     echo "ERROR: InteroperabilityFHIRAPI directory not found!"
     echo "Please clone it first:"
-    echo "  git clone https://github.com/tecnomod-um/InteroperabilityFHIRAPI.git"
+    echo "  git clone https://github.com/alvumu/InteroperabilityFHIRAPI.git"
     echo ""
     exit 1
 fi
