@@ -1,5 +1,6 @@
 package org.taniwha.service;
 
+import lombok.Getter;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.kerby.kerberos.kerb.KrbException;
 import org.slf4j.Logger;
@@ -10,9 +11,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeSummary;
+import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
+import org.taniwha.repository.UserRepository;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,6 +28,7 @@ public class NodeService {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeService.class);
     private final NodeRepository nodeRepository;
+    private final UserRepository userRepository;
     private final Map<String, Instant> nodeHeartbeats = new ConcurrentHashMap<>();
 
     private final KerberosService kerberosService;
@@ -36,9 +41,13 @@ public class NodeService {
     @Value("${overwrite.node:false}")
     private boolean overwriteNode;
 
+    @Getter
+    private volatile Instant lastNodeListAccess;
+
     @Autowired
-    public NodeService(NodeRepository nodeRepository, KerberosService kerberosService, PasswordEncoder passwordEncoder) {
+    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, KerberosService kerberosService, PasswordEncoder passwordEncoder) {
         this.nodeRepository = nodeRepository;
+        this.userRepository = userRepository;
         this.kerberosService = kerberosService;
         this.passwordEncoder = passwordEncoder;
     }
@@ -61,6 +70,10 @@ public class NodeService {
         String rawPassword = RandomStringUtils.randomAlphanumeric(16);
         String encodedPassword = passwordEncoder.encode(rawPassword);
         nodeInfo.setPassword(encodedPassword);
+
+        // Grant access to the default admin user for local/development deployments
+        grantAdminAccessToNode(nodeInfo);
+
         try {
             // Create a Kerberos principal for the node
             kerberosService.createPrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm), rawPassword);
@@ -68,6 +81,33 @@ public class NodeService {
         } catch (KrbException e) {
             logger.error("Failed to register node {}: {}", nodeInfo.getNodeId(), e.getMessage());
             return null;
+        }
+    }
+
+    private void grantAdminAccessToNode(NodeInfo nodeInfo) {
+        try {
+            User adminUser = userRepository.findByUsername("admin");
+            if (adminUser != null) {
+                List<NodeInfo> nodeAccess = adminUser.getNodeIds();
+                if (nodeAccess == null) {
+                    nodeAccess = new ArrayList<>();
+                }
+
+                boolean alreadyHasAccess = nodeAccess.stream().filter(node -> node != null && node.getNodeId() != null).anyMatch(node -> node.getNodeId().equals(nodeInfo.getNodeId()));
+
+                if (!alreadyHasAccess) {
+                    nodeAccess.add(nodeInfo);
+                    adminUser.setNodeIds(nodeAccess);
+                    userRepository.save(adminUser);
+                    logger.info("Granted admin user access to node: {} ({})", nodeInfo.getName(), nodeInfo.getNodeId());
+                    logger.warn("SECURITY: Default admin user has access to this node. " + "Change admin password or revoke access in production environments!");
+                }
+            } else {
+                logger.debug("Admin user not found, skipping automatic node access grant");
+            }
+        } catch (Exception e) {
+            // Don't fail node registration if we can't grant admin access
+            logger.error("Failed to grant default admin access to node {}", nodeInfo.getNodeId(), e);
         }
     }
 
@@ -109,7 +149,7 @@ public class NodeService {
     }
 
     public List<NodeSummary> getNodeSummaries() {
-        return nodeRepository.findAll().stream()
-                .map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
+        lastNodeListAccess = Instant.now();
+        return nodeRepository.findAll().stream().map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
     }
 }

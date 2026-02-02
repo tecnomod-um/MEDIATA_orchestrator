@@ -81,15 +81,17 @@ public class KerberosService {
             logger.debug("Principal deleted: {}", principal);
 
             Path keytabFilePath = Paths.get(keyTabPath, principal.replace("/", "_") + ".keytab");
-            if (Files.exists(keytabFilePath))
+            if (Files.exists(keytabFilePath)) {
                 try {
                     Files.delete(keytabFilePath);
                     logger.debug("Keytab file deleted: {}", keytabFilePath.toAbsolutePath());
                 } catch (IOException e) {
                     logger.error("Failed to delete keytab file: {}", keytabFilePath.toAbsolutePath(), e);
                 }
-        } else
+            }
+        } else {
             logger.warn("Principal does not exist: {}", principal);
+        }
     }
 
     public String requestTgt(String userPrincipal, String password) {
@@ -98,7 +100,7 @@ public class KerberosService {
             TgtTicket tgtTicket = krbClient.requestTgt(userPrincipal, password);
             logger.debug("TGT acquired for user principal: {}", userPrincipal);
             return encodeKrbTicket(tgtTicket);
-        } catch (Exception e) {
+        } catch (KrbException | IOException e) {
             logger.error("Error generating Kerberos TGT", e);
         }
         return null;
@@ -122,64 +124,63 @@ public class KerberosService {
     }
 
     private String encodeKrbTicket(KrbTicket krbTicket) throws IOException {
-        ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-        ObjectOutputStream objStream = new ObjectOutputStream(byteStream);
+        try (ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+             ObjectOutputStream objStream = new ObjectOutputStream(byteStream)) {
 
-        byte[] ticketBytes = krbTicket.getTicket().encode();
-        objStream.writeInt(ticketBytes.length);
-        objStream.write(ticketBytes);
+            byte[] ticketBytes = krbTicket.getTicket().encode();
+            objStream.writeInt(ticketBytes.length);
+            objStream.write(ticketBytes);
 
-        byte[] encKdcRepPartBytes = krbTicket.getEncKdcRepPart().encode();
-        objStream.writeInt(encKdcRepPartBytes.length);
-        objStream.write(encKdcRepPartBytes);
+            byte[] encKdcRepPartBytes = krbTicket.getEncKdcRepPart().encode();
+            objStream.writeInt(encKdcRepPartBytes.length);
+            objStream.write(encKdcRepPartBytes);
 
-        if (krbTicket instanceof TgtTicket) {
-            TgtTicket tgtTicket = (TgtTicket) krbTicket;
-            byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes();
-            objStream.writeInt(clientPrincipalBytes.length);
-            objStream.write(clientPrincipalBytes);
-        } else if (krbTicket instanceof SgtTicket) {
-            SgtTicket sgtTicket = (SgtTicket) krbTicket;
-            byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes();
-            objStream.writeInt(clientPrincipalBytes.length);
-            objStream.write(clientPrincipalBytes);
+            if (krbTicket instanceof TgtTicket) {
+                TgtTicket tgtTicket = (TgtTicket) krbTicket;
+                byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes();
+                objStream.writeInt(clientPrincipalBytes.length);
+                objStream.write(clientPrincipalBytes);
+            } else if (krbTicket instanceof SgtTicket) {
+                SgtTicket sgtTicket = (SgtTicket) krbTicket;
+                byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes();
+                objStream.writeInt(clientPrincipalBytes.length);
+                objStream.write(clientPrincipalBytes);
+            }
+
+            objStream.flush();
+            return Base64.getEncoder().encodeToString(byteStream.toByteArray());
         }
-
-        objStream.flush();
-        byte[] combinedBytes = byteStream.toByteArray();
-        objStream.close();
-        return Base64.getEncoder().encodeToString(combinedBytes);
     }
 
     private KrbTicket decodeKrbTicket(String encodedTicket, boolean isTgt) throws IOException {
         byte[] combinedBytes = Base64.getDecoder().decode(encodedTicket);
-        ByteArrayInputStream byteStream = new ByteArrayInputStream(combinedBytes);
-        ObjectInputStream objStream = new ObjectInputStream(byteStream);
+        try (ByteArrayInputStream byteStream = new ByteArrayInputStream(combinedBytes);
+             ObjectInputStream objStream = new ObjectInputStream(byteStream)) {
 
-        int ticketLength = objStream.readInt();
-        byte[] ticketBytes = new byte[ticketLength];
-        objStream.readFully(ticketBytes);
-        Ticket ticket = new Ticket();
-        ticket.decode(ticketBytes);
+            int ticketLength = objStream.readInt();
+            byte[] ticketBytes = new byte[ticketLength];
+            objStream.readFully(ticketBytes);
+            Ticket ticket = new Ticket();
+            ticket.decode(ticketBytes);
 
-        int encKdcRepPartLength = objStream.readInt();
-        byte[] encKdcRepPartBytes = new byte[encKdcRepPartLength];
-        objStream.readFully(encKdcRepPartBytes);
-        EncKdcRepPart encKdcRepPart = isTgt ? new EncAsRepPart() : new EncTgsRepPart();
-        encKdcRepPart.decode(encKdcRepPartBytes);
+            int encKdcRepPartLength = objStream.readInt();
+            byte[] encKdcRepPartBytes = new byte[encKdcRepPartLength];
+            objStream.readFully(encKdcRepPartBytes);
+            EncKdcRepPart encKdcRepPart = isTgt ? new EncAsRepPart() : new EncTgsRepPart();
+            encKdcRepPart.decode(encKdcRepPartBytes);
 
-        int clientPrincipalLength = objStream.readInt();
-        byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
-        objStream.readFully(clientPrincipalBytes);
-        PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
-        objStream.close();
+            int clientPrincipalLength = objStream.readInt();
+            byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
+            objStream.readFully(clientPrincipalBytes);
+            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
 
-        if (isTgt)
-            return new TgtTicket(ticket, (EncAsRepPart) encKdcRepPart, clientPrincipal);
-        else {
-            SgtTicket sgtTicket = new SgtTicket(ticket, (EncTgsRepPart) encKdcRepPart);
-            sgtTicket.setClientPrincipal(clientPrincipal);
-            return sgtTicket;
+            if (isTgt) {
+                return new TgtTicket(ticket, (EncAsRepPart) encKdcRepPart, clientPrincipal);
+            } else {
+                SgtTicket sgtTicket = new SgtTicket(ticket, (EncTgsRepPart) encKdcRepPart);
+                sgtTicket.setClientPrincipal(clientPrincipal);
+                return sgtTicket;
+            }
         }
     }
 

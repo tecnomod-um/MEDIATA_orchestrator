@@ -1,3 +1,6 @@
+.idea/
+**/.idea/
+
 ### Sensitive data ###
 .env
 /logs
@@ -5,9 +8,11 @@
 /csv_files
 
 # Modules
-/InteroperabilityFHIRAPI
-/mediata-rdf-builder
-mediata-rdf-builder
+InteroperabilityFHIRAPI/
+mediata-rdf-builder/
+**/InteroperabilityFHIRAPI/
+**/mediata-rdf-builder/
+
 
 nohup.out
 target/
@@ -47,4 +52,4 @@ build/
 .vscode/
 
 ### Mac OS ###
-.DS_Storemediata-rdf-builder/
+.DS_Store
