@@ -30,7 +30,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     private static final Logger filterLogger = LoggerFactory.getLogger(JwtRequestFilter.class);
     private final JwtTokenUtil jwtTokenUtil;
     private final ApplicationContext applicationContext;
-    
+
     @Value("${jwt.filter.enabled:true}")
     private boolean jwtFilterEnabled;
 
