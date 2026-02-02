@@ -24,7 +24,6 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 
-// Kerby server configurations
 @Configuration
 public class KdcServerConfig {
 
@@ -44,28 +43,43 @@ public class KdcServerConfig {
     @Bean
     public CustomKdcServer kdcServer() throws KrbException, IOException {
 
+        // Force IPv4 early (Docker + Java + localhost commonly causes IPv6 first)
+        System.setProperty("java.net.preferIPv4Stack", "true");
+        System.setProperty("java.net.preferIPv4Addresses", "true");
+
         prepareWorkDir();
-        // Create and configure KdcConfig
+
         KdcConfig kdcConfig = new KdcConfig();
         kdcConfig.setString(KdcConfigKey.KDC_REALM.getPropertyKey(), realm);
-        kdcConfig.setString(KdcConfigKey.KDC_HOST.getPropertyKey(), "localhost");
+        kdcConfig.setString(KdcConfigKey.KDC_HOST.getPropertyKey(), "127.0.0.1");
         kdcConfig.setInt(KdcConfigKey.KDC_PORT.getPropertyKey(), kdcPort);
         kdcConfig.setString(KdcConfigKey.KDC_SERVICE_NAME.getPropertyKey(), "TaniwhaKDC");
         kdcConfig.setBoolean(KdcConfigKey.KRB_DEBUG.getPropertyKey(), true);
-        List<EncryptionType> encryptionTypes = Arrays.asList(EncryptionType.AES256_CTS_HMAC_SHA1_96, EncryptionType.AES128_CTS_HMAC_SHA1_96);
-        String encTypesString = String.join(",", encryptionTypes.stream().map(EncryptionType::getName).toArray(String[]::new));
+
+        List<EncryptionType> encryptionTypes = Arrays.asList(
+                EncryptionType.AES256_CTS_HMAC_SHA1_96,
+                EncryptionType.AES128_CTS_HMAC_SHA1_96
+        );
+        String encTypesString = String.join(",",
+                encryptionTypes.stream().map(EncryptionType::getName).toArray(String[]::new));
         kdcConfig.setString(KdcConfigKey.ENCRYPTION_TYPES.getPropertyKey(), encTypesString);
 
-        // Configure BackendConfig
         BackendConfig backendConfig = new BackendConfig();
-        backendConfig.setString(JsonIdentityBackend.JSON_IDENTITY_BACKEND_DIR, new File(workDirPath, "krb5kdc").getAbsolutePath());
-        backendConfig.setString(KdcConfigKey.KDC_IDENTITY_BACKEND, JsonIdentityBackend.class.getCanonicalName());
+        backendConfig.setString(
+                JsonIdentityBackend.JSON_IDENTITY_BACKEND_DIR,
+                new File(workDirPath, "krb5kdc").getAbsolutePath()
+        );
+        backendConfig.setString(
+                KdcConfigKey.KDC_IDENTITY_BACKEND,
+                JsonIdentityBackend.class.getCanonicalName()
+        );
 
-        // Create SimpleKdcServer with KdcConfig and BackendConfig
         kdcServer = new CustomKdcServer(kdcConfig, backendConfig);
         kdcServer.setKdcRealm(realm);
+        kdcServer.setKdcHost("127.0.0.1");
         kdcServer.setKdcPort(kdcPort);
         kdcServer.setWorkDir(new File(workDirPath));
+
         KdcSetting kdcSetting = new KdcSetting(kdcConfig, backendConfig);
         kdcServer.setInnerKdcImpl(new DefaultInternalKdcServerImpl(kdcSetting));
 
@@ -73,7 +87,10 @@ public class KdcServerConfig {
         kdcServer.start();
 
         createKrb5Conf();
-        logger.info("KDC server initialized with realm: {} on port: {}", kdcServer.getKdcSetting().getKdcRealm(), kdcServer.getKdcSetting().getKdcPort());
+        logger.info("KDC server initialized with realm: {} on port: {}",
+                kdcServer.getKdcSetting().getKdcRealm(),
+                kdcServer.getKdcSetting().getKdcPort());
+
         return kdcServer;
     }
 
@@ -81,12 +98,12 @@ public class KdcServerConfig {
         File workDir = new File(workDirPath);
         if (!workDir.exists()) {
             logger.debug("Creating work directory for KDC: {}", workDir.getAbsolutePath());
-            if (workDir.mkdirs())
-                logger.debug("Work directory created: {}", workDir.getAbsolutePath());
-            else
+            if (!workDir.mkdirs()) {
                 logger.error("Failed to create work directory: {}", workDir.getAbsolutePath());
-        } else
+            }
+        } else {
             logger.debug("Work directory already exists: {}", workDir.getAbsolutePath());
+        }
 
         if (!System.getProperty("os.name").toLowerCase().contains("win")) {
             if (!workDir.setWritable(true, false) ||
@@ -99,7 +116,6 @@ public class KdcServerConfig {
             logger.warn("Skipping permission adjustments as the application is running on Windows");
         }
 
-        // Ensure krb5kdc directory exists
         File krb5kdcDir = new File(workDir, "krb5kdc");
         if (!krb5kdcDir.exists()) {
             logger.debug("Creating krb5kdc directory: {}", krb5kdcDir.getAbsolutePath());
@@ -112,15 +128,24 @@ public class KdcServerConfig {
 
     private void createKrb5Conf() throws IOException {
         File krb5ConfDir = new File(workDirPath);
-        if (!krb5ConfDir.exists() && !krb5ConfDir.mkdirs())
+        if (!krb5ConfDir.exists() && !krb5ConfDir.mkdirs()) {
             throw new IOException("Failed to create directory: " + krb5ConfDir.getAbsolutePath());
-        String krb5ConfContent = KerberosConfigFileGenerator.generateKrb5ConfContent(realm, kdcPort);
+        }
+
+        // IMPORTANT: generate krb5.conf pointing KDC to 127.0.0.1 (not "localhost")
+        String krb5ConfContent = KerberosConfigFileGenerator.generateKrb5ConfContent(realm, kdcPort, "127.0.0.1");
+
         File krb5ConfFile = Paths.get(workDirPath, "krb5.conf").toFile();
-        if (krb5ConfFile.getParentFile() != null && !krb5ConfFile.getParentFile().exists() && !krb5ConfFile.getParentFile().mkdirs())
+        if (krb5ConfFile.getParentFile() != null &&
+                !krb5ConfFile.getParentFile().exists() &&
+                !krb5ConfFile.getParentFile().mkdirs()) {
             throw new IOException("Failed to create directory: " + krb5ConfFile.getParentFile().getAbsolutePath());
+        }
+
         try (FileWriter writer = new FileWriter(krb5ConfFile)) {
             writer.write(krb5ConfContent);
         }
+
         logger.debug("krb5.conf file created at: {}", krb5ConfFile.getAbsolutePath());
         System.setProperty("java.security.krb5.conf", krb5ConfFile.getAbsolutePath());
     }
@@ -128,11 +153,12 @@ public class KdcServerConfig {
     @PreDestroy
     public void cleanUp() {
         logger.info("Cleaning up Kerberos resources");
-        if (kdcServer != null)
+        if (kdcServer != null) {
             try {
                 kdcServer.stop();
             } catch (KrbException e) {
                 logger.error("Failed to stop KDC server", e);
             }
+        }
     }
 }

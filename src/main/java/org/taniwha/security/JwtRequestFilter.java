@@ -2,7 +2,7 @@ package org.taniwha.security;
 
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.SignatureException;
+import io.jsonwebtoken.security.SignatureException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -30,6 +31,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     private final JwtTokenUtil jwtTokenUtil;
     private final ApplicationContext applicationContext;
 
+    @Value("${jwt.filter.enabled:true}")
+    private boolean jwtFilterEnabled;
+
     public JwtRequestFilter(JwtTokenUtil jwtTokenUtil, ApplicationContext applicationContext) {
         this.jwtTokenUtil = jwtTokenUtil;
         this.applicationContext = applicationContext;
@@ -38,6 +42,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain chain)
             throws ServletException, IOException {
+
+        // Skip JWT authentication if disabled (e.g., in tests)
+        if (!jwtFilterEnabled) {
+            chain.doFilter(request, response);
+            return;
+        }
 
         // Allow requests to log in and register endpoints to bypass the filter
         if (isExemptedEndpoint(request)) {
@@ -51,13 +61,20 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String username = validateTokenAndExtractUsername(jwtToken, response);
         if (username == null) return;
 
-        authenticateUser(request, response, jwtToken, username);
+        if (!authenticateUser(request, response, jwtToken, username)) return;
+
         chain.doFilter(request, response);
     }
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
-        String requestURI = request.getRequestURI();
-        return requestURI.equals("/taniwha/api/user/login") || requestURI.equals("/taniwha/api/user/register") || requestURI.startsWith("/taniwha/api/error");
+        String uri = request.getRequestURI();
+        return uri.startsWith("/taniwha/actuator/health")
+                || uri.startsWith("/taniwha/actuator/info")
+                || uri.equals("/taniwha/api/user/login")
+                || uri.equals("/taniwha/api/user/register")
+                || uri.startsWith("/taniwha/api/error")
+                || uri.equals("/taniwha/nodes/register")
+                || uri.equals("/taniwha/nodes/heartbeat");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -92,7 +109,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void authenticateUser(HttpServletRequest request, HttpServletResponse response, String jwtToken, String username)
+    private boolean authenticateUser(HttpServletRequest request, HttpServletResponse response, String jwtToken, String username)
             throws IOException {
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserService userService = applicationContext.getBean(UserService.class);
@@ -103,11 +120,18 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                     authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                    return true;
+                } else {
+                    // Token validation failed - don't authenticate but don't send error
+                    // (let Spring Security handle it)
+                    return true;
                 }
             } catch (UsernameNotFoundException e) {
                 filterLogger.warn("User not found: {}", username);
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "User not found");
+                return false;
             }
         }
+        return true;
     }
 }

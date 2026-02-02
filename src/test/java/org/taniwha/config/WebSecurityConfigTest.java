@@ -45,7 +45,7 @@ class WebSecurityConfigTest {
             CorsConfiguration cfg = configs.get("/**");
             assertThat(cfg).isNotNull();
             assertThat(cfg.getAllowedOrigins())
-                    .containsExactly("https://semantics.inf.um.es");
+                    .containsExactlyInAnyOrder("https://semantics.inf.um.es", "http://localhost:3000");
             assertThat(cfg.getAllowedMethods())
                     .containsExactlyInAnyOrder("GET", "POST", "PUT", "DELETE", "OPTIONS");
             assertThat(cfg.getAllowedHeaders())

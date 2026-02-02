@@ -1,7 +1,0 @@
-field_id,pattern_type,field_id,pattern_type,source_procedure,procedure_part,procedure_result,ontology_mapping,observable,value_type,categorical_value,categorical_ontology_mapping,measurement_unit,temporal_context,statement_context,finding,value_type,categorical_value,categorical_ontology_mapping
-ESTADO_CIV,ObservationResultStatement,ESTADO_CIV,ObservationResultStatement,sp,pp,pr,om,ob,categorical,SE,SESESE,mu,tc,sc,,categorical,SE,SESESE
-ESTADO_CIV,ObservationResultStatement,ESTADO_CIV,ObservationResultStatement,sp,pp,pr,om,ob,categorical,VI,VIVIVI,mu,tc,sc,,categorical,VI,VIVIVI
-ESTADO_CIV,ObservationResultStatement,ESTADO_CIV,ObservationResultStatement,sp,pp,pr,om,ob,categorical,DI,DIDIDI,mu,tc,sc,,categorical,DI,DIDIDI
-ESTADO_CIV,ObservationResultStatement,ESTADO_CIV,ObservationResultStatement,sp,pp,pr,om,ob,categorical,SO,SOSOSO,mu,tc,sc,,categorical,SO,SOSOSO
-ESTADO_CIV,ObservationResultStatement,ESTADO_CIV,ObservationResultStatement,sp,pp,pr,om,ob,categorical,CA,CACACA,mu,tc,sc,,categorical,CA,CACACA
-TOTAL,ClinicalSituationStatement,TOTAL,ClinicalSituationStatement,ñoilukyjh,hytgrfdertyh,hytgrfed,yhtgrfdthyj,,integer,,,,jhygtfrgthyjuki,kujhyghyjuk,juhygtfrtjyuk,integer,,
