@@ -6,4 +6,5 @@ import org.taniwha.model.Project;
 
 @Repository
 public interface ProjectRepository extends MongoRepository<Project, String> {
+    Project findByName(String name);
 }
