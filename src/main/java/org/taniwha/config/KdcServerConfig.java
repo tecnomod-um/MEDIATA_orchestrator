@@ -84,7 +84,47 @@ public class KdcServerConfig {
         kdcServer.setInnerKdcImpl(new DefaultInternalKdcServerImpl(kdcSetting));
 
         kdcServer.init();
-        kdcServer.start();
+        
+        // Retry logic to handle transient port conflicts in test environments
+        int maxRetries = 3;
+        int retryDelay = 200; // milliseconds
+        KrbException lastException = null;
+        
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                kdcServer.start();
+                logger.info("KDC server started successfully on port: {} (attempt {})", kdcPort, attempt);
+                break; // Success, exit retry loop
+            } catch (KrbException e) {
+                lastException = e;
+                // Check if this is a bind exception (port already in use)
+                Throwable cause = e.getCause();
+                boolean isBindException = false;
+                while (cause != null) {
+                    if (cause instanceof java.net.BindException) {
+                        isBindException = true;
+                        break;
+                    }
+                    cause = cause.getCause();
+                }
+                
+                if (isBindException && attempt < maxRetries) {
+                    logger.warn("KDC server failed to bind to port {} on attempt {}, retrying after {}ms...", 
+                            kdcPort, attempt, retryDelay);
+                    try {
+                        Thread.sleep(retryDelay);
+                        // Exponential backoff
+                        retryDelay *= 2;
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new KrbException("Interrupted while retrying KDC server start", ie);
+                    }
+                } else {
+                    // Not a bind exception or last attempt - rethrow
+                    throw e;
+                }
+            }
+        }
 
         createKrb5Conf();
         logger.info("KDC server initialized with realm: {} on port: {}",
