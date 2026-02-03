@@ -55,9 +55,10 @@ public abstract class BaseIntegrationTest {
      * 1. Trying random ports in the high range (50000-60000) to avoid common service ports
      * 2. Verifying the port hasn't been allocated within this JVM session
      * 3. Retrying up to MAX_RETRIES times if binding fails
+     * 4. Adding a small delay after releasing the socket to reduce race conditions
      * 
      * While a small race condition window still exists between releasing the socket
-     * and the KDC server binding to it, using a high port range and retry logic
+     * and the KDC server binding to it, using a high port range, retry logic, and delay
      * significantly reduces the probability of conflicts in test environments.
      * 
      * @return an available port number
@@ -77,10 +78,17 @@ public abstract class BaseIntegrationTest {
             // Try to bind to the port
             try (ServerSocket socket = new ServerSocket(port)) {
                 socket.setReuseAddress(true);
-                // Successfully bound - mark as allocated and return
-                // Note: Adding to allocatedPorts after socket closes ensures we track
-                // the port but don't hold it open indefinitely
+                // Successfully bound - mark as allocated
                 allocatedPorts.add(port);
+                // Close the socket and add a small delay to let the OS fully release the port
+                // This reduces the race condition window before KDC server binds to it
+                socket.close();
+                try {
+                    Thread.sleep(100); // 100ms delay to ensure port is fully released
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted while waiting for port release", e);
+                }
                 return port;
             } catch (IOException e) {
                 // Port is in use, try another
