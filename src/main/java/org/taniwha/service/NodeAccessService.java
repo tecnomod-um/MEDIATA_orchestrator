@@ -37,7 +37,7 @@ public class NodeAccessService {
 
     @Autowired
     public NodeAccessService(NodeRepository nodeRepository, JwtTokenUtil jwtTokenUtil,
-                             KerberosService kerberosService, UserService userService, RestTemplateConfig restTemplateConfig,
+                             @Autowired(required = false) KerberosService kerberosService, UserService userService, RestTemplateConfig restTemplateConfig,
                              @Value("${kerberos.realm}") String realm) {
         this.nodeRepository = nodeRepository;
         this.jwtTokenUtil = jwtTokenUtil;
@@ -91,6 +91,12 @@ public class NodeAccessService {
             response.put(ERROR_KEY, NODE_NOT_FOUND_MESSAGE);
         } else {
             // Access the node's principal
+            if (kerberosService == null) {
+                logger.error("Kerberos service not available");
+                response.put(ERROR_KEY, "Kerberos service not available");
+                return response;
+            }
+            
             String serviceToken;
             try {
                 serviceToken = kerberosService.requestSgt(userTgtToken, kerberosService.getPrincipalName(nodeInfo.getIp(), realm));

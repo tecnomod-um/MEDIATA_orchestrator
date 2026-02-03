@@ -3,6 +3,7 @@ package org.taniwha.config;
 import org.apache.kerby.kerberos.kerb.KrbException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,7 +34,7 @@ public class DataInitializer {
     CommandLineRunner initDatabase(RoleRepository roleRepository,
                                    UserRepository userRepository,
                                    PasswordEncoder passwordEncoder,
-                                   KerberosService kerberosService,
+                                   @Autowired(required = false) KerberosService kerberosService,
                                    ProjectRepository projectRepository) {
         return args -> {
             logger.info("Initializing default data...");
@@ -88,9 +89,13 @@ public class DataInitializer {
             userRepository.save(defaultUser);
 
             // IMPORTANT: Kerberos principal must be created with the RAW password
-            String principalName = kerberosService.getPrincipalName(DEFAULT_USERNAME, kerberosService.getRealm());
-            kerberosService.createPrincipal(principalName, DEFAULT_PASSWORD);
-            kerberosService.createKeytab(principalName);
+            if (kerberosService != null) {
+                String principalName = kerberosService.getPrincipalName(DEFAULT_USERNAME, kerberosService.getRealm());
+                kerberosService.createPrincipal(principalName, DEFAULT_PASSWORD);
+                kerberosService.createKeytab(principalName);
+            } else {
+                logger.debug("Kerberos service not available, skipping principal creation for default admin");
+            }
 
             logger.warn("Created default admin user - Username: '{}', Password: '{}'. CHANGE THIS IN PRODUCTION!",
                     DEFAULT_USERNAME, DEFAULT_PASSWORD);

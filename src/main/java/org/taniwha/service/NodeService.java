@@ -45,7 +45,8 @@ public class NodeService {
     private volatile Instant lastNodeListAccess;
 
     @Autowired
-    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, KerberosService kerberosService, PasswordEncoder passwordEncoder) {
+    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, 
+                      @Autowired(required = false) KerberosService kerberosService, PasswordEncoder passwordEncoder) {
         this.nodeRepository = nodeRepository;
         this.userRepository = userRepository;
         this.kerberosService = kerberosService;
@@ -76,8 +77,13 @@ public class NodeService {
 
         try {
             // Create a Kerberos principal for the node
-            kerberosService.createPrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm), rawPassword);
-            return kerberosService.createKeytab(kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
+            if (kerberosService != null) {
+                kerberosService.createPrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm), rawPassword);
+                return kerberosService.createKeytab(kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
+            } else {
+                logger.debug("Kerberos service not available, skipping principal creation");
+                return null;
+            }
         } catch (KrbException e) {
             logger.error("Failed to register node {}: {}", nodeInfo.getNodeId(), e.getMessage());
             return null;
@@ -124,10 +130,12 @@ public class NodeService {
         if (nodeInfo != null) {
             nodeRepository.deleteById(nodeId);
             nodeHeartbeats.remove(nodeId);
-            try {
-                kerberosService.deletePrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
-            } catch (KrbException e) {
-                logger.error("Failed to delete Kerberos principal and keytab for node");
+            if (kerberosService != null) {
+                try {
+                    kerberosService.deletePrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
+                } catch (KrbException e) {
+                    logger.error("Failed to delete Kerberos principal and keytab for node");
+                }
             }
         }
     }

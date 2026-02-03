@@ -43,7 +43,7 @@ public class UserService implements UserDetailsService {
     public UserService(UserRepository userRepository,
                        RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
-                       @Lazy KerberosService kerberosService,
+                       @Lazy @Autowired(required = false) KerberosService kerberosService,
                        JwtTokenUtil jwtTokenUtil,
                        @Lazy AuthenticationManager authenticationManager) {
         this.userRepository = userRepository;
@@ -86,14 +86,19 @@ public class UserService implements UserDetailsService {
         );
 
         userRepository.save(newUser);
-        kerberosService.createPrincipal(
-                kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()),
-                rawPassword
-        );
+        
+        if (kerberosService != null) {
+            kerberosService.createPrincipal(
+                    kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()),
+                    rawPassword
+            );
 
-        kerberosService.createKeytab(
-                kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm())
-        );
+            kerberosService.createKeytab(
+                    kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm())
+            );
+        } else {
+            logger.debug("Kerberos service not available, skipping principal creation for user");
+        }
     }
 
     public LoginResponseDTO loginUser(String username, String password) {
@@ -104,13 +109,18 @@ public class UserService implements UserDetailsService {
         final String token = jwtTokenUtil.generateToken(userDetails.getUsername());
 
         // IMPORTANT: use RAW password from login request
-        String tgtTicket = kerberosService.requestTgt(
-                kerberosService.getPrincipalName(username, kerberosService.getRealm()),
-                password
-        );
+        String tgtTicket = null;
+        if (kerberosService != null) {
+            tgtTicket = kerberosService.requestTgt(
+                    kerberosService.getPrincipalName(username, kerberosService.getRealm()),
+                    password
+            );
 
-        if (tgtTicket == null)
-            logger.error("Kerberos TGT request failed for user: {}", username);
+            if (tgtTicket == null)
+                logger.error("Kerberos TGT request failed for user: {}", username);
+        } else {
+            logger.debug("Kerberos service not available, skipping TGT request");
+        }
 
         return new LoginResponseDTO(token, tgtTicket);
     }

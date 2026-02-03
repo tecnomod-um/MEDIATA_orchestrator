@@ -12,6 +12,7 @@ import org.apache.kerby.kerberos.kerb.type.base.EncryptionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.taniwha.kerberos.CustomKdcServer;
@@ -25,6 +26,7 @@ import java.util.Arrays;
 import java.util.List;
 
 @Configuration
+@ConditionalOnProperty(name = "kerberos.enabled", havingValue = "true", matchIfMissing = true)
 public class KdcServerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(KdcServerConfig.class);
