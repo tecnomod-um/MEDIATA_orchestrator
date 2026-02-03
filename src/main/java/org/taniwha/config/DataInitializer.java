@@ -7,8 +7,10 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.taniwha.model.Project;
 import org.taniwha.model.Role;
 import org.taniwha.model.User;
+import org.taniwha.repository.ProjectRepository;
 import org.taniwha.repository.RoleRepository;
 import org.taniwha.repository.UserRepository;
 import org.taniwha.service.KerberosService;
@@ -23,12 +25,16 @@ public class DataInitializer {
     private static final String DEFAULT_USERNAME = "admin";
     private static final String DEFAULT_PASSWORD = "admin";
     private static final String DEFAULT_EMAIL = "admin@mediata.local";
+    private static final String DEFAULT_PROJECT_NAME = "Default Project";
+    private static final String DEFAULT_PROJECT_DESCRIPTION = "Default project created on initialization";
+    private static final String DEFAULT_PROJECT_BADGE = "default";
 
     @Bean
     CommandLineRunner initDatabase(RoleRepository roleRepository,
                                    UserRepository userRepository,
                                    PasswordEncoder passwordEncoder,
-                                   KerberosService kerberosService) {
+                                   KerberosService kerberosService,
+                                   ProjectRepository projectRepository) {
         return args -> {
             logger.info("Initializing default data...");
 
@@ -36,6 +42,8 @@ public class DataInitializer {
             createRoleIfNotExists(roleRepository, "ROLE_USER");
 
             createDefaultAdminIfNotExists(userRepository, roleRepository, passwordEncoder, kerberosService);
+            
+            createDefaultProjectIfNotExists(projectRepository);
 
             logger.info("Data initialization complete");
         };
@@ -91,5 +99,21 @@ public class DataInitializer {
             logger.error("Failed to create Kerberos principal for default admin user", e);
             logger.warn("Default admin user created in MongoDB but Kerberos setup failed.");
         }
+    }
+
+    private void createDefaultProjectIfNotExists(ProjectRepository projectRepository) {
+        Project existingProject = projectRepository.findByName(DEFAULT_PROJECT_NAME);
+        if (existingProject != null) {
+            logger.debug("Default project already exists");
+            return;
+        }
+
+        Project defaultProject = new Project();
+        defaultProject.setName(DEFAULT_PROJECT_NAME);
+        defaultProject.setDescription(DEFAULT_PROJECT_DESCRIPTION);
+        defaultProject.setBadge(DEFAULT_PROJECT_BADGE);
+
+        projectRepository.save(defaultProject);
+        logger.info("Created default project: '{}'", DEFAULT_PROJECT_NAME);
     }
 }
