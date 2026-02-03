@@ -78,11 +78,12 @@ public abstract class BaseIntegrationTest {
             try (ServerSocket socket = new ServerSocket(port)) {
                 socket.setReuseAddress(true);
                 // Successfully bound - mark as allocated and return
+                // Note: Adding to allocatedPorts after socket closes ensures we track
+                // the port but don't hold it open indefinitely
                 allocatedPorts.add(port);
                 return port;
             } catch (IOException e) {
                 // Port is in use, try another
-                continue;
             }
         }
         
