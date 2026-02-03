@@ -89,11 +89,13 @@ public class KdcServerConfig {
         int maxRetries = 3;
         int retryDelay = 200; // milliseconds
         KrbException lastException = null;
+        boolean started = false;
         
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 kdcServer.start();
                 logger.info("KDC server started successfully on port: {} (attempt {})", kdcPort, attempt);
+                started = true;
                 break; // Success, exit retry loop
             } catch (KrbException e) {
                 lastException = e;
@@ -124,6 +126,11 @@ public class KdcServerConfig {
                     throw e;
                 }
             }
+        }
+        
+        // If we exhausted all retries without success, throw the last exception
+        if (!started && lastException != null) {
+            throw lastException;
         }
 
         createKrb5Conf();

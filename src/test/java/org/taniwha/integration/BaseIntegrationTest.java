@@ -80,19 +80,21 @@ public abstract class BaseIntegrationTest {
                 socket.setReuseAddress(true);
                 // Successfully bound - mark as allocated
                 allocatedPorts.add(port);
-                // Close the socket and add a small delay to let the OS fully release the port
+                // Add a small delay to let the OS fully release the port after closing
                 // This reduces the race condition window before KDC server binds to it
-                socket.close();
-                try {
-                    Thread.sleep(100); // 100ms delay to ensure port is fully released
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("Interrupted while waiting for port release", e);
-                }
-                return port;
             } catch (IOException e) {
                 // Port is in use, try another
+                continue;
             }
+            
+            // Delay after the socket is automatically closed by try-with-resources
+            try {
+                Thread.sleep(100); // 100ms delay to ensure port is fully released
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for port release", e);
+            }
+            return port;
         }
         
         throw new RuntimeException(
