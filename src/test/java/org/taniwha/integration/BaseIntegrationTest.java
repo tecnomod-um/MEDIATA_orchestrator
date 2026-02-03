@@ -34,6 +34,8 @@ public abstract class BaseIntegrationTest {
                 mongoDBContainer.getMappedPort(27017));
         registry.add("spring.data.mongodb.uri", () -> connectionString);
         registry.add("jwt.secret", () -> "testSecretKeyThatIsExactly32!!!!");
+        // Disable Kerberos in integration tests to avoid port conflicts
+        registry.add("kerberos.enabled", () -> "false");
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
         registry.add("python.launcher.enabled", () -> "false");
