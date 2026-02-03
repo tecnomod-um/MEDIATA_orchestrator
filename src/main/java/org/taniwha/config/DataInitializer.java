@@ -72,38 +72,36 @@ public class DataInitializer {
             return;
         }
 
-        try {
-            Role adminRole = roleRepository.findByName("ROLE_ADMIN");
+        Role adminRole = roleRepository.findByName("ROLE_ADMIN");
 
-            String encodedPassword = passwordEncoder.encode(DEFAULT_PASSWORD);
+        String encodedPassword = passwordEncoder.encode(DEFAULT_PASSWORD);
 
-            User defaultUser = new User(
-                    null,
-                    DEFAULT_USERNAME,
-                    encodedPassword,
-                    DEFAULT_EMAIL,
-                    Collections.singletonList(adminRole),
-                    Collections.emptyList()
-            );
+        User defaultUser = new User(
+                null,
+                DEFAULT_USERNAME,
+                encodedPassword,
+                DEFAULT_EMAIL,
+                Collections.singletonList(adminRole),
+                Collections.emptyList()
+        );
 
-            userRepository.save(defaultUser);
+        userRepository.save(defaultUser);
 
-            // IMPORTANT: Kerberos principal must be created with the RAW password
-            if (kerberosService != null) {
+        // IMPORTANT: Kerberos principal must be created with the RAW password
+        if (kerberosService != null) {
+            try {
                 String principalName = kerberosService.getPrincipalName(DEFAULT_USERNAME, kerberosService.getRealm());
                 kerberosService.createPrincipal(principalName, DEFAULT_PASSWORD);
                 kerberosService.createKeytab(principalName);
-            } else {
-                logger.debug("Kerberos service not available, skipping principal creation for default admin");
+            } catch (Exception e) {
+                logger.debug("Kerberos service not available, skipping principal creation for default admin: {}", e.getMessage());
             }
-
-            logger.warn("Created default admin user - Username: '{}', Password: '{}'. CHANGE THIS IN PRODUCTION!",
-                    DEFAULT_USERNAME, DEFAULT_PASSWORD);
-
-        } catch (KrbException e) {
-            logger.error("Failed to create Kerberos principal for default admin user", e);
-            logger.warn("Default admin user created in MongoDB but Kerberos setup failed.");
+        } else {
+            logger.debug("Kerberos service not available, skipping principal creation for default admin");
         }
+
+        logger.warn("Created default admin user - Username: '{}', Password: '{}'. CHANGE THIS IN PRODUCTION!",
+                DEFAULT_USERNAME, DEFAULT_PASSWORD);
     }
 
     private void createDefaultProjectIfNotExists(ProjectRepository projectRepository) {

@@ -54,8 +54,15 @@ public class NodeManagerController {
             logger.info("New node registered: {} ({})", node.getName(), node.getNodeId());
             RegisterResponseDTO responseDTO = new RegisterResponseDTO();
             responseDTO.setMessage("Node registered successfully");
-            String keytabContent = encodeKeytabToBase64(keytabPath);
-            responseDTO.setKeytab(keytabContent);
+            
+            // Handle null keytabPath when Kerberos is disabled
+            if (keytabPath != null) {
+                String keytabContent = encodeKeytabToBase64(keytabPath);
+                responseDTO.setKeytab(keytabContent);
+            } else {
+                logger.debug("Keytab not generated (Kerberos may be disabled)");
+                responseDTO.setKeytab(null);
+            }
 
             return ResponseEntity.ok(responseDTO);
         } catch (RuntimeException e) {

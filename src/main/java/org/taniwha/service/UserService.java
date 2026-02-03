@@ -88,14 +88,18 @@ public class UserService implements UserDetailsService {
         userRepository.save(newUser);
         
         if (kerberosService != null) {
-            kerberosService.createPrincipal(
-                    kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()),
-                    rawPassword
-            );
+            try {
+                kerberosService.createPrincipal(
+                        kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm()),
+                        rawPassword
+                );
 
-            kerberosService.createKeytab(
-                    kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm())
-            );
+                kerberosService.createKeytab(
+                        kerberosService.getPrincipalName(newUser.getUsername(), kerberosService.getRealm())
+                );
+            } catch (Exception e) {
+                logger.debug("Kerberos service not available, skipping principal creation for user: {}", e.getMessage());
+            }
         } else {
             logger.debug("Kerberos service not available, skipping principal creation for user");
         }
@@ -111,13 +115,17 @@ public class UserService implements UserDetailsService {
         // IMPORTANT: use RAW password from login request
         String tgtTicket = null;
         if (kerberosService != null) {
-            tgtTicket = kerberosService.requestTgt(
-                    kerberosService.getPrincipalName(username, kerberosService.getRealm()),
-                    password
-            );
+            try {
+                tgtTicket = kerberosService.requestTgt(
+                        kerberosService.getPrincipalName(username, kerberosService.getRealm()),
+                        password
+                );
 
-            if (tgtTicket == null)
-                logger.error("Kerberos TGT request failed for user: {}", username);
+                if (tgtTicket == null)
+                    logger.error("Kerberos TGT request failed for user: {}", username);
+            } catch (Exception e) {
+                logger.debug("Kerberos service not available, skipping TGT request: {}", e.getMessage());
+            }
         } else {
             logger.debug("Kerberos service not available, skipping TGT request");
         }
