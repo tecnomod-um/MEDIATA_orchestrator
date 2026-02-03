@@ -31,11 +31,18 @@ echo "✓ RDF Builder repository exists"
 echo "✓ FHIR API repository exists"
 echo ""
 
-echo "Skipping local Maven build (Docker-only build)"
-
-echo ""
-echo "✓ Application built successfully"
-echo ""
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        echo "No .env found. Creating one from .env.example..."
+        cp ".env.example" ".env"
+        echo "✓ Created .env from .env.example"
+        echo "IMPORTANT: Review .env and set secure values (e.g., JWT_SECRET) before using in production."
+        echo ""
+    else
+        echo "WARNING: No .env and no .env.example found. Docker Compose may fail if variables are required."
+        echo ""
+    fi
+fi
 
 echo "Starting Docker Compose..."
 docker compose up -d --build
