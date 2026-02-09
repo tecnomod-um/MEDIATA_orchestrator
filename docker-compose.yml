@@ -1,3 +1,5 @@
+version: "3.9"
+
 networks:
   mediata-network:
     driver: bridge
@@ -78,7 +80,9 @@ services:
       retries: 5
       start_period: 60s
 
+  # Optional: RDF Builder (enabled by profile "rdf")
   rdf-builder:
+    profiles: ["rdf"]
     build:
       context: .
       dockerfile: Dockerfile.rdf-builder
@@ -95,7 +99,9 @@ services:
       retries: 3
       start_period: 30s
 
+  # Optional: FHIR API (enabled by profile "fhir")
   fhir-api:
+    profiles: ["fhir"]
     build:
       context: .
       dockerfile: Dockerfile.fhir-api
@@ -118,32 +124,41 @@ services:
       dockerfile: Dockerfile.prebuilt
     container_name: mediata-orchestrator
     restart: unless-stopped
+
+    # IMPORTANT:
+    # Do NOT hard-depend on optional services. Otherwise "minimal" mode can never start.
     depends_on:
       mongodb:
         condition: service_healthy
       snowstorm:
         condition: service_healthy
-      rdf-builder:
-        condition: service_healthy
-      fhir-api:
-        condition: service_started
+
     ports:
       - "${ORCHESTRATOR_HOST_PORT:-8088}:8088"
       - "${KERBEROS_HOST_PORT:-8089}:8089"
+
     environment:
       - PORT=${PORT:-8088}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
       - JWT_SECRET=${JWT_SECRET}
       - KERBEROS_PORT=${KERBEROS_PORT:-8089}
+
+      # These URLs can point to containers when profiles enabled, otherwise just leave defaults.
       - PYURL=${PYURL:-http://rdf-builder:8000}
       - PYPORT=${PYPORT:-8000}
       - FHIRPORT=${FHIRPORT:-8001}
+
+      # Spring toggles (used by your /api/system/capabilities DTO, and by local launcher configs)
+      - PY_LAUNCHER_ENABLED=${PY_LAUNCHER_ENABLED:-true}
+      - FHIR_LAUNCHER_ENABLED=${FHIR_LAUNCHER_ENABLED:-true}
+
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
       - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
+
     extra_hosts:
       - "localhost:host-gateway"
-      
+
     volumes:
       - kerby-data:/app/kerby
     networks:
