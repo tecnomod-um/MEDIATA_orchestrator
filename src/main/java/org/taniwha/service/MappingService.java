@@ -26,6 +26,8 @@ public class MappingService {
 
     public MappingService(EmbeddingsClient embeddingsClient) {
         this.embeddingsClient = embeddingsClient;
+        logger.info("[MappingService] Initialized with EmbeddingsClient: {}", 
+            embeddingsClient != null ? "present" : "NULL!");
     }
 
     // Note: D is no longer a constant, embedding dimensions are determined by the model
@@ -104,6 +106,11 @@ public class MappingService {
             // This allows the LLM to understand context like:
             // "Type: Ischemic, Hemorrhagic" matching with "Etiology: Hem, HEM, Isch"
             float[] combined = embedColumnWithValues(can.concept, rawValues, stats);
+            
+            if (combined == null || combined.length == 0) {
+                logger.error("[MappingService] Failed to embed column '{}' - got null/empty embedding!", colName);
+                continue;
+            }
 
             all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, stats));
         }
