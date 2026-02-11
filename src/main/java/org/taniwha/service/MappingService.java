@@ -23,6 +23,10 @@ public class MappingService {
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
     private final EmbeddingsClient embeddingsClient;
+    
+    // Counter for embedding logging
+    private static final java.util.concurrent.atomic.AtomicInteger embeddingLogCount = 
+        new java.util.concurrent.atomic.AtomicInteger(0);
 
     public MappingService(EmbeddingsClient embeddingsClient) {
         this.embeddingsClient = embeddingsClient;
@@ -70,6 +74,9 @@ public class MappingService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
+        // Reset embedding log counter for this request
+        embeddingLogCount.set(0);
+        
         List<ElementFileDTO> cols = (req == null || req.getElementFiles() == null)
                 ? Collections.emptyList()
                 : req.getElementFiles();
@@ -1202,10 +1209,36 @@ public class MappingService {
         }
 
         List<ColCluster> clusters = new ArrayList<>(byConcept.values());
+        
+        // Log first 3 cluster centroids to inspect embedding quality
+        for (int i = 0; i < Math.min(3, clusters.size()); i++) {
+            ColCluster cl = clusters.get(i);
+            float[] centroid = cl.centroid;
+            float magnitude = 0;
+            for (float v : centroid) magnitude += v * v;
+            magnitude = (float) Math.sqrt(magnitude);
+            
+            logger.info("[TRACE-CENTROID] Cluster {} ({}): centroid[0..5]=[{}, {}, {}, {}, {}, {}], magnitude={}, {} cols",
+                i + 1,
+                cl.representativeConcept != null ? cl.representativeConcept : "?",
+                centroid.length > 0 ? String.format("%.4f", centroid[0]) : "?",
+                centroid.length > 1 ? String.format("%.4f", centroid[1]) : "?",
+                centroid.length > 2 ? String.format("%.4f", centroid[2]) : "?",
+                centroid.length > 3 ? String.format("%.4f", centroid[3]) : "?",
+                centroid.length > 4 ? String.format("%.4f", centroid[4]) : "?",
+                centroid.length > 5 ? String.format("%.4f", centroid[5]) : "?",
+                String.format("%.4f", magnitude),
+                cl.cols.size());
+        }
 
         // Step 2: fuzzy merge across those pre-clusters
         List<ColCluster> merged = new ArrayList<>();
         int mergeCount = 0;
+        double maxSim = -1;
+        double minSim = 1;
+        double sumSim = 0;
+        int simCount = 0;
+        
         for (ColCluster col : clusters) {
             ColCluster best = null;
             double bestSim = -1;
@@ -1213,18 +1246,34 @@ public class MappingService {
             for (ColCluster cl : merged) {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
                 if (sim > bestSim) { bestSim = sim; best = cl; }
+                
+                // Track similarity statistics
+                if (sim > maxSim) maxSim = sim;
+                if (sim < minSim) minSim = sim;
+                sumSim += sim;
+                simCount++;
             }
 
             if (best != null && bestSim >= THRESH_COL_CLUSTER) {
                 for (ColRef r : col.cols) best.add(r);
                 mergeCount++;
+                
+                // Log first few merges to see what's happening
+                if (mergeCount <= 5) {
+                    logger.info("[TRACE-MERGE] Merging cluster {} (concept='{}') into existing cluster (similarity={})",
+                        mergeCount, col.representativeConcept, String.format("%.4f", bestSim));
+                }
             } else {
                 merged.add(col);
             }
         }
         
+        double avgSim = simCount > 0 ? sumSim / simCount : 0;
         logger.info("[TRACE] clusterColumns: merged {} clusters (threshold={}), final count: {}", 
             mergeCount, THRESH_COL_CLUSTER, merged.size());
+        logger.info("[TRACE] clusterColumns: similarity stats - min={}, max={}, avg={}, comparisons={}",
+            String.format("%.4f", minSim), String.format("%.4f", maxSim), 
+            String.format("%.4f", avgSim), simCount);
 
         for (ColCluster c : merged) {
             c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
@@ -1515,13 +1564,22 @@ public class MappingService {
         String promptStr = prompt.toString();
         float[] result = embeddingsClient.embed(promptStr);
         
-        // Log first embedding call only to avoid spam
-        if (Math.random() < 0.01) { // 1% sample
-            logger.info("[TRACE] embedColumnWithValues('{}') -> vector[0..3]=[{}, {}, {}, ...], dim={}",
-                promptStr.length() > 50 ? promptStr.substring(0, 50) + "..." : promptStr,
-                result.length > 0 ? result[0] : "?",
-                result.length > 1 ? result[1] : "?",
-                result.length > 2 ? result[2] : "?",
+        // Log first 3 embeddings to inspect vector quality
+        int loggedSoFar = embeddingLogCount.getAndIncrement();
+        if (loggedSoFar < 3) {
+            float magnitude = 0;
+            for (float v : result) magnitude += v * v;
+            magnitude = (float) Math.sqrt(magnitude);
+            
+            logger.info("[TRACE-EMBED] Column '{}' -> vector[0..5]=[{}, {}, {}, {}, {}, {}], magnitude={}, dim={}",
+                promptStr.length() > 40 ? promptStr.substring(0, 40) + "..." : promptStr,
+                result.length > 0 ? String.format("%.4f", result[0]) : "?",
+                result.length > 1 ? String.format("%.4f", result[1]) : "?",
+                result.length > 2 ? String.format("%.4f", result[2]) : "?",
+                result.length > 3 ? String.format("%.4f", result[3]) : "?",
+                result.length > 4 ? String.format("%.4f", result[4]) : "?",
+                result.length > 5 ? String.format("%.4f", result[5]) : "?",
+                String.format("%.4f", magnitude),
                 result.length);
         }
         
