@@ -100,39 +100,10 @@ public class MappingService {
 
             CanonicalName can = canonicalConceptName(colName, learnedNoise);
 
-            float[] nameVec = embedName(can.concept);
-            float[] valueVec = embedValues(rawValues);
-
-            // Adaptive weighting:
-            // - If name is short/generic, lean more on values.
-            // - If column looks numeric/date, name tends to be more reliable again.
-            double wName = DEFAULT_W_SRC_NAME;
-            double wVals = DEFAULT_W_SRC_VALUES;
-
-            boolean nameGeneric = can.genericness >= 0.55 || can.tokenCount <= 1 || can.concept.length() <= 4;
-            boolean hasStrongValues = looksLikeInformativeCategorical(stats, rawValues);
-
-            if (nameGeneric && hasStrongValues) {
-                wName = 0.45;
-                wVals = 0.55;
-            } else if (nameGeneric) {
-                wName = 0.55;
-                wVals = 0.45;
-            }
-
-            // If numeric/date markers exist, do not over-weight values list (because it contains "min/max" markers)
-            if (stats.hasIntegerMarker || stats.hasDoubleMarker || stats.hasDateMarker) {
-                wName = Math.max(wName, 0.65);
-                wVals = 1.0 - wName;
-            }
-
-            // Combine name and value embeddings with adaptive weighting
-            int dim = nameVec.length; // Get embedding dimension from actual vectors
-            float[] combined = new float[dim];
-            for (int k = 0; k < dim; k++) {
-                combined[k] = (float) (wName * nameVec[k] + wVals * valueVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
+            // LLM Approach: Create a single rich embedding with column name + values
+            // This allows the LLM to understand context like:
+            // "Type: Ischemic, Hemorrhagic" matching with "Etiology: Hem, HEM, Isch"
+            float[] combined = embedColumnWithValues(can.concept, rawValues, stats);
 
             all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, stats));
         }
@@ -1120,19 +1091,53 @@ public class MappingService {
             String type = d.getType();
             List<String> enumVals = d.getEnumValues();
 
-            float[] nameVec = embedName(fieldName);
-            float[] enumVec = embedEnum(enumVals, type);
-
-            int dim = nameVec.length;  // Get embedding dimension from actual vectors
-            float[] combined = new float[dim];
-            for (int k = 0; k < dim; k++) {
-                combined[k] = (float) (W_TGT_NAME * nameVec[k] + W_TGT_ENUM * enumVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
+            // Use rich combined embedding for schema fields too
+            float[] combined = embedSchemaField(fieldName, type, enumVals);
 
             out.add(new SchemaFieldRef(fieldName, type, enumVals, combined));
         }
         return out;
+    }
+
+    /**
+     * Create rich embedding for schema field with name, type, and enum values
+     */
+    private float[] embedSchemaField(String fieldName, String type, List<String> enumVals) {
+        StringBuilder prompt = new StringBuilder();
+        
+        if (fieldName != null && !fieldName.trim().isEmpty()) {
+            prompt.append(fieldName);
+        }
+        
+        if (type != null && !type.trim().isEmpty()) {
+            if (prompt.length() > 0) prompt.append(" (").append(type).append(")");
+            else prompt.append(type);
+        }
+        
+        if (enumVals != null && !enumVals.isEmpty()) {
+            StringBuilder valueStr = new StringBuilder();
+            int count = 0;
+            int maxEnum = 15;
+            
+            for (String val : enumVals) {
+                if (count >= maxEnum) break;
+                if (val == null) continue;
+                
+                String s = NormalizationUtil.normalizeValue(val);
+                if (s.isEmpty()) { count++; continue; }
+                
+                if (valueStr.length() > 0) valueStr.append(", ");
+                valueStr.append(s);
+                count++;
+            }
+            
+            if (valueStr.length() > 0) {
+                if (prompt.length() > 0) prompt.append(": ");
+                prompt.append(valueStr);
+            }
+        }
+        
+        return embeddingsClient.embed(prompt.toString());
     }
 
     // ============================================================
@@ -1435,11 +1440,54 @@ public class MappingService {
     // Embeddings (using LLM via EmbeddingsClient)
     // ============================================================
 
+    /**
+     * Create a single rich embedding that combines column name with its values.
+     * This allows the LLM to understand semantic relationships like:
+     * - "Type: Ischemic, Hemorrhagic" matching "Etiology (Isch/Hem): Hem, HEM, Isch"
+     * - "Bathing: integer, min:1, max:7" matching "BathingBART1: integer, min:0, max:5"
+     */
+    private float[] embedColumnWithValues(String columnName, List<String> values, ColStats stats) {
+        StringBuilder prompt = new StringBuilder();
+        
+        // Add column name
+        if (columnName != null && !columnName.trim().isEmpty()) {
+            prompt.append(columnName);
+        }
+        
+        // Add values if informative
+        if (values != null && !values.isEmpty()) {
+            // Limit values to avoid too long prompts
+            int maxValues = 15;
+            StringBuilder valueStr = new StringBuilder();
+            int count = 0;
+            
+            for (String raw : values) {
+                if (count >= maxValues) break;
+                if (raw == null) continue;
+                
+                String s = NormalizationUtil.normalizeValue(raw);
+                if (s.isEmpty()) { count++; continue; }
+                
+                if (valueStr.length() > 0) valueStr.append(", ");
+                valueStr.append(s);
+                count++;
+            }
+            
+            if (valueStr.length() > 0) {
+                if (prompt.length() > 0) prompt.append(": ");
+                prompt.append(valueStr);
+            }
+        }
+        
+        // Embed the rich combined representation
+        return embeddingsClient.embed(prompt.toString());
+    }
+
     private float[] embedName(String name) {
         if (name == null || name.trim().isEmpty()) {
             return embeddingsClient.embed("");
         }
-        // Use LLM embeddings for better semantic understanding
+        // Just embed the name directly - combination with values happens at higher level
         return embeddingsClient.embed(name);
     }
 
@@ -1448,7 +1496,8 @@ public class MappingService {
             return embeddingsClient.embed("");
         }
 
-        // Concatenate values into a text representation for LLM embedding
+        // Concatenate values as a list so LLM can understand relationships
+        // e.g., "Ischemic, Hemorrhagic" or "Hem, HEM, Isch"
         StringBuilder sb = new StringBuilder();
         int count = 0;
         for (String raw : values) {
@@ -1463,7 +1512,7 @@ public class MappingService {
             count++;
         }
 
-        // Use LLM embeddings for better semantic understanding of values
+        // Embed the concatenated list so relationships are preserved
         return embeddingsClient.embed(sb.toString());
     }
 
@@ -1483,13 +1532,12 @@ public class MappingService {
                 String s = NormalizationUtil.normalizeValue(raw);
                 if (s.isEmpty()) { count++; continue; }
 
-                if (count > 0 || typeHint != null) sb.append(", ");
+                if (count > 0 || (typeHint != null && !typeHint.trim().isEmpty())) sb.append(", ");
                 sb.append(s);
                 count++;
             }
         }
 
-        // Use LLM embeddings for better semantic understanding
         return embeddingsClient.embed(sb.toString());
     }
 
