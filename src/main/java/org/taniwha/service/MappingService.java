@@ -1117,10 +1117,9 @@ public class MappingService {
         if (enumVals != null && !enumVals.isEmpty()) {
             StringBuilder valueStr = new StringBuilder();
             int count = 0;
-            int maxEnum = 15;
             
             for (String val : enumVals) {
-                if (count >= maxEnum) break;
+                if (count >= MAX_VALUES_FOR_EMBEDDING) break;
                 if (val == null) continue;
                 
                 String s = NormalizationUtil.normalizeValue(val);
@@ -1439,6 +1438,8 @@ public class MappingService {
     // ============================================================
     // Embeddings (using LLM via EmbeddingsClient)
     // ============================================================
+    
+    private static final int MAX_VALUES_FOR_EMBEDDING = 15;
 
     /**
      * Create a single rich embedding that combines column name with its values.
@@ -1456,13 +1457,11 @@ public class MappingService {
         
         // Add values if informative
         if (values != null && !values.isEmpty()) {
-            // Limit values to avoid too long prompts
-            int maxValues = 15;
             StringBuilder valueStr = new StringBuilder();
             int count = 0;
             
             for (String raw : values) {
-                if (count >= maxValues) break;
+                if (count >= MAX_VALUES_FOR_EMBEDDING) break;
                 if (raw == null) continue;
                 
                 String s = NormalizationUtil.normalizeValue(raw);
@@ -1532,7 +1531,7 @@ public class MappingService {
                 String s = NormalizationUtil.normalizeValue(raw);
                 if (s.isEmpty()) { count++; continue; }
 
-                if (count > 0 || (typeHint != null && !typeHint.trim().isEmpty())) sb.append(", ");
+                if (count > 0) sb.append(", ");
                 sb.append(s);
                 count++;
             }
