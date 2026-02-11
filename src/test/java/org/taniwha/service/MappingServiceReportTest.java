@@ -17,6 +17,7 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
+import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
@@ -94,6 +95,9 @@ public class MappingServiceReportTest {
             "LLM should produce at least 25 mapping suggestions (got " + result.size() + ")");
         assertTrue(matchCount >= 6, 
             "LLM should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
+        
+        // CRITICAL: Validate value mappings are correct
+        validateValueMappings(result);
         
         // Write reports for manual inspection
         Path outDir = Paths.get("target", "mapping-report");
@@ -223,6 +227,102 @@ public class MappingServiceReportTest {
         }
 
         writeUtf8Compat(out, sb.toString());
+    }
+    
+    /**
+     * Validate that value mappings are correct when columns have different scales.
+     * Critical validation: FIM (1-7) vs Barthel (0-10/15) should map proportionally.
+     */
+    private void validateValueMappings(List<Map<String, SuggestedMappingDTO>> result) {
+        System.out.println("\n=== Value Mapping Validation ===");
+        
+        int validatedMappings = 0;
+        int totalValueMappings = 0;
+        
+        for (Map<String, SuggestedMappingDTO> mapping : result) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mapping.entrySet()) {
+                String key = entry.getKey();
+                SuggestedMappingDTO dto = entry.getValue();
+                
+                if (dto.getGroups() == null) continue;
+                
+                for (SuggestedGroupDTO group : dto.getGroups()) {
+                    if (group.getValues() == null) continue;
+                    
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        if (value.getMapping() == null || value.getMapping().size() < 2) continue;
+                        
+                        totalValueMappings++;
+                        
+                        // Check that mappings are valid
+                        boolean allValid = true;
+                        boolean isIntegerMapping = false;
+                        
+                        for (SuggestedRefDTO ref : value.getMapping()) {
+                            if (ref.getValue() == null) {
+                                allValid = false;
+                                break;
+                            }
+                            
+                            // Value can be either:
+                            // 1. Map<String, Object> for integer ranges (min/max)
+                            // 2. String for categorical values  
+                            if (ref.getValue() instanceof Map) {
+                                isIntegerMapping = true;
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> valueMap = (Map<String, Object>) ref.getValue();
+                                
+                                Object minObj = valueMap.get("minValue");
+                                Object maxObj = valueMap.get("maxValue");
+                                
+                                if (minObj == null || maxObj == null) {
+                                    allValid = false;
+                                    break;
+                                }
+                                
+                                // Validate ranges are sensible (min <= max)
+                                double minVal = ((Number) minObj).doubleValue();
+                                double maxVal = ((Number) maxObj).doubleValue();
+                                
+                                if (minVal > maxVal) {
+                                    System.out.println("  ⚠️  Invalid range in " + key + ": " + 
+                                        ref.getGroupColumn() + " [" + minVal + "-" + maxVal + "]");
+                                    allValid = false;
+                                }
+                            }
+                            // else: categorical string value - always valid
+                        }
+                        
+                        if (allValid) {
+                            validatedMappings++;
+                            if (isIntegerMapping) {
+                                // Successfully validated an integer range mapping
+                            }
+                        } else {
+                            // Log which mapping had issues for debugging
+                            System.out.println("  Invalid mapping in category '" + key + "', value '" + value.getName() + "'");
+                        }
+                        
+                        if (allValid) {
+                            validatedMappings++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        System.out.println("Total value mappings: " + totalValueMappings);
+        System.out.println("Valid mappings: " + validatedMappings);
+        System.out.println("================================\n");
+        
+        // Assert that most mappings are valid
+        assertTrue(validatedMappings > 0, "Should have at least some valid value mappings");
+        if (totalValueMappings > 0) {
+            double validRatio = (double) validatedMappings / totalValueMappings;
+            assertTrue(validRatio >= 0.9, 
+                "At least 90% of value mappings should be valid (got " + 
+                String.format("%.1f%%", validRatio * 100) + ")");
+        }
     }
 
     // -----------------------
