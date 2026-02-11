@@ -68,7 +68,7 @@ public class MappingServiceReportTest {
 
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
-        // Quality checks - ensure LLM output meets minimum standards
+        // Quality checks - validate LLM is performing well
         assertNotNull(result, "Result should not be null");
         
         // Log actual results for inspection
@@ -89,11 +89,11 @@ public class MappingServiceReportTest {
         System.out.println("Expected categories found: " + matchCount + " out of " + expectedMappings.size());
         System.out.println("================================\n");
         
-        // Temporarily comment out assertions to see full output
-        // assertTrue(result.size() >= 10, 
-        //     "Should produce at least 10 mapping suggestions (got " + result.size() + ")");
-        // assertTrue(matchCount >= 5, 
-        //     "Should identify at least 5 of the key medical assessment categories (found " + matchCount + ")");
+        // LLM should match or exceed math baseline (30 suggestions, 7/7 categories)
+        assertTrue(result.size() >= 25, 
+            "LLM should produce at least 25 mapping suggestions (got " + result.size() + ")");
+        assertTrue(matchCount >= 6, 
+            "LLM should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
         
         // Write reports for manual inspection
         Path outDir = Paths.get("target", "mapping-report");
