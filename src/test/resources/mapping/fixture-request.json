@@ -1,0 +1,368 @@
+{
+  "schema": null,
+  "elementFiles": [
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Type",
+      "values": ["Ischemic", "Hemorrhagic"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Etiology (Isch/Hem)",
+      "values": ["Hem", "HEM", "Isch"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Sex",
+      "values": ["D", "H"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Sex",
+      "values": ["F", "M"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Toileting",
+      "values": ["integer", "min:1", "max:7"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "ToiletBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "ToiletBART2",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Bowel Management",
+      "values": ["integer", "min:1", "max:7"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BowelBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BowelBART2",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Bladder Management",
+      "values": ["integer", "min:1", "max:7"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BladderBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BladderBART2",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Bathing",
+      "values": ["integer", "min:1", "max:7"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BathingBART1",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "BathingBART2",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "BGrooming",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "GroomBART1",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "GroomBART2",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "BTransfers",
+      "values": ["integer", "min:0", "max:15"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "TransfBART1",
+      "values": ["integer", "min:0", "max:15"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "TransfBART2",
+      "values": ["integer", "min:0", "max:15"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "BStairs",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "StairsBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "StairsBART2",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "BDressing",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "DressBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "DressBART2",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "BFeeding",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "FeedBART1",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "FeedBART2",
+      "values": ["integer", "min:0", "max:15"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "TOTALBARTHEL",
+      "values": ["integer", "min:0", "max:100"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "TOTBarthel1",
+      "values": ["integer", "min:0", "max:100"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "TOTBarthel2",
+      "values": ["integer", "min:0", "max:100"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "TOTALFIM",
+      "values": ["integer", "min:18", "max:126"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "TOTAL MOTOR",
+      "values": ["integer", "min:13", "max:91"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "TOTAL COGNITIU",
+      "values": ["integer", "min:5", "max:35"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "NIHSS (/42)",
+      "values": ["integer", "min:4", "max:20"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "LOS (days)",
+      "values": ["integer", "min:2", "max:56"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "AGEINJURY",
+      "values": ["double", "min:1", "max:97.09589041"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Age at injury",
+      "values": ["integer", "min:32", "max:86"],
+      "color": "#74d0c4"
+    },
+
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Hypertension (Y/N)",
+      "values": ["Y", "N"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Diabetes (Y/N)",
+      "values": ["Y", "N"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "AF (Y/N)",
+      "values": ["FLUTTER", "Y", "N"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Locomotion: Walking / Ambulation",
+      "values": ["integer", "min:1", "max:7"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_2_elements.csv",
+      "column": "FAC1",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_2_elements.csv",
+      "column": "FAC2",
+      "values": ["integer", "min:0", "max:5"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_2_elements.csv",
+      "column": "Affected side (body) (R/L)",
+      "values": ["R", "L", "l"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "TSIFIM",
+      "values": ["double", "min:-8.955066622", "max:58.97096778"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_2_elements.csv",
+      "column": "TSI to admission (days)",
+      "values": ["integer", "min:203", "max:7726"],
+      "color": "#74d0c4"
+    }
+  ]
+}
