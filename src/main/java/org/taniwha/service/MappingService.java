@@ -22,7 +22,13 @@ public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
-    private static final int D = 2048;
+    private final EmbeddingsClient embeddingsClient;
+
+    public MappingService(EmbeddingsClient embeddingsClient) {
+        this.embeddingsClient = embeddingsClient;
+    }
+
+    // Note: D is no longer a constant, embedding dimensions are determined by the model
 
     private static final int MAX_VALUES = 80;
     private static final int MAX_ENUM = 120;
@@ -120,8 +126,10 @@ public class MappingService {
                 wVals = 1.0 - wName;
             }
 
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
+            // Combine name and value embeddings with adaptive weighting
+            int dim = nameVec.length; // Get embedding dimension from actual vectors
+            float[] combined = new float[dim];
+            for (int k = 0; k < dim; k++) {
                 combined[k] = (float) (wName * nameVec[k] + wVals * valueVec[k]);
             }
             MappingMathUtil.l2NormalizeInPlace(combined);
@@ -1115,8 +1123,9 @@ public class MappingService {
             float[] nameVec = embedName(fieldName);
             float[] enumVec = embedEnum(enumVals, type);
 
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
+            int dim = nameVec.length;  // Get embedding dimension from actual vectors
+            float[] combined = new float[dim];
+            for (int k = 0; k < dim; k++) {
                 combined[k] = (float) (W_TGT_NAME * nameVec[k] + W_TGT_ENUM * enumVec[k]);
             }
             MappingMathUtil.l2NormalizeInPlace(combined);
@@ -1423,29 +1432,24 @@ public class MappingService {
     }
 
     // ============================================================
-    // Embeddings
+    // Embeddings (using LLM via EmbeddingsClient)
     // ============================================================
 
     private float[] embedName(String name) {
-        float[] v = new float[D];
-        String s = NormalizationUtil.normalize(name);
-
-        addWordTokens(v, s, 1.6f);
-        addTokenBigrams(v, s, 0.9f);
-
-        addCharNgrams(v, s, 2, 0.45f);
-        addCharNgrams(v, s, 3, 1.05f);
-        addCharNgrams(v, s, 4, 1.00f);
-        addCharNgrams(v, s, 5, 0.80f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        if (name == null || name.trim().isEmpty()) {
+            return embeddingsClient.embed("");
+        }
+        // Use LLM embeddings for better semantic understanding
+        return embeddingsClient.embed(name);
     }
 
     private float[] embedValues(List<String> values) {
-        float[] v = new float[D];
-        if (values == null) return v;
+        if (values == null || values.isEmpty()) {
+            return embeddingsClient.embed("");
+        }
 
+        // Concatenate values into a text representation for LLM embedding
+        StringBuilder sb = new StringBuilder();
         int count = 0;
         for (String raw : values) {
             if (count >= MAX_VALUES) break;
@@ -1454,20 +1458,20 @@ public class MappingService {
             String s = NormalizationUtil.normalizeValue(raw);
             if (s.isEmpty()) { count++; continue; }
 
-            addWordTokens(v, s, 1.0f);
-            addCharNgrams(v, s, 4, 0.55f);
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(s);
             count++;
         }
 
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        // Use LLM embeddings for better semantic understanding of values
+        return embeddingsClient.embed(sb.toString());
     }
 
     private float[] embedEnum(List<String> enumVals, String typeHint) {
-        float[] v = new float[D];
-
+        StringBuilder sb = new StringBuilder();
+        
         if (typeHint != null && !typeHint.trim().isEmpty()) {
-            addWordTokens(v, NormalizationUtil.normalize(typeHint), 0.9f);
+            sb.append(typeHint).append(": ");
         }
 
         if (enumVals != null) {
@@ -1479,74 +1483,27 @@ public class MappingService {
                 String s = NormalizationUtil.normalizeValue(raw);
                 if (s.isEmpty()) { count++; continue; }
 
-                addWordTokens(v, s, 1.0f);
-                addCharNgrams(v, s, 4, 0.4f);
+                if (count > 0 || typeHint != null) sb.append(", ");
+                sb.append(s);
                 count++;
             }
         }
 
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        // Use LLM embeddings for better semantic understanding
+        return embeddingsClient.embed(sb.toString());
     }
 
     private float[] embedSingleValue(String raw) {
-        float[] v = new float[D];
+        if (raw == null) {
+            return embeddingsClient.embed("");
+        }
         String s = NormalizationUtil.normalizeValue(raw);
-        if (s.isEmpty()) return v;
-
-        addWordTokens(v, s, 1.0f);
-        addCharNgrams(v, s, 2, 0.30f);
-        addCharNgrams(v, s, 3, 0.70f);
-        addCharNgrams(v, s, 4, 0.60f);
-        addCharNgrams(v, s, 5, 0.40f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private void addWordTokens(float[] v, String s, float weight) {
-        if (s == null) return;
-
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        for (String t : parts) {
-            if (t == null) continue;
-            String x = t.trim();
-            if (x.length() < 2) continue;
-
-            int idx = (int) (NormalizationUtil.fnv1a32(x) & (D - 1));
-            v[idx] += weight;
+        if (s.isEmpty()) {
+            return embeddingsClient.embed("");
         }
-    }
 
-    private void addTokenBigrams(float[] v, String s, float weight) {
-        if (s == null) return;
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        List<String> toks = new ArrayList<>();
-        for (String p : parts) {
-            if (p == null) continue;
-            String x = p.trim();
-            if (x.length() < 2) continue;
-            toks.add(x);
-        }
-        for (int i = 0; i + 1 < toks.size(); i++) {
-            String bg = toks.get(i) + "_" + toks.get(i + 1);
-            int idx = (int) (NormalizationUtil.fnv1a32(bg) & (D - 1));
-            v[idx] += weight;
-        }
-    }
-
-    private void addCharNgrams(float[] v, String s, int n, float weight) {
-        if (s == null) return;
-        if (s.length() < n) return;
-        for (int i = 0; i <= s.length() - n; i++) {
-            String g = s.substring(i, i + n);
-            int idx = (int) (NormalizationUtil.fnv1a32(g) & (D - 1));
-            v[idx] += weight;
-        }
+        // Use LLM embeddings for better semantic understanding
+        return embeddingsClient.embed(s);
     }
 
     // ============================================================

@@ -3,10 +3,22 @@ package org.taniwha.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedValueDTO;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.ai.embedding.Embedding;
+import java.util.List;
+import java.util.ArrayList;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -17,18 +29,82 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
 public class MappingServiceReportTest {
+
+    @Configuration
+    static class TestConfig {
+        @Bean
+        public EmbeddingModel embeddingModel() {
+            // Create a simple mock that returns random embeddings for testing
+            return new EmbeddingModel() {
+                private final Random random = new Random(42); // Fixed seed for reproducibility
+                
+                @Override
+                public float[] embed(String text) {
+                    // Generate a 384-dimensional embedding (same as e5-small-v2)
+                    float[] vec = new float[384];
+                    // Use text hashcode as seed for reproducible but text-specific embeddings
+                    int seed = text == null ? 0 : text.hashCode();
+                    Random r = new Random(seed);
+                    
+                    // Generate random vector
+                    for (int i = 0; i < vec.length; i++) {
+                        vec[i] = (float) (r.nextGaussian() * 0.1);
+                    }
+                    
+                    // L2 normalize
+                    double sum = 0.0;
+                    for (float v : vec) sum += v * v;
+                    double norm = Math.sqrt(sum);
+                    if (norm > 1e-12) {
+                        for (int i = 0; i < vec.length; i++) {
+                            vec[i] /= norm;
+                        }
+                    }
+                    
+                    return vec;
+                }
+
+                @Override
+                public float[] embed(org.springframework.ai.document.Document document) {
+                    return embed(document.getText());
+                }
+
+                @Override
+                public EmbeddingResponse call(org.springframework.ai.embedding.EmbeddingRequest request) {
+                    List<Embedding> embeddings = new ArrayList<>();
+                    for (String text : request.getInstructions()) {
+                        embeddings.add(new Embedding(embed(text), 0));
+                    }
+                    return new EmbeddingResponse(embeddings);
+                }
+            };
+        }
+
+        @Bean
+        public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
+            return new EmbeddingsClient(embeddingModel);
+        }
+
+        @Bean
+        public MappingService mappingService(EmbeddingsClient embeddingsClient) {
+            return new MappingService(embeddingsClient);
+        }
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
+    @Autowired
+    private MappingService mappingService;
+
     @Test
     void generates_mapping_report_from_fixture() throws Exception {
-        MappingService svc = new MappingService();
-
         MappingSuggestRequestDTO req = loadRequestFixture();
 
-        List<Map<String, SuggestedMappingDTO>> result = svc.suggestMappings(req);
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
         Path outDir = Paths.get("target", "mapping-report");
         Files.createDirectories(outDir);
