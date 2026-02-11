@@ -1,0 +1,46 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "icd001",
+      "fileName": "hospital_a_icd10.csv",
+      "column": "Primary Diagnosis",
+      "values": ["I63.9", "I21.9", "I50.9", "J44.0", "E11.9"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "icd002", 
+      "fileName": "hospital_b_diagnosis.csv",
+      "column": "Diagnosis Code",
+      "values": ["Stroke", "MI", "Heart Failure", "COPD", "Type 2 Diabetes"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "icd003",
+      "fileName": "hospital_a_icd10.csv", 
+      "column": "Secondary Diagnosis",
+      "values": ["E78.5", "I10", "F17.2", "N18.3"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "icd004",
+      "fileName": "hospital_b_diagnosis.csv",
+      "column": "Comorbidities",
+      "values": ["Hyperlipidemia", "Hypertension", "Smoking", "CKD Stage 3"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "labs001",
+      "fileName": "hospital_a_labs.csv",
+      "column": "Hemoglobin A1C",
+      "values": ["double", "min:4.5", "max:15.2"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "labs002",
+      "fileName": "hospital_b_labs.csv", 
+      "column": "HbA1c",
+      "values": ["double", "min:4.8", "max:14.9"],
+      "color": "#f38181"
+    }
+  ]
+}

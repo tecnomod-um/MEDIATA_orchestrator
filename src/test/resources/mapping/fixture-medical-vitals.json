@@ -1,0 +1,74 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "vital001",
+      "fileName": "ehr_system_a.csv",
+      "column": "Blood Pressure Systolic",
+      "values": ["integer", "min:90", "max:180"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "vital002",
+      "fileName": "ehr_system_b.csv",
+      "column": "SBP",
+      "values": ["integer", "min:95", "max:175"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "vital003",
+      "fileName": "ehr_system_a.csv",
+      "column": "Blood Pressure Diastolic",
+      "values": ["integer", "min:60", "max:110"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "vital004",
+      "fileName": "ehr_system_b.csv",
+      "column": "DBP",
+      "values": ["integer", "min:58", "max:105"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "vital005",
+      "fileName": "ehr_system_a.csv",
+      "column": "Heart Rate",
+      "values": ["integer", "min:45", "max:150"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "vital006",
+      "fileName": "ehr_system_b.csv",
+      "column": "HR (bpm)",
+      "values": ["integer", "min:48", "max:145"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "vital007",
+      "fileName": "ehr_system_a.csv",
+      "column": "Body Temperature",
+      "values": ["double", "min:36.1", "max:39.5"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "vital008",
+      "fileName": "ehr_system_b.csv",
+      "column": "Temp (C)",
+      "values": ["double", "min:36.0", "max:39.8"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "vital009",
+      "fileName": "ehr_system_a.csv",
+      "column": "Respiratory Rate",
+      "values": ["integer", "min:12", "max:28"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "vital010",
+      "fileName": "ehr_system_b.csv",
+      "column": "RR (breaths/min)",
+      "values": ["integer", "min:10", "max:30"],
+      "color": "#4ecdc4"
+    }
+  ]
+}

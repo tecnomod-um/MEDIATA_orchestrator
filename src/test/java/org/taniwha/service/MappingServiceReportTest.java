@@ -302,10 +302,6 @@ public class MappingServiceReportTest {
                             // Log which mapping had issues for debugging
                             System.out.println("  Invalid mapping in category '" + key + "', value '" + value.getName() + "'");
                         }
-                        
-                        if (allValid) {
-                            validatedMappings++;
-                        }
                     }
                 }
             }
