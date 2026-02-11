@@ -118,7 +118,10 @@ BUILD SUCCESS
 
 ### Step 1: Pull Latest Code
 ```bash
-git checkout copilot/add-llms-integration
+# Pull the latest code with the fix
+git pull
+# Or if merging from PR, checkout main/master branch
+git checkout main  # or master
 git pull
 ```
 
