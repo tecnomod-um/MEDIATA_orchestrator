@@ -74,6 +74,7 @@ public class MappingService {
                 ? Collections.emptyList()
                 : req.getElementFiles();
 
+        logger.info("[TRACE] suggestMappings called with {} element files", cols.size());
         if (cols.isEmpty()) return Collections.emptyList();
 
         // --- Prepass: collect column-name tokens to learn request-specific noise ---
@@ -101,6 +102,11 @@ public class MappingService {
             ColStats stats = parseStatsFromValues(rawValues);
 
             CanonicalName can = canonicalConceptName(colName, learnedNoise);
+            
+            // Log first 10 canonical concepts to see what's happening
+            if (all.size() < 10) {
+                logger.info("[TRACE] Column '{}' -> canonical concept '{}'", colName, can.concept);
+            }
 
             // LLM Approach: Create a single rich embedding with column name + values
             // This allows the LLM to understand context like:
@@ -199,7 +205,9 @@ public class MappingService {
     // ============================================================
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<ColRef> all) {
+        logger.info("[TRACE] suggestWithoutSchema: clustering {} columns", all.size());
         List<ColCluster> clusters = clusterColumns(all);
+        logger.info("[TRACE] suggestWithoutSchema: formed {} clusters", clusters.size());
 
         clusters.sort((a, b) -> {
             int as = a.cols.size(), bs = b.cols.size();
@@ -207,7 +215,10 @@ public class MappingService {
             return a.representativeConcept.compareToIgnoreCase(b.representativeConcept);
         });
 
-        if (clusters.size() > MAX_SCHEMALESS_TARGETS) clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
+        if (clusters.size() > MAX_SCHEMALESS_TARGETS) {
+            logger.info("[TRACE] suggestWithoutSchema: truncating from {} to {} clusters", clusters.size(), MAX_SCHEMALESS_TARGETS);
+            clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
+        }
 
         Set<String> usedUnionKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
@@ -227,6 +238,9 @@ public class MappingService {
             String detectedType = detectTypeFromSourcesOrSchema(picked, "");
 
             String unionKey = makeUnique(concept, usedUnionKeys);
+            
+            logger.info("[TRACE] Cluster {}/{}: key='{}', representative='{}', {} cols, {} picked", 
+                out.size() + 1, clusters.size(), unionKey, cl.representativeConcept, members.size(), picked.size());
 
             SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
 
@@ -1168,6 +1182,8 @@ public class MappingService {
     // ============================================================
 
     private List<ColCluster> clusterColumns(List<ColRef> all) {
+        logger.info("[TRACE] clusterColumns: input {} columns", all.size());
+        
         Map<String, ColCluster> byConcept = new LinkedHashMap<>();
         for (ColRef c : all) {
             String key = sanitizeUnionName(StringUtil.safe(c.concept).trim().toLowerCase(Locale.ROOT));
@@ -1179,11 +1195,17 @@ public class MappingService {
             }
             cl.add(c);
         }
+        
+        logger.info("[TRACE] clusterColumns: formed {} initial concept-based clusters", byConcept.size());
+        if (byConcept.size() <= 5) {
+            logger.info("[TRACE] clusterColumns: initial cluster keys: {}", byConcept.keySet());
+        }
 
         List<ColCluster> clusters = new ArrayList<>(byConcept.values());
 
         // Step 2: fuzzy merge across those pre-clusters
         List<ColCluster> merged = new ArrayList<>();
+        int mergeCount = 0;
         for (ColCluster col : clusters) {
             ColCluster best = null;
             double bestSim = -1;
@@ -1195,10 +1217,14 @@ public class MappingService {
 
             if (best != null && bestSim >= THRESH_COL_CLUSTER) {
                 for (ColRef r : col.cols) best.add(r);
+                mergeCount++;
             } else {
                 merged.add(col);
             }
         }
+        
+        logger.info("[TRACE] clusterColumns: merged {} clusters (threshold={}), final count: {}", 
+            mergeCount, THRESH_COL_CLUSTER, merged.size());
 
         for (ColCluster c : merged) {
             c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
@@ -1486,7 +1512,20 @@ public class MappingService {
         }
         
         // Embed the rich combined representation
-        return embeddingsClient.embed(prompt.toString());
+        String promptStr = prompt.toString();
+        float[] result = embeddingsClient.embed(promptStr);
+        
+        // Log first embedding call only to avoid spam
+        if (Math.random() < 0.01) { // 1% sample
+            logger.info("[TRACE] embedColumnWithValues('{}') -> vector[0..3]=[{}, {}, {}, ...], dim={}",
+                promptStr.length() > 50 ? promptStr.substring(0, 50) + "..." : promptStr,
+                result.length > 0 ? result[0] : "?",
+                result.length > 1 ? result[1] : "?",
+                result.length > 2 ? result[2] : "?",
+                result.length);
+        }
+        
+        return result;
     }
 
     private float[] embedName(String name) {
