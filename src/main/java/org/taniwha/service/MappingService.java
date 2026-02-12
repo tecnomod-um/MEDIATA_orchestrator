@@ -969,6 +969,44 @@ public class MappingService {
         return values;
     }
     
+    /**
+     * Extract minimum value from SuggestedValueDTO mapping if it contains range information.
+     */
+    private String extractMinFromValue(SuggestedValueDTO value) {
+        if (value.getMapping() != null) {
+            for (SuggestedRefDTO mapped : value.getMapping()) {
+                // Look for "min:X" pattern in values
+                Object val = mapped.getValue();
+                if (val != null && val instanceof String) {
+                    String strVal = (String) val;
+                    if (strVal.startsWith("min:")) {
+                        return strVal.substring(4);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Extract maximum value from SuggestedValueDTO mapping if it contains range information.
+     */
+    private String extractMaxFromValue(SuggestedValueDTO value) {
+        if (value.getMapping() != null) {
+            for (SuggestedRefDTO mapped : value.getMapping()) {
+                // Look for "max:X" pattern in values  
+                Object val = mapped.getValue();
+                if (val != null && val instanceof String) {
+                    String strVal = (String) val;
+                    if (strVal.startsWith("max:")) {
+                        return strVal.substring(4);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    
     // OLD METHODS - Now unused, kept for backwards compatibility
     private void populateTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<String> sourceColumnNames) {
         // This method is now bypassed by batch processing
