@@ -45,7 +45,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest(classes = MappingServiceReportTest.TestConfig.class)
+@SpringBootTest
 @TestPropertySource(properties = {
     "spring.ai.ollama.base-url=http://localhost:11434",
     "spring.ai.ollama.chat.enabled=true",
@@ -55,7 +55,9 @@ import static org.junit.jupiter.api.Assertions.*;
     "snowstorm.enabled=false",
     "rdfbuilder.csvpath=/tmp/test.csv",
     "rdfbuilder.service.url=http://localhost:8000",
-    "spring.main.allow-bean-definition-overriding=true"
+    "spring.main.allow-bean-definition-overriding=true",
+    "spring.datasource.enabled=false",
+    "spring.data.mongodb.auto-index-creation=false"
 })
 public class MappingServiceReportTest {
 
@@ -65,7 +67,7 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // ChatModel will be autoconfigured by Spring AI Ollama based on properties
+        // Spring AI Ollama autoconfiguration will create ChatModel bean based on properties
         
         @Bean
         public EmbeddingModel embeddingModel() {
