@@ -60,7 +60,37 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // Spring AI Ollama autoconfiguration will create ChatModel bean based on properties
+        @Bean
+        public ChatModel ollamaChatModel() {
+            // Create OllamaApi to connect to localhost Ollama
+            OllamaApi api = OllamaApi.builder()
+                .baseUrl("http://localhost:11434")
+                .build();
+            
+            // Create default options for llama2
+            org.springframework.ai.ollama.api.OllamaChatOptions options = 
+                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
+                    .model("llama2")
+                    .temperature(0.7)
+                    .build();
+            
+            // Create empty ToolCallingManager (required)
+            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
+                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
+                
+            // Create ModelManagementOptions (required)
+            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
+                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
+            
+            // Create with required parameters (Spring AI 1.1.2)
+            return new OllamaChatModel(
+                api,
+                options,
+                toolCallingManager,
+                io.micrometer.observation.ObservationRegistry.NOOP,
+                modelManagementOptions
+            );
+        }
         
         @Bean
         public EmbeddingModel embeddingModel() {
