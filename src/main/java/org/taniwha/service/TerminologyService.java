@@ -7,13 +7,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.OntologyTermDTO;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 /**
  * Service for selecting the most appropriate SNOMED CT terminology codes
  * from Snowstorm suggestions using LLM embeddings for semantic similarity.
+ * Uses parallel batch processing for efficiency.
  */
 @Service
 public class TerminologyService {
@@ -22,14 +23,115 @@ public class TerminologyService {
     private final RDFService rdfService;
     private final EmbeddingsClient embeddingsClient;
     private final Map<String, String> terminologyCache = new HashMap<>();
+    private final ExecutorService executorService;
 
     @Value("${snowstorm.enabled:true}")
     private boolean snowstormEnabled;
+    
+    @Value("${snowstorm.timeout:30}")
+    private int snowstormTimeoutSeconds;
 
     @Autowired
     public TerminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
         this.rdfService = rdfService;
         this.embeddingsClient = embeddingsClient;
+        // Create thread pool for parallel lookups
+        this.executorService = Executors.newFixedThreadPool(10);
+    }
+    
+    /**
+     * Batch lookup terminology for multiple terms in parallel.
+     * Returns a map of term -> selected SNOMED code.
+     */
+    public Map<String, String> batchLookupTerminology(List<TerminologyRequest> requests) {
+        if (!snowstormEnabled || requests == null || requests.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        
+        logger.info("[TerminologyService] Starting batch lookup for {} terms", requests.size());
+        
+        Map<String, String> results = new ConcurrentHashMap<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        
+        // Launch parallel lookups
+        for (TerminologyRequest request : requests) {
+            String cacheKey = request.term + "|" + (request.context != null ? request.context : "");
+            
+            // Check cache first
+            if (terminologyCache.containsKey(cacheKey)) {
+                results.put(request.term, terminologyCache.get(cacheKey));
+                continue;
+            }
+            
+            // Launch async lookup
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    String terminology = lookupSingleTerminology(request.term, request.context);
+                    results.put(request.term, terminology);
+                    terminologyCache.put(cacheKey, terminology);
+                } catch (Exception e) {
+                    logger.warn("[TerminologyService] Error looking up {}: {}", request.term, e.getMessage());
+                    results.put(request.term, "");
+                }
+            }, executorService);
+            
+            futures.add(future);
+        }
+        
+        // Wait for all lookups to complete with timeout
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .get(snowstormTimeoutSeconds, TimeUnit.SECONDS);
+            logger.info("[TerminologyService] Batch lookup completed: {}/{} successful", 
+                results.values().stream().filter(v -> !v.isEmpty()).count(), requests.size());
+        } catch (TimeoutException e) {
+            logger.warn("[TerminologyService] Batch lookup timed out after {}s", snowstormTimeoutSeconds);
+        } catch (Exception e) {
+            logger.warn("[TerminologyService] Batch lookup interrupted: {}", e.getMessage());
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Lookup terminology for a single term (called within batch).
+     */
+    private String lookupSingleTerminology(String term, String context) {
+        try {
+            // Get SNOMED CT suggestions from Snowstorm
+            List<OntologyTermDTO> suggestions = rdfService.getSNOMEDTermSuggestions(term);
+            
+            if (suggestions == null || suggestions.isEmpty()) {
+                logger.debug("[TerminologyService] No SNOMED suggestions for: {}", term);
+                return generateFallbackTerminologyCode(term, context);
+            }
+            
+            // Use LLM to select best match
+            String bestCode = selectBestUsingLLM(term, context, suggestions);
+            logger.debug("[TerminologyService] Selected {} for term: {}", bestCode, term);
+            return bestCode;
+            
+        } catch (Exception e) {
+            logger.warn("[TerminologyService] Error in lookup for {}: {}", term, e.getMessage());
+            return generateFallbackTerminologyCode(term, context);
+        }
+    }
+    
+    /**
+     * Inner class to hold terminology request data.
+     */
+    public static class TerminologyRequest {
+        public final String term;
+        public final String context;
+        
+        public TerminologyRequest(String term, String context) {
+            this.term = term;
+            this.context = context;
+        }
+    }
+    
+    public void shutdown() {
+        executorService.shutdown();
     }
 
     /**
