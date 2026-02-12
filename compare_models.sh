@@ -5,13 +5,11 @@ echo "EMBEDDING MODEL COMPARISON TEST"
 echo "=================================================================================================="
 echo ""
 
-cp src/main/resources/application.properties /tmp/application.properties.backup
-
 declare -a MODELS=(
-  "all-MiniLM-L6-v2 (BASELINE)|djl://ai.djl.huggingface.onnx/sentence-transformers/all-MiniLM-L6-v2|Current production model"
-  "all-mpnet-base-v2|djl://ai.djl.huggingface.onnx/sentence-transformers/all-mpnet-base-v2|Larger, potentially better quality"
-  "paraphrase-MiniLM-L6-v2|djl://ai.djl.huggingface.onnx/sentence-transformers/paraphrase-MiniLM-L6-v2|Optimized for paraphrase detection"
-  "all-MiniLM-L12-v2|djl://ai.djl.huggingface.onnx/sentence-transformers/all-MiniLM-L12-v2|Larger MiniLM with more layers"
+  "all-MiniLM-L6-v2 (BASELINE - DEFAULT)||Spring AI built-in default model"
+  "all-mpnet-base-v2|https://huggingface.co/sentence-transformers/all-mpnet-base-v2/resolve/main/onnx/model.onnx|Larger, potentially better quality"
+  "paraphrase-MiniLM-L6-v2|https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L6-v2/resolve/main/onnx/model.onnx|Optimized for paraphrase detection"
+  "all-MiniLM-L12-v2|https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2/resolve/main/onnx/model.onnx|Larger MiniLM with more layers"
 )
 
 RESULTS_FILE="/tmp/model_comparison_results.txt"
@@ -30,22 +28,27 @@ for model_info in "${MODELS[@]}"; do
     echo "=================================================================================================="
     echo "Testing: $MODEL_NAME"
     echo "Description: $MODEL_DESC"
-    echo "URI: $MODEL_URI"
+    if [ -z "$MODEL_URI" ]; then
+        echo "URI: (Using Spring AI defaults)"
+    else
+        echo "URI: $MODEL_URI"
+    fi
     echo "=================================================================================================="
     
-    # Update application.properties with this model
-    cat > src/main/resources/application.properties << EOF
-# Temporarily updated for model comparison test
-spring.ai.embedding.transformer.onnx.modelUri=$MODEL_URI
-spring.ai.embedding.transformer.tokenizer.uri=$MODEL_URI
-spring.ai.embedding.transformer.cache.enabled=true
-spring.ai.embedding.transformer.cache.directory=\${java.io.tmpdir}/spring-ai-onnx-model
-logging.level.org.taniwha.service.MappingService=INFO
-EOF
-    
-    echo "Updated application.properties with model: $MODEL_NAME"
     echo "Running MappingServiceReportTest..."
-    TEST_OUTPUT=$(mvn -Dtest=MappingServiceReportTest test 2>&1)
+    if [ -z "$MODEL_URI" ]; then
+        # Use default (no env vars set)
+        unset EMBEDDING_MODEL_URI
+        unset EMBEDDING_TOKENIZER_URI
+        TEST_OUTPUT=$(mvn -Dtest=MappingServiceReportTest test 2>&1)
+    else
+        # Set env vars for custom model
+        export EMBEDDING_MODEL_URI="$MODEL_URI"
+        export EMBEDDING_TOKENIZER_URI="${MODEL_URI/model.onnx/tokenizer.json}"
+        TEST_OUTPUT=$(mvn -Dtest=MappingServiceReportTest test 2>&1)
+        unset EMBEDDING_MODEL_URI
+        unset EMBEDDING_TOKENIZER_URI
+    fi
     TEST_RESULT=$?
     
     # Parse results from output
@@ -66,9 +69,6 @@ EOF
 done
 
 echo ""
-echo "=================================================================================================="
-echo "Restoring original application.properties..."
-mv /tmp/application.properties.backup src/main/resources/application.properties
 echo "=================================================================================================="
 
 echo ""
