@@ -3,6 +3,7 @@ package org.taniwha.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mockito;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,10 +43,23 @@ public class ModelComparisonTest {
         public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
             return new EmbeddingsClient(embeddingModel);
         }
+        
+        @Bean
+        public RDFService rdfService() {
+            RDFService mock = Mockito.mock(RDFService.class);
+            Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.any(String.class)))
+                .thenReturn(new ArrayList<>());
+            return mock;
+        }
+        
+        @Bean
+        public DescriptionGenerator descriptionGenerator() {
+            return new DescriptionGenerator();
+        }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient) {
-            return new MappingService(embeddingsClient);
+        public MappingService mappingService(EmbeddingsClient embeddingsClient, RDFService rdfService, DescriptionGenerator descriptionGenerator) {
+            return new MappingService(embeddingsClient, rdfService, descriptionGenerator);
         }
     }
 

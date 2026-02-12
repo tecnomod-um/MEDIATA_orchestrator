@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
@@ -50,10 +51,24 @@ public class MappingServiceReportTest {
         public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
             return new EmbeddingsClient(embeddingModel);
         }
+        
+        @Bean
+        public RDFService rdfService() {
+            // Mock RDFService for tests
+            RDFService mock = Mockito.mock(RDFService.class);
+            Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.any(String.class)))
+                .thenReturn(new ArrayList<>());
+            return mock;
+        }
+        
+        @Bean
+        public DescriptionGenerator descriptionGenerator() {
+            return new DescriptionGenerator();
+        }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient) {
-            return new MappingService(embeddingsClient);
+        public MappingService mappingService(EmbeddingsClient embeddingsClient, RDFService rdfService, DescriptionGenerator descriptionGenerator) {
+            return new MappingService(embeddingsClient, rdfService, descriptionGenerator);
         }
     }
 

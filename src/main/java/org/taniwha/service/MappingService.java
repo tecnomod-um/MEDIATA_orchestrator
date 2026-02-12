@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.ElementFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
@@ -23,14 +24,22 @@ public class MappingService {
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
     private final EmbeddingsClient embeddingsClient;
+    private final RDFService rdfService;
+    private final DescriptionGenerator descriptionGenerator;
 
     private static final java.util.concurrent.atomic.AtomicInteger embeddingLogCount = 
         new java.util.concurrent.atomic.AtomicInteger(0);
 
-    public MappingService(EmbeddingsClient embeddingsClient) {
+    public MappingService(EmbeddingsClient embeddingsClient, 
+                         RDFService rdfService,
+                         DescriptionGenerator descriptionGenerator) {
         this.embeddingsClient = embeddingsClient;
-        logger.info("[MappingService] Initialized with EmbeddingsClient: {}", 
-            embeddingsClient != null ? "present" : "NULL!");
+        this.rdfService = rdfService;
+        this.descriptionGenerator = descriptionGenerator;
+        logger.info("[MappingService] Initialized with EmbeddingsClient: {}, RDFService: {}, DescriptionGenerator: {}", 
+            embeddingsClient != null ? "present" : "NULL!",
+            rdfService != null ? "present" : "NULL!",
+            descriptionGenerator != null ? "present" : "NULL!");
     }
 
     private static final int MAX_VALUES = 80;
@@ -425,8 +434,11 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(String.valueOf(canonCat));
-            vd.setTerminology("");
-            vd.setDescription("Ordinal crosswalk using non-overlapping full-coverage integer intervals; canonical scale is the one with fewer categories.");
+            
+            // Add terminology and description for ordinal crosswalk value
+            populateValueTerminologyAndDescription(vd, String.valueOf(canonCat), 
+                unionKey, getAllValuesForContext(sources));
+            
             vd.setMapping(refs);
             out.add(vd);
         }
@@ -700,12 +712,45 @@ public class MappingService {
         for (Map.Entry<String, List<SuggestedRefDTO>> x : entries) {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(x.getKey());
-            vd.setTerminology("");
-            vd.setDescription("Closed-domain categorical harmonization across files (aliases merged).");
+            
+            // Add terminology and description for the value
+            populateValueTerminologyAndDescription(vd, x.getKey(), unionKey, getAllValuesForContext(sources));
+            
             vd.setMapping(x.getValue());
             out.add(vd);
         }
         return out;
+    }
+    
+    private List<String> getAllValuesForContext(List<ColRef> sources) {
+        List<String> allValues = new ArrayList<>();
+        for (ColRef src : sources) {
+            if (src.rawValues != null) {
+                for (String v : src.rawValues) {
+                    if (v != null && !v.trim().isEmpty()) {
+                        allValues.add(v.trim());
+                    }
+                }
+            }
+        }
+        return allValues;
+    }
+    
+    private void populateValueTerminologyAndDescription(SuggestedValueDTO value, String valueName, String columnContext, List<String> allValues) {
+        // Try to find SNOMED CT terminology for the value using RDFService
+        List<OntologyTermDTO> results = rdfService.getSNOMEDTermSuggestions(valueName);
+        
+        if (!results.isEmpty()) {
+            OntologyTermDTO best = results.get(0);
+            // Extract SNOMED code from IRI (e.g., http://snomed.info/sct/12345 -> 12345)
+            String conceptId = best.getIri().replaceAll(".*sct/", "");
+            value.setTerminology(conceptId);
+            // Use terminology to enhance description
+            value.setDescription(descriptionGenerator.generateValueDescription(valueName, columnContext, allValues));
+        } else {
+            value.setTerminology("");
+            value.setDescription(descriptionGenerator.generateValueDescription(valueName, columnContext, allValues));
+        }
     }
 
     private boolean joinsAcrossAtLeastTwoFiles(Map<String, List<SuggestedRefDTO>> canonToRefs) {
@@ -793,11 +838,29 @@ public class MappingService {
         mapping.setFileName(fileName);
 
         mapping.setNodeId("");
-        mapping.setTerminology("");
-        mapping.setDescription("");
+        
+        // Add terminology and description for the mapping
+        String representativeName = pickedCols.isEmpty() ? "" : pickedCols.get(0).concept;
+        populateMappingTerminologyAndDescription(mapping, representativeName, pickedCols);
 
         mapping.setColumns(extractSourceColumnNames(pickedCols));
         return mapping;
+    }
+    
+    private void populateMappingTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<ColRef> cols) {
+        // Try to find SNOMED CT terminology for the concept using RDFService
+        List<OntologyTermDTO> results = rdfService.getSNOMEDTermSuggestions(conceptName);
+        
+        if (!results.isEmpty()) {
+            OntologyTermDTO best = results.get(0);
+            // Extract SNOMED code from IRI (e.g., http://snomed.info/sct/12345 -> 12345)
+            String conceptId = best.getIri().replaceAll(".*sct/", "");
+            mapping.setTerminology(conceptId);
+            mapping.setDescription(descriptionGenerator.generateColumnDescription(conceptName, best.getLabel()));
+        } else {
+            mapping.setTerminology("");
+            mapping.setDescription(descriptionGenerator.generateColumnDescription(conceptName, null));
+        }
     }
 
     private List<String> extractSourceColumnNames(List<ColRef> cols) {
@@ -813,8 +876,10 @@ public class MappingService {
     private List<SuggestedValueDTO> buildRangeValue(String unionName, String type, List<ColRef> sources) {
         SuggestedValueDTO v = new SuggestedValueDTO();
         v.setName(type);
-        v.setTerminology("");
-        v.setDescription(rangeDescriptionFromSources(type, sources));
+        
+        // Add terminology and description for range values
+        populateValueTerminologyAndDescription(v, type, unionName, getAllValuesForContext(sources));
+        
         v.setMapping(new ArrayList<>());
 
         for (ColRef src : sources) {
@@ -899,8 +964,11 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(e.getKey());
-            vd.setTerminology("");
-            vd.setDescription("");
+            
+            // Add terminology and description for enum value
+            populateValueTerminologyAndDescription(vd, e.getKey(), 
+                field.name, getAllValuesForContext(sources));
+            
             vd.setMapping(e.getValue());
             out.add(vd);
         }
@@ -965,8 +1033,10 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(rep);
-            vd.setTerminology("");
-            vd.setDescription("");
+            
+            // Add terminology and description for clustered value
+            populateValueTerminologyAndDescription(vd, rep, unionName, getAllValuesForContext(sources));
+            
             vd.setMapping(new ArrayList<>(c.refs));
             out.add(vd);
         }

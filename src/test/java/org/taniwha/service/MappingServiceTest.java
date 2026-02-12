@@ -32,13 +32,19 @@ class MappingServiceTest {
 
     @Mock
     private EmbeddingsClient embeddingsClient;
+    
+    @Mock
+    private RDFService rdfService;
+    
+    @Mock
+    private DescriptionGenerator descriptionGenerator;
 
     private MappingService mappingService;
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        mappingService = new MappingService(embeddingsClient);
+        mappingService = new MappingService(embeddingsClient, rdfService, descriptionGenerator);
         objectMapper = new ObjectMapper();
         
         // Setup default mock behavior - return deterministic embeddings (lenient for tests that don't use it)
@@ -47,6 +53,16 @@ class MappingServiceTest {
                 String text = invocation.getArgument(0);
                 return createDeterministicEmbedding(text, 384);
             });
+        
+        // Setup default mock behavior for RDFService
+        lenient().when(rdfService.getSNOMEDTermSuggestions(any(String.class)))
+            .thenReturn(new ArrayList<>());
+        
+        // Setup default mock behavior for DescriptionGenerator
+        lenient().when(descriptionGenerator.generateColumnDescription(any(String.class), any()))
+            .thenAnswer(invocation -> "Description for " + invocation.getArgument(0));
+        lenient().when(descriptionGenerator.generateValueDescription(any(String.class), any(), any()))
+            .thenAnswer(invocation -> "Value description for " + invocation.getArgument(0));
     }
 
     // ==================== Input Validation Tests ====================
