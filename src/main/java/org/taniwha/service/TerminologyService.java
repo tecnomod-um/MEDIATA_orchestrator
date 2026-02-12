@@ -107,7 +107,7 @@ public class TerminologyService {
             }
             
             // Use LLM to select best match
-            String bestCode = selectBestUsingLLM(term, context, suggestions);
+            String bestCode = selectMostSimilar(term, context, suggestions);
             logger.debug("[TerminologyService] Selected {} for term: {}", bestCode, term);
             return bestCode;
             
@@ -189,7 +189,7 @@ public class TerminologyService {
      * Generate a conceptual terminology code when Snowstorm lookup fails.
      * Uses LLM to categorize the term and assign a semantic code.
      */
-    private String generateFallbackTerminology Code(String term, String context) {
+    private String generateFallbackTerminologyCode(String term, String context) {
         try {
             // Use embeddings to categorize the term into medical domains
             String searchTerm = (context != null && !context.isEmpty()) ? context + " " + term : term;

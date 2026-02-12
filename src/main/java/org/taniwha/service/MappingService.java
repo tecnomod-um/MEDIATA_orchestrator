@@ -136,10 +136,19 @@ public class MappingService {
         if (all.isEmpty()) return Collections.emptyList();
 
         List<SchemaFieldRef> schemaFields = parseSchemaFields(req == null ? null : req.getSchema());
-        if (!schemaFields.isEmpty()) return suggestWithSchema(schemaFields, all);
-
-        logger.info("[MappingService] No usable schema fields provided. Using schema-less suggestion mode.");
-        return suggestWithoutSchema(all);
+        
+        List<Map<String, SuggestedMappingDTO>> results;
+        if (!schemaFields.isEmpty()) {
+            results = suggestWithSchema(schemaFields, all);
+        } else {
+            logger.info("[MappingService] No usable schema fields provided. Using schema-less suggestion mode.");
+            results = suggestWithoutSchema(all);
+        }
+        
+        // Post-process: Batch lookup terminology and populate descriptions for all mappings
+        populateTerminologyAndDescriptionsBatch(results);
+        
+        return results;
     }
 
     // ============================================================
@@ -735,16 +744,6 @@ public class MappingService {
         }
         return allValues;
     }
-    
-    private void populateValueTerminologyAndDescription(SuggestedValueDTO value, String valueName, String columnContext, List<String> allValues) {
-        // Use TerminologyService to select the best SNOMED CT terminology
-        String terminology = terminologyService.selectBestTerminology(valueName, columnContext);
-        value.setTerminology(terminology);
-        
-        // Use DescriptionGenerator to create human-readable description
-        String description = descriptionGenerator.generateValueDescription(valueName, columnContext, allValues);
-        value.setDescription(description);
-    }
 
     private boolean joinsAcrossAtLeastTwoFiles(Map<String, List<SuggestedRefDTO>> canonToRefs) {
         Set<String> fileKeys = new HashSet<>();
@@ -856,6 +855,125 @@ public class MappingService {
         // Use DescriptionGenerator to create human-readable description
         String description = descriptionGenerator.generateColumnDescription(conceptName, terminology, sampleValues);
         mapping.setDescription(description);
+    }
+
+    
+    /**
+     * Batch process all terminology lookups and description generation for all mappings.
+     * This collects all terms (columns + values), sends parallel requests to Snowstorm,
+     * waits for all to complete, then uses LLM to select best terms and generate descriptions.
+     */
+    private void populateTerminologyAndDescriptionsBatch(List<Map<String, SuggestedMappingDTO>> allMappings) {
+        if (allMappings == null || allMappings.isEmpty()) {
+            return;
+        }
+        
+        logger.info("[MappingService] Starting batch terminology and description population");
+        
+        // Step 1: Collect all terms that need terminology lookup
+        List<TerminologyService.TerminologyRequest> requests = new ArrayList<>();
+        Set<String> processedTerms = new HashSet<>();
+        
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            for (SuggestedMappingDTO mapping : mappingMap.values()) {
+                // Collect column-level terms
+                String columnKey = mappingMap.keySet().iterator().next(); // The mapping key
+                if (columnKey != null && !columnKey.isEmpty() && processedTerms.add(columnKey)) {
+                    requests.add(new TerminologyService.TerminologyRequest(columnKey, null));
+                }
+                
+                // Collect value-level terms
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group.getValues() != null) {
+                            for (SuggestedValueDTO value : group.getValues()) {
+                                String valueName = value.getName();
+                                if (valueName != null && !valueName.isEmpty()) {
+                                    String valueKey = columnKey + "|" + valueName;
+                                    if (processedTerms.add(valueKey)) {
+                                        requests.add(new TerminologyService.TerminologyRequest(valueName, columnKey));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("[MappingService] Collected {} unique terms for terminology lookup", requests.size());
+        
+        // Step 2: Batch lookup all terminologies in parallel
+        Map<String, String> terminologyResults = terminologyService.batchLookupTerminology(requests);
+        
+        logger.info("[MappingService] Batch lookup completed, got {} results", terminologyResults.size());
+        
+        // Step 3: Populate all terminology and description fields
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                
+                // Populate column-level terminology and description
+                String columnTerminology = terminologyResults.getOrDefault(columnKey, "");
+                mapping.setTerminology(columnTerminology);
+                
+                List<String> sampleValues = extractSampleValuesFromMapping(mapping);
+                String columnDescription = descriptionGenerator.generateColumnDescription(
+                    columnKey, columnTerminology, sampleValues);
+                mapping.setDescription(columnDescription);
+                
+                // Populate value-level terminology and descriptions
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group.getValues() != null) {
+                            for (SuggestedValueDTO value : group.getValues()) {
+                                String valueName = value.getName();
+                                if (valueName != null && !valueName.isEmpty()) {
+                                    String valueTerminology = terminologyResults.getOrDefault(valueName, "");
+                                    value.setTerminology(valueTerminology);
+                                    
+                                    String valueDescription = descriptionGenerator.generateValueDescription(
+                                        valueName, columnKey, sampleValues);
+                                    value.setDescription(valueDescription);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("[MappingService] Batch terminology and description population completed");
+    }
+    
+    private List<String> extractSampleValuesFromMapping(SuggestedMappingDTO mapping) {
+        List<String> values = new ArrayList<>();
+        if (mapping.getGroups() != null) {
+            for (SuggestedGroupDTO group : mapping.getGroups()) {
+                if (group.getValues() != null) {
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        if (value.getName() != null && !values.contains(value.getName())) {
+                            values.add(value.getName());
+                            if (values.size() >= 10) break; // Limit sample size
+                        }
+                    }
+                }
+                if (values.size() >= 10) break;
+            }
+        }
+        return values;
+    }
+    
+    // OLD METHODS - Now unused, kept for backwards compatibility
+    private void populateTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<String> sourceColumnNames) {
+        // This method is now bypassed by batch processing
+        // Keeping empty to avoid breaking references
+    }
+    
+    private void populateValueTerminologyAndDescription(SuggestedValueDTO value, String valueName, String columnContext, List<String> allValues) {
+        // This method is now bypassed by batch processing  
+        // Keeping empty to avoid breaking references
     }
 
     private List<String> extractSourceColumnNames(List<ColRef> cols) {
