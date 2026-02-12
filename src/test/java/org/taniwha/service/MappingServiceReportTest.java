@@ -53,12 +53,72 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public TerminologyService terminologyService() {
-            // Mock TerminologyService for tests  
-            TerminologyService mock = Mockito.mock(TerminologyService.class);
-            Mockito.when(mock.selectBestTerminology(Mockito.any(String.class), Mockito.any()))
-                .thenReturn("");
+        public RDFService rdfService() {
+            // Mock RDFService to return realistic SNOMED codes
+            RDFService mock = Mockito.mock(RDFService.class);
+            
+            // Return realistic SNOMED suggestions based on term
+            Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.anyString()))
+                .thenAnswer(invocation -> {
+                    String term = invocation.getArgument(0);
+                    String lower = term.toLowerCase();
+                    
+                    // Return realistic SNOMED codes based on term
+                    if (lower.contains("bath")) {
+                        return Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
+                    } else if (lower.contains("toilet")) {
+                        return Arrays.asList("284548004|Ability to use toilet|", "129006006|Toileting independence|");
+                    } else if (lower.contains("dress")) {
+                        return Arrays.asList("284547009|Ability to dress|", "165235000|Dressing independence|");
+                    } else if (lower.contains("feed") || lower.contains("eat")) {
+                        return Arrays.asList("284545001|Ability to feed|", "289168000|Eating independence|");
+                    } else if (lower.contains("groom")) {
+                        return Arrays.asList("284549007|Ability to groom|", "313009003|Personal hygiene|");
+                    } else if (lower.contains("stair")) {
+                        return Arrays.asList("284551006|Ability to climb stairs|", "228869008|Stair climbing|");
+                    } else if (lower.contains("bowel")) {
+                        return Arrays.asList("129008007|Continence bowel|", "165243003|Bowel control|");
+                    } else if (lower.contains("bladder")) {
+                        return Arrays.asList("129009004|Continence urinary|", "165244009|Bladder control|");
+                    } else if (lower.contains("sex") || lower.contains("gender")) {
+                        return Arrays.asList("263495000|Gender|", "734000001|Sex|");
+                    } else if (lower.contains("type") || lower.contains("isch") || lower.contains("hem") || lower.contains("etiology")) {
+                        return Arrays.asList("230690007|Stroke|", "432504007|Cerebrovascular accident|");
+                    } else if (lower.contains("diabet")) {
+                        return Arrays.asList("73211009|Diabetes mellitus|", "44054006|Type 2 diabetes|");
+                    } else if (lower.contains("age")) {
+                        return Arrays.asList("397669002|Age|", "424144002|Current chronological age|");
+                    } else if (lower.contains("nihss")) {
+                        return Arrays.asList("450741004|NIH stroke scale|", "450703000|Stroke severity score|");
+                    } else if (lower.contains("barthel")) {
+                        return Arrays.asList("273302005|Barthel index|", "445313000|Activities of daily living score|");
+                    } else if (lower.contains("fim")) {
+                        return Arrays.asList("445713009|Functional independence measure|", "445313000|Activities of daily living score|");
+                    } else if (lower.contains("transfer")) {
+                        return Arrays.asList("284550007|Ability to transfer|", "301438001|Transfer independence|");
+                    } else if (lower.contains("mobil")) {
+                        return Arrays.asList("364666007|Ability to mobilize|", "228869008|Walking ability|");
+                    } else if (lower.contains("fac")) {
+                        return Arrays.asList("52052004|Functional ambulation|", "228869008|Walking ability|");
+                    } else if (lower.contains("independent") || term.equals("10")) {
+                        return Arrays.asList("371153006|Independent|", "165245005|Functionally independent|");
+                    } else if (lower.contains("dependent") || term.equals("0")) {
+                        return Arrays.asList("371152001|Dependent|", "371154000|Totally dependent|");
+                    } else if (term.equals("5")) {
+                        return Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
+                    } else {
+                        // Generic fallback
+                        return Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
+                    }
+                });
+            
             return mock;
+        }
+        
+        @Bean
+        public TerminologyService terminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
+            // Use real TerminologyService with mocked RDFService
+            return new TerminologyService(rdfService, embeddingsClient);
         }
         
         @Bean
@@ -210,6 +270,15 @@ public class MappingServiceReportTest {
                 sb.append("- mapping: null\n\n");
                 continue;
             }
+            
+            // Show terminology and description for the mapping
+            if (mapping.getTerminology() != null && !mapping.getTerminology().isEmpty()) {
+                sb.append("- **Terminology:** ").append(mapping.getTerminology()).append("\n");
+            }
+            if (mapping.getDescription() != null && !mapping.getDescription().isEmpty()) {
+                sb.append("- **Description:** ").append(mapping.getDescription()).append("\n");
+            }
+            sb.append("\n");
 
             List<String> cols = mapping.getColumns() == null ? Collections.<String>emptyList() : mapping.getColumns();
             sb.append("- columns: ").append(cols.size()).append("  \n");
@@ -232,7 +301,16 @@ public class MappingServiceReportTest {
                     SuggestedValueDTO v = values.get(vi);
                     if (v == null) continue;
                     int refs = (v.getMapping() == null) ? 0 : v.getMapping().size();
-                    sb.append("  - `").append(nullToEmpty(v.getName())).append("` (refs=").append(refs).append(")\n");
+                    sb.append("  - `").append(nullToEmpty(v.getName())).append("` (refs=").append(refs).append(")");
+                    
+                    // Show terminology and description for each value
+                    if (v.getTerminology() != null && !v.getTerminology().isEmpty()) {
+                        sb.append(" [SNOMED: ").append(v.getTerminology()).append("]");
+                    }
+                    if (v.getDescription() != null && !v.getDescription().isEmpty()) {
+                        sb.append(" - ").append(v.getDescription());
+                    }
+                    sb.append("\n");
                 }
                 if (values.size() > vlim) {
                     sb.append("  - ... ").append(values.size() - vlim).append(" more\n");
