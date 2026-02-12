@@ -24,21 +24,21 @@ public class MappingService {
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
     private final EmbeddingsClient embeddingsClient;
-    private final RDFService rdfService;
+    private final TerminologyService terminologyService;
     private final DescriptionGenerator descriptionGenerator;
 
     private static final java.util.concurrent.atomic.AtomicInteger embeddingLogCount = 
         new java.util.concurrent.atomic.AtomicInteger(0);
 
     public MappingService(EmbeddingsClient embeddingsClient, 
-                         RDFService rdfService,
+                         TerminologyService terminologyService,
                          DescriptionGenerator descriptionGenerator) {
         this.embeddingsClient = embeddingsClient;
-        this.rdfService = rdfService;
+        this.terminologyService = terminologyService;
         this.descriptionGenerator = descriptionGenerator;
-        logger.info("[MappingService] Initialized with EmbeddingsClient: {}, RDFService: {}, DescriptionGenerator: {}", 
+        logger.info("[MappingService] Initialized with EmbeddingsClient: {}, TerminologyService: {}, DescriptionGenerator: {}", 
             embeddingsClient != null ? "present" : "NULL!",
-            rdfService != null ? "present" : "NULL!",
+            terminologyService != null ? "present" : "NULL!",
             descriptionGenerator != null ? "present" : "NULL!");
     }
 
@@ -737,20 +737,13 @@ public class MappingService {
     }
     
     private void populateValueTerminologyAndDescription(SuggestedValueDTO value, String valueName, String columnContext, List<String> allValues) {
-        // Try to find SNOMED CT terminology for the value using RDFService
-        List<OntologyTermDTO> results = rdfService.getSNOMEDTermSuggestions(valueName);
+        // Use TerminologyService to select the best SNOMED CT terminology
+        String terminology = terminologyService.selectBestTerminology(valueName, columnContext);
+        value.setTerminology(terminology);
         
-        if (!results.isEmpty()) {
-            OntologyTermDTO best = results.get(0);
-            // Extract SNOMED code from IRI (e.g., http://snomed.info/sct/12345 -> 12345)
-            String conceptId = best.getIri().replaceAll(".*sct/", "");
-            value.setTerminology(conceptId);
-            // Use terminology to enhance description
-            value.setDescription(descriptionGenerator.generateValueDescription(valueName, columnContext, allValues));
-        } else {
-            value.setTerminology("");
-            value.setDescription(descriptionGenerator.generateValueDescription(valueName, columnContext, allValues));
-        }
+        // Use DescriptionGenerator to create human-readable description
+        String description = descriptionGenerator.generateValueDescription(valueName, columnContext, allValues);
+        value.setDescription(description);
     }
 
     private boolean joinsAcrossAtLeastTwoFiles(Map<String, List<SuggestedRefDTO>> canonToRefs) {
@@ -848,19 +841,21 @@ public class MappingService {
     }
     
     private void populateMappingTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<ColRef> cols) {
-        // Try to find SNOMED CT terminology for the concept using RDFService
-        List<OntologyTermDTO> results = rdfService.getSNOMEDTermSuggestions(conceptName);
-        
-        if (!results.isEmpty()) {
-            OntologyTermDTO best = results.get(0);
-            // Extract SNOMED code from IRI (e.g., http://snomed.info/sct/12345 -> 12345)
-            String conceptId = best.getIri().replaceAll(".*sct/", "");
-            mapping.setTerminology(conceptId);
-            mapping.setDescription(descriptionGenerator.generateColumnDescription(conceptName, best.getLabel()));
-        } else {
-            mapping.setTerminology("");
-            mapping.setDescription(descriptionGenerator.generateColumnDescription(conceptName, null));
+        // Collect sample values from columns for context
+        List<String> sampleValues = new java.util.ArrayList<>();
+        for (ColRef col : cols) {
+            if (col.rawValues != null && !col.rawValues.isEmpty()) {
+                sampleValues.addAll(col.rawValues.subList(0, Math.min(5, col.rawValues.size())));
+            }
         }
+        
+        // Use TerminologyService to select the best SNOMED CT terminology
+        String terminology = terminologyService.selectBestTerminology(conceptName, null);
+        mapping.setTerminology(terminology);
+        
+        // Use DescriptionGenerator to create human-readable description
+        String description = descriptionGenerator.generateColumnDescription(conceptName, terminology, sampleValues);
+        mapping.setDescription(description);
     }
 
     private List<String> extractSourceColumnNames(List<ColRef> cols) {

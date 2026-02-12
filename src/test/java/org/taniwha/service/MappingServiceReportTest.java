@@ -53,22 +53,22 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public RDFService rdfService() {
-            // Mock RDFService for tests
-            RDFService mock = Mockito.mock(RDFService.class);
-            Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.any(String.class)))
-                .thenReturn(new ArrayList<>());
+        public TerminologyService terminologyService() {
+            // Mock TerminologyService for tests  
+            TerminologyService mock = Mockito.mock(TerminologyService.class);
+            Mockito.when(mock.selectBestTerminology(Mockito.any(String.class), Mockito.any()))
+                .thenReturn("");
             return mock;
         }
         
         @Bean
-        public DescriptionGenerator descriptionGenerator() {
-            return new DescriptionGenerator();
+        public DescriptionGenerator descriptionGenerator(EmbeddingsClient embeddingsClient) {
+            return new DescriptionGenerator(embeddingsClient);
         }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, RDFService rdfService, DescriptionGenerator descriptionGenerator) {
-            return new MappingService(embeddingsClient, rdfService, descriptionGenerator);
+        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyService terminologyService, DescriptionGenerator descriptionGenerator) {
+            return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
         }
     }
 
