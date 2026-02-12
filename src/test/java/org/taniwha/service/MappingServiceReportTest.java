@@ -45,8 +45,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@ExtendWith(SpringExtension.class)
-@ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
+@SpringBootTest(classes = MappingServiceReportTest.TestConfig.class)
 @TestPropertySource(properties = {
     "spring.ai.ollama.base-url=http://localhost:11434",
     "spring.ai.ollama.chat.enabled=true",
@@ -55,7 +54,8 @@ import static org.junit.jupiter.api.Assertions.*;
     "llm.enabled=true",
     "snowstorm.enabled=false",
     "rdfbuilder.csvpath=/tmp/test.csv",
-    "rdfbuilder.service.url=http://localhost:8000"
+    "rdfbuilder.service.url=http://localhost:8000",
+    "spring.main.allow-bean-definition-overriding=true"
 })
 public class MappingServiceReportTest {
 
@@ -148,14 +148,18 @@ public class MappingServiceReportTest {
             return new TerminologyService(rdfService, embeddingsClient);
         }
         
-        // No ChatModel bean - let Spring AI autoconfiguration provide real Ollama
+        
+        // ChatModel will be autoconfigured by Spring Boot from Ollama properties
         
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
                                                   @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Uses REAL Ollama ChatModel from Spring AI autoconfiguration
+            // Uses REAL Ollama ChatModel from Spring Boot autoconfiguration
             System.out.println("[TEST] Creating LLMTextGenerator");
             System.out.println("[TEST] ChatModel available: " + (chatModel != null));
+            if (chatModel != null) {
+                System.out.println("[TEST] ChatModel class: " + chatModel.getClass().getName());
+            }
             System.out.println("[TEST] LLM enabled: " + llmEnabled);
             return new LLMTextGenerator(chatModel, llmEnabled);
         }
