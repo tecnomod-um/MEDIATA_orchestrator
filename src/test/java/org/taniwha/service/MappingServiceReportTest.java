@@ -46,16 +46,9 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-@TestPropertySource(properties = {
-    "spring.ai.ollama.base-url=http://localhost:11434",
-    "spring.ai.ollama.chat.enabled=true",
-    "spring.ai.ollama.chat.options.model=llama2",
-    "spring.ai.ollama.chat.options.temperature=0.7",
-    "llm.enabled=true",
-    "snowstorm.enabled=false",
+@TestPropertySource(locations = "classpath:application-test.properties", properties = {
     "rdfbuilder.csvpath=/tmp/test.csv",
     "rdfbuilder.service.url=http://localhost:8000",
-    "spring.main.allow-bean-definition-overriding=true",
     "spring.datasource.enabled=false",
     "spring.data.mongodb.auto-index-creation=false"
 })
@@ -150,39 +143,8 @@ public class MappingServiceReportTest {
             return new TerminologyService(rdfService, embeddingsClient);
         }
         
-        
-        @Bean
-        public ChatModel chatModel(@Value("${spring.ai.ollama.base-url}") String baseUrl,
-                                   @Value("${spring.ai.ollama.chat.options.model}") String model) {
-            System.out.println("[TEST] Creating ChatModel manually");
-            System.out.println("[TEST] Ollama base URL: " + baseUrl);
-            System.out.println("[TEST] Model: " + model);
-            
-            try {
-                // Create OllamaApi using builder
-                org.springframework.ai.ollama.api.OllamaApi ollamaApi =
-                    org.springframework.ai.ollama.api.OllamaApi.builder()
-                        .baseUrl(baseUrl)
-                        .build();
-                
-                // Create OllamaChatModel using builder
-                org.springframework.ai.ollama.OllamaChatModel chatModel =
-                    org.springframework.ai.ollama.OllamaChatModel.builder()
-                        .ollamaApi(ollamaApi)
-                        .defaultOptions(org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                            .model(model)
-                            .temperature(0.7)
-                            .build())
-                        .build();
-                
-                System.out.println("[TEST] ChatModel created successfully");
-                return chatModel;
-            } catch (Exception e) {
-                System.err.println("[TEST] Failed to create ChatModel: " + e.getMessage());
-                e.printStackTrace();
-                return null;
-            }
-        }
+        // ChatModel will be autoconfigured by Spring AI Ollama starter
+        // No manual bean creation needed - uses same mechanism as deployment
         
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
