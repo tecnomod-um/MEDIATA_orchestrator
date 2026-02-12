@@ -6,6 +6,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration;
@@ -128,11 +129,11 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public LLMTextGenerator llmTextGenerator() {
-            // Use Spring AI autoconfiguration for Ollama ChatModel
-            // Will be available if Ollama is running and configured
-            // Required=false means test works with or without Ollama
-            return new LLMTextGenerator(null, false); // Will use autoconfigured ChatModel if available
+        public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
+                                                  @Value("${llm.enabled:true}") boolean llmEnabled) {
+            // Use real configuration - ChatModel from Spring AI autoconfiguration if available
+            // llm.enabled from application.properties
+            return new LLMTextGenerator(chatModel, llmEnabled);
         }
         
         @Bean
