@@ -89,11 +89,10 @@
             <artifactId>spring-ai-starter-model-transformers</artifactId>
         </dependency>
 
-        <!-- Spring AI OpenAI for LLM text generation -->
+        <!-- Spring AI Ollama for LLM text generation -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
-            <version>1.0.0-M3</version>
+            <artifactId>spring-ai-ollama</artifactId>
         </dependency>
 
 
