@@ -151,7 +151,38 @@ public class MappingServiceReportTest {
         }
         
         
-        // ChatModel will be autoconfigured by Spring Boot from Ollama properties
+        @Bean
+        public ChatModel chatModel(@Value("${spring.ai.ollama.base-url}") String baseUrl,
+                                   @Value("${spring.ai.ollama.chat.options.model}") String model) {
+            System.out.println("[TEST] Creating ChatModel manually");
+            System.out.println("[TEST] Ollama base URL: " + baseUrl);
+            System.out.println("[TEST] Model: " + model);
+            
+            try {
+                // Create OllamaApi using builder
+                org.springframework.ai.ollama.api.OllamaApi ollamaApi =
+                    org.springframework.ai.ollama.api.OllamaApi.builder()
+                        .baseUrl(baseUrl)
+                        .build();
+                
+                // Create OllamaChatModel using builder
+                org.springframework.ai.ollama.OllamaChatModel chatModel =
+                    org.springframework.ai.ollama.OllamaChatModel.builder()
+                        .ollamaApi(ollamaApi)
+                        .defaultOptions(org.springframework.ai.ollama.api.OllamaChatOptions.builder()
+                            .model(model)
+                            .temperature(0.7)
+                            .build())
+                        .build();
+                
+                System.out.println("[TEST] ChatModel created successfully");
+                return chatModel;
+            } catch (Exception e) {
+                System.err.println("[TEST] Failed to create ChatModel: " + e.getMessage());
+                e.printStackTrace();
+                return null;
+            }
+        }
         
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
