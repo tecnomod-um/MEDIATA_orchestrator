@@ -22,6 +22,11 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
+import org.springframework.ai.chat.ChatModel;
+import org.springframework.ai.chat.ChatResponse;
+import org.springframework.ai.chat.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.chat.messages.Message;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -122,8 +127,82 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public DescriptionGenerator descriptionGenerator(EmbeddingsClient embeddingsClient) {
-            return new DescriptionGenerator(embeddingsClient);
+        public ChatModel chatModel() {
+            // Mock ChatModel to generate realistic medical descriptions
+            ChatModel mock = Mockito.mock(ChatModel.class);
+            
+            Mockito.when(mock.call(Mockito.any(Prompt.class)))
+                .thenAnswer(invocation -> {
+                    Prompt prompt = invocation.getArgument(0);
+                    String promptText = prompt.getInstructions().get(0).getContent();
+                    
+                    // Generate contextual description based on prompt
+                    String description = generateMockDescription(promptText);
+                    
+                    Generation generation = new Generation(description);
+                    return new ChatResponse(Collections.singletonList(generation));
+                });
+            
+            return mock;
+        }
+        
+        private static String generateMockDescription(String promptText) {
+            String lower = promptText.toLowerCase();
+            
+            // Extract context from prompt
+            if (lower.contains("field name:") && !lower.contains("score:") && !lower.contains("value:")) {
+                // Column description
+                if (lower.contains("bath")) {
+                    return "Assessment of patient's ability to perform bathing and personal hygiene activities independently";
+                } else if (lower.contains("toilet")) {
+                    return "Evaluation of ability to use toilet facilities and manage continence independently";
+                } else if (lower.contains("dress")) {
+                    return "Assessment of ability to dress and undress independently";
+                } else if (lower.contains("feed") || lower.contains("eat")) {
+                    return "Evaluation of ability to feed oneself and eat meals independently";
+                } else if (lower.contains("groom")) {
+                    return "Assessment of ability to perform personal grooming activities independently";
+                } else if (lower.contains("stair")) {
+                    return "Evaluation of ability to climb stairs independently";
+                } else if (lower.contains("bowel")) {
+                    return "Assessment of bowel control and continence management";
+                } else if (lower.contains("bladder")) {
+                    return "Evaluation of bladder control and urinary continence";
+                } else if (lower.contains("type")) {
+                    return "Classification or type of the medical condition or event";
+                } else if (lower.contains("sex") || lower.contains("gender")) {
+                    return "Biological sex or gender identification of the patient";
+                } else {
+                    return "Clinical measurement or assessment value";
+                }
+            } else if (lower.contains("score:") || lower.contains("value:")) {
+                // Value description - check position in range
+                if (lower.contains("low end") || lower.contains("score: 0") || lower.contains("minimum")) {
+                    return "Complete dependence; requires full assistance from caregivers for this activity";
+                } else if (lower.contains("middle") || lower.contains("score: 5") || lower.contains("mid")) {
+                    return "Partial independence; requires some assistance or supervision for this activity";
+                } else if (lower.contains("high end") || lower.contains("score: 10") || lower.contains("maximum")) {
+                    return "Complete independence; no assistance required for this activity";
+                } else if (lower.contains("ischemic")) {
+                    return "Ischemic type: caused by blocked blood flow to the brain";
+                } else if (lower.contains("hemorrhagic")) {
+                    return "Hemorrhagic type: caused by bleeding in or around the brain";
+                } else {
+                    return "Specific measurement or categorical value in the assessment";
+                }
+            }
+            
+            return "Clinical assessment value";
+        }
+        
+        @Bean
+        public LLMTextGenerator llmTextGenerator(ChatModel chatModel) {
+            return new LLMTextGenerator(chatModel);
+        }
+        
+        @Bean
+        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
+            return new DescriptionGenerator(llmTextGenerator);
         }
 
         @Bean
@@ -164,6 +243,38 @@ public class MappingServiceReportTest {
         
         System.out.println("Expected categories found: " + matchCount + " out of " + expectedMappings.size());
         System.out.println("================================\n");
+        
+        // Display sample mappings with terminology and descriptions
+        System.out.println("\n=== Sample Mappings with Terminology and Descriptions ===");
+        int samplesShown = 0;
+        for (Map<String, SuggestedMappingDTO> mappingMap : result) {
+            if (samplesShown >= 5) break; // Show first 5 mappings
+            
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                SuggestedMappingDTO mapping = entry.getValue();
+                System.out.println("\nMapping: " + entry.getKey());
+                System.out.println("  Terminology: " + (mapping.getTerminology() != null && !mapping.getTerminology().isEmpty() ? mapping.getTerminology() : "(none)"));
+                System.out.println("  Description: " + (mapping.getDescription() != null && !mapping.getDescription().isEmpty() ? mapping.getDescription() : "(none)"));
+                
+                // Show a few values with their terminology and descriptions
+                if (mapping.getGroups() != null && !mapping.getGroups().isEmpty()) {
+                    SuggestedGroupDTO group = mapping.getGroups().get(0);
+                    if (group.getValues() != null && !group.getValues().isEmpty()) {
+                        System.out.println("  Sample Values:");
+                        for (int i = 0; i < Math.min(3, group.getValues().size()); i++) {
+                            SuggestedValueDTO value = group.getValues().get(i);
+                            System.out.println("    - " + value.getName());
+                            System.out.println("      Terminology: " + (value.getTerminology() != null && !value.getTerminology().isEmpty() ? value.getTerminology() : "(none)"));
+                            System.out.println("      Description: " + (value.getDescription() != null && !value.getDescription().isEmpty() ? value.getDescription() : "(none)"));
+                        }
+                    }
+                }
+                
+                samplesShown++;
+                if (samplesShown >= 5) break;
+            }
+        }
+        System.out.println("==========================================================\n");
         
         // LLM should match or exceed math baseline (30 suggestions, 7/7 categories)
         assertTrue(result.size() >= 25, 
