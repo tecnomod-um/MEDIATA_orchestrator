@@ -8,6 +8,7 @@ volumes:
   mongodb-data:
   elasticsearch-data:
   kerby-data:
+  ollama-models:
 
 services:
   mongodb:
@@ -118,6 +119,25 @@ services:
       retries: 10
       start_period: 180s
 
+  # Optional: Ollama LLM service (enabled by profile "ollama")
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: mediata-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    networks:
+      - mediata-network
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   orchestrator:
     build:
       context: .
@@ -151,6 +171,10 @@ services:
       # Spring toggles (used by your /api/system/capabilities DTO, and by local launcher configs)
       - PY_LAUNCHER_ENABLED=${PY_LAUNCHER_ENABLED:-true}
       - FHIR_LAUNCHER_ENABLED=${FHIR_LAUNCHER_ENABLED:-true}
+
+      # Ollama LLM configuration - can point to container (with profile) or host
+      - SPRING_AI_OLLAMA_BASE_URL=${SPRING_AI_OLLAMA_BASE_URL:-http://localhost:11434}
+      - LLM_ENABLED=${LLM_ENABLED:-true}
 
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}

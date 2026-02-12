@@ -52,18 +52,20 @@ import static org.junit.jupiter.api.Assertions.*;
     "spring.ai.ollama.chat.enabled=true",
     "spring.ai.ollama.chat.options.model=llama2",
     "spring.ai.ollama.chat.options.temperature=0.7",
-    "llm.enabled=true"
+    "llm.enabled=true",
+    "snowstorm.enabled=false",
+    "rdfbuilder.csvpath=/tmp/test.csv",
+    "rdfbuilder.service.url=http://localhost:8000"
 })
 public class MappingServiceReportTest {
 
     @Configuration
+    @EnableAutoConfiguration(exclude = {
+        DataSourceAutoConfiguration.class,
+        MongoAutoConfiguration.class
+    })
     static class TestConfig {
-        @Bean
-        public ChatModel chatModel() {
-            // Create real Ollama ChatModel that connects to localhost:11434
-            OllamaApi ollamaApi = new OllamaApi("http://localhost:11434");
-            return new OllamaChatModel(ollamaApi);
-        }
+        // ChatModel will be autoconfigured by Spring AI Ollama based on properties
         
         @Bean
         public EmbeddingModel embeddingModel() {
