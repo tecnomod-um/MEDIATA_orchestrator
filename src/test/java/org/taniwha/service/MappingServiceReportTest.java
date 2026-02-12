@@ -43,6 +43,19 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
+@TestPropertySource(properties = {
+    "spring.ai.ollama.base-url=http://localhost:11434",
+    "spring.ai.ollama.chat.enabled=true",
+    "spring.ai.ollama.chat.options.model=llama2",
+    "spring.ai.ollama.chat.options.temperature=0.7",
+    "llm.enabled=true",
+    "snowstorm.enabled=true",
+    "snowstorm.api.url=http://localhost:8080",
+    "snowstorm.api.branch=MAIN",
+    "snowstorm.timeout=30",
+    "rdfbuilder.service.url=http://localhost:5000"
+})
+@EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, MongoAutoConfiguration.class})
 public class MappingServiceReportTest {
 
     @Configuration
@@ -128,11 +141,15 @@ public class MappingServiceReportTest {
             return new TerminologyService(rdfService, embeddingsClient);
         }
         
+        // No ChatModel bean - let Spring AI autoconfiguration provide real Ollama
+        
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
                                                   @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Use real configuration - ChatModel from Spring AI autoconfiguration if available
-            // llm.enabled from application.properties
+            // Uses REAL Ollama ChatModel from Spring AI autoconfiguration
+            System.out.println("[TEST] Creating LLMTextGenerator");
+            System.out.println("[TEST] ChatModel available: " + (chatModel != null));
+            System.out.println("[TEST] LLM enabled: " + llmEnabled);
             return new LLMTextGenerator(chatModel, llmEnabled);
         }
         
