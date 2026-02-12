@@ -23,8 +23,7 @@ public class MappingService {
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
     private final EmbeddingsClient embeddingsClient;
-    
-    // Counter for embedding logging
+
     private static final java.util.concurrent.atomic.AtomicInteger embeddingLogCount = 
         new java.util.concurrent.atomic.AtomicInteger(0);
 
@@ -33,8 +32,6 @@ public class MappingService {
         logger.info("[MappingService] Initialized with EmbeddingsClient: {}", 
             embeddingsClient != null ? "present" : "NULL!");
     }
-
-    // Note: D is no longer a constant, embedding dimensions are determined by the model
 
     private static final int MAX_VALUES = 80;
     private static final int MAX_ENUM = 120;
