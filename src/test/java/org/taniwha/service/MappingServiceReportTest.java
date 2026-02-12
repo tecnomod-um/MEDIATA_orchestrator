@@ -12,7 +12,9 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
@@ -30,6 +32,8 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.ollama.OllamaChatModel;
+import org.springframework.ai.ollama.api.OllamaApi;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -48,18 +52,19 @@ import static org.junit.jupiter.api.Assertions.*;
     "spring.ai.ollama.chat.enabled=true",
     "spring.ai.ollama.chat.options.model=llama2",
     "spring.ai.ollama.chat.options.temperature=0.7",
-    "llm.enabled=true",
-    "snowstorm.enabled=true",
-    "snowstorm.api.url=http://localhost:8080",
-    "snowstorm.api.branch=MAIN",
-    "snowstorm.timeout=30",
-    "rdfbuilder.service.url=http://localhost:5000"
+    "llm.enabled=true"
 })
-@EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, MongoAutoConfiguration.class})
 public class MappingServiceReportTest {
 
     @Configuration
     static class TestConfig {
+        @Bean
+        public ChatModel chatModel() {
+            // Create real Ollama ChatModel that connects to localhost:11434
+            OllamaApi ollamaApi = new OllamaApi("http://localhost:11434");
+            return new OllamaChatModel(ollamaApi);
+        }
+        
         @Bean
         public EmbeddingModel embeddingModel() {
             // Use Spring AI auto-configuration with default all-MiniLM-L6-v2 model
