@@ -24,12 +24,16 @@ public class DescriptionGenerator {
     }
     
     /**
-     * Generate description for a column based on its name and sample values.
+     * Generate description for a column based on its name, sample values, and terminology.
      * Uses LLM to generate natural language description.
+     * 
+     * @param columnName The name of the column
+     * @param terminology SNOMED CT terminology from Snowstorm (optional)
+     * @param sampleValues Sample values from the column (optional)
      */
-    public String generateColumnDescription(String columnName, List<String> sampleValues) {
+    public String generateColumnDescription(String columnName, String terminology, List<String> sampleValues) {
         try {
-            return llmTextGenerator.generateColumnDescription(columnName, sampleValues);
+            return llmTextGenerator.generateColumnDescription(columnName, terminology, sampleValues);
         } catch (Exception e) {
             logger.warn("Failed to generate column description for '{}': {}", columnName, e.getMessage());
             return "";

@@ -852,8 +852,8 @@ public class MappingService {
         String terminology = terminologyService.selectBestTerminology(conceptName, null);
         mapping.setTerminology(terminology);
         
-        // Use DescriptionGenerator to create human-readable description
-        String description = descriptionGenerator.generateColumnDescription(conceptName, sampleValues);
+        // Use DescriptionGenerator to create human-readable description (using terminology context)
+        String description = descriptionGenerator.generateColumnDescription(conceptName, terminology, sampleValues);
         mapping.setDescription(description);
     }
 
@@ -920,7 +920,7 @@ public class MappingService {
                 
                 List<String> sampleValues = extractSampleValuesFromMapping(mapping);
                 String columnDescription = descriptionGenerator.generateColumnDescription(
-                    columnKey, sampleValues);
+                    columnKey, columnTerminology, sampleValues);
                 mapping.setDescription(columnDescription);
                 
                 // Populate value-level terminology and descriptions
