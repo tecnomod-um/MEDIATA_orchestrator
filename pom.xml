@@ -13,7 +13,7 @@
         <relativePath/>
     </parent>
     <properties>
-        <java.version>8</java.version>
+        <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-ai.version>1.1.2</spring-ai.version>
     </properties>
