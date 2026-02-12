@@ -128,78 +128,11 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public ChatModel chatModel() {
-            // Mock ChatModel to generate realistic medical descriptions
-            ChatModel mock = Mockito.mock(ChatModel.class);
-            
-            Mockito.when(mock.call(Mockito.any(Prompt.class)))
-                .thenAnswer(invocation -> {
-                    Prompt prompt = invocation.getArgument(0);
-                    Message message = prompt.getInstructions().get(0);
-                    String promptText = message.getText();
-                    
-                    // Generate contextual description based on prompt
-                    String description = generateMockDescription(promptText);
-                    
-                    Generation generation = new Generation(new AssistantMessage(description));
-                    return new ChatResponse(Collections.singletonList(generation));
-                });
-            
-            return mock;
-        }
-        
-        private static String generateMockDescription(String promptText) {
-            String lower = promptText.toLowerCase();
-            
-            // Extract context from prompt
-            if (lower.contains("field name:") && !lower.contains("score:") && !lower.contains("value:")) {
-                // Column description
-                if (lower.contains("bath")) {
-                    return "Assessment of patient's ability to perform bathing and personal hygiene activities independently";
-                } else if (lower.contains("toilet")) {
-                    return "Evaluation of ability to use toilet facilities and manage continence independently";
-                } else if (lower.contains("dress")) {
-                    return "Assessment of ability to dress and undress independently";
-                } else if (lower.contains("feed") || lower.contains("eat")) {
-                    return "Evaluation of ability to feed oneself and eat meals independently";
-                } else if (lower.contains("groom")) {
-                    return "Assessment of ability to perform personal grooming activities independently";
-                } else if (lower.contains("stair")) {
-                    return "Evaluation of ability to climb stairs independently";
-                } else if (lower.contains("bowel")) {
-                    return "Assessment of bowel control and continence management";
-                } else if (lower.contains("bladder")) {
-                    return "Evaluation of bladder control and urinary continence";
-                } else if (lower.contains("type")) {
-                    return "Classification or type of the medical condition or event";
-                } else if (lower.contains("sex") || lower.contains("gender")) {
-                    return "Biological sex or gender identification of the patient";
-                } else {
-                    return "Clinical measurement or assessment value";
-                }
-            } else if (lower.contains("score:") || lower.contains("value:")) {
-                // Value description - check position in range
-                if (lower.contains("low end") || lower.contains("score: 0") || lower.contains("minimum")) {
-                    return "Complete dependence; requires full assistance from caregivers for this activity";
-                } else if (lower.contains("middle") || lower.contains("score: 5") || lower.contains("mid")) {
-                    return "Partial independence; requires some assistance or supervision for this activity";
-                } else if (lower.contains("high end") || lower.contains("score: 10") || lower.contains("maximum")) {
-                    return "Complete independence; no assistance required for this activity";
-                } else if (lower.contains("ischemic")) {
-                    return "Ischemic type: caused by blocked blood flow to the brain";
-                } else if (lower.contains("hemorrhagic")) {
-                    return "Hemorrhagic type: caused by bleeding in or around the brain";
-                } else {
-                    return "Specific measurement or categorical value in the assessment";
-                }
-            }
-            
-            return "Clinical assessment value";
-        }
-        
-        @Bean
-        public LLMTextGenerator llmTextGenerator(ChatModel chatModel) {
-            return new LLMTextGenerator(chatModel, true);
+        public LLMTextGenerator llmTextGenerator() {
+            // Use Spring AI autoconfiguration for Ollama ChatModel
+            // Will be available if Ollama is running and configured
+            // Required=false means test works with or without Ollama
+            return new LLMTextGenerator(null, false); // Will use autoconfigured ChatModel if available
         }
         
         @Bean
@@ -218,6 +151,9 @@ public class MappingServiceReportTest {
 
     @Autowired
     private MappingService mappingService;
+    
+    @Autowired(required = false)
+    private LLMTextGenerator llmTextGenerator;
 
     @Test
     void generates_mapping_report_from_fixture() throws Exception {
@@ -225,6 +161,11 @@ public class MappingServiceReportTest {
 
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
+        // Display LLM configuration status
+        System.out.println("\n=== LLM Configuration ===");
+        System.out.println("LLM Text Generator: " + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
+        System.out.println("==========================\n");
+        
         // Quality checks - validate LLM is performing well
         assertNotNull(result, "Result should not be null");
         
