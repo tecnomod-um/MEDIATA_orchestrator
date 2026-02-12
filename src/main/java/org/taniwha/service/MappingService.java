@@ -853,7 +853,7 @@ public class MappingService {
         mapping.setTerminology(terminology);
         
         // Use DescriptionGenerator to create human-readable description
-        String description = descriptionGenerator.generateColumnDescription(conceptName, terminology, sampleValues);
+        String description = descriptionGenerator.generateColumnDescription(conceptName, sampleValues);
         mapping.setDescription(description);
     }
 
@@ -920,7 +920,7 @@ public class MappingService {
                 
                 List<String> sampleValues = extractSampleValuesFromMapping(mapping);
                 String columnDescription = descriptionGenerator.generateColumnDescription(
-                    columnKey, columnTerminology, sampleValues);
+                    columnKey, sampleValues);
                 mapping.setDescription(columnDescription);
                 
                 // Populate value-level terminology and descriptions
@@ -933,8 +933,12 @@ public class MappingService {
                                     String valueTerminology = terminologyResults.getOrDefault(valueName, "");
                                     value.setTerminology(valueTerminology);
                                     
+                                    // Extract min/max if available from value context
+                                    String min = extractMinFromValue(value);
+                                    String max = extractMaxFromValue(value);
+                                    
                                     String valueDescription = descriptionGenerator.generateValueDescription(
-                                        valueName, columnKey, sampleValues);
+                                        columnKey, valueName, min, max);
                                     value.setDescription(valueDescription);
                                 }
                             }
