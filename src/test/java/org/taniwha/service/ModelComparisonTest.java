@@ -53,8 +53,20 @@ public class ModelComparisonTest {
         }
         
         @Bean
-        public DescriptionGenerator descriptionGenerator(EmbeddingsClient embeddingsClient) {
-            return new DescriptionGenerator(embeddingsClient);
+        public LLMTextGenerator llmTextGenerator() {
+            LLMTextGenerator mock = Mockito.mock(LLMTextGenerator.class);
+            Mockito.when(mock.generateColumnDescription(Mockito.any(), Mockito.any(), Mockito.any()))
+                .thenReturn("Mock column description");
+            Mockito.when(mock.generateNumericValueDescription(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+                .thenReturn("Mock numeric value description");
+            Mockito.when(mock.generateCategoricalValueDescription(Mockito.any(), Mockito.any()))
+                .thenReturn("Mock categorical value description");
+            return mock;
+        }
+        
+        @Bean
+        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
+            return new DescriptionGenerator(llmTextGenerator);
         }
 
         @Bean

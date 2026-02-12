@@ -27,6 +27,8 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.messages.AssistantMessage;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -40,7 +42,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
-@EnableAutoConfiguration(exclude = {MongoAutoConfiguration.class, DataSourceAutoConfiguration.class})
 public class MappingServiceReportTest {
 
     @Configuration
@@ -134,12 +135,13 @@ public class MappingServiceReportTest {
             Mockito.when(mock.call(Mockito.any(Prompt.class)))
                 .thenAnswer(invocation -> {
                     Prompt prompt = invocation.getArgument(0);
-                    String promptText = prompt.getInstructions().get(0).getContent();
+                    Message message = prompt.getInstructions().get(0);
+                    String promptText = message.getText();
                     
                     // Generate contextual description based on prompt
                     String description = generateMockDescription(promptText);
                     
-                    Generation generation = new Generation(description);
+                    Generation generation = new Generation(new AssistantMessage(description));
                     return new ChatResponse(Collections.singletonList(generation));
                 });
             
@@ -197,7 +199,7 @@ public class MappingServiceReportTest {
         
         @Bean
         public LLMTextGenerator llmTextGenerator(ChatModel chatModel) {
-            return new LLMTextGenerator(chatModel);
+            return new LLMTextGenerator(chatModel, true);
         }
         
         @Bean

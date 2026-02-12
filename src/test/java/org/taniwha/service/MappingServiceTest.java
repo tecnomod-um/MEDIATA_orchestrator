@@ -61,7 +61,7 @@ class MappingServiceTest {
         // Setup default mock behavior for DescriptionGenerator
         lenient().when(descriptionGenerator.generateColumnDescription(any(String.class), any(), any()))
             .thenAnswer(invocation -> "Description for " + invocation.getArgument(0));
-        lenient().when(descriptionGenerator.generateValueDescription(any(String.class), any(), any()))
+        lenient().when(descriptionGenerator.generateValueDescription(any(String.class), any(), any(), any()))
             .thenAnswer(invocation -> "Value description for " + invocation.getArgument(0));
     }
 
