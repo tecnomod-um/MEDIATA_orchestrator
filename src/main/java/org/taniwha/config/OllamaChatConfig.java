@@ -9,10 +9,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 /**
  * Configuration for Ollama ChatModel bean.
  * This provides the ChatModel bean that LLMTextGenerator needs for text generation.
+ * Uses @Lazy to ensure Ollama is started before the bean is created.
  */
 @Configuration
 public class OllamaChatConfig {
@@ -28,6 +30,7 @@ public class OllamaChatConfig {
     private double temperature;
     
     @Bean
+    @Lazy  // Create bean only when first used, after OllamaLauncherConfig has started Ollama
     @ConditionalOnProperty(name = "llm.enabled", havingValue = "true", matchIfMissing = true)
     public ChatModel chatModel() {
         logger.info("[OllamaChatConfig] Creating OllamaChatModel");
@@ -35,36 +38,43 @@ public class OllamaChatConfig {
         logger.info("[OllamaChatConfig]   Model: {}", ollamaModel);
         logger.info("[OllamaChatConfig]   Temperature: {}", temperature);
         
-        // Create OllamaApi to connect to Ollama
-        OllamaApi api = OllamaApi.builder()
-            .baseUrl(ollamaBaseUrl)
-            .build();
-        
-        // Create options for the chat model
-        org.springframework.ai.ollama.api.OllamaChatOptions options = 
-            org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                .model(ollamaModel)
-                .temperature(temperature)
+        try {
+            // Create OllamaApi to connect to Ollama
+            OllamaApi api = OllamaApi.builder()
+                .baseUrl(ollamaBaseUrl)
                 .build();
-        
-        // Create ToolCallingManager (required by Spring AI 1.1.2)
-        org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
-            org.springframework.ai.model.tool.ToolCallingManager.builder().build();
-        
-        // Create ModelManagementOptions (required by Spring AI 1.1.2)
-        org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
-            org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
-        
-        // Create OllamaChatModel with all required parameters
-        OllamaChatModel chatModel = new OllamaChatModel(
-            api,
-            options,
-            toolCallingManager,
-            io.micrometer.observation.ObservationRegistry.NOOP,
-            modelManagementOptions
-        );
-        
-        logger.info("[OllamaChatConfig] OllamaChatModel created successfully");
-        return chatModel;
+            
+            // Create options for the chat model
+            org.springframework.ai.ollama.api.OllamaChatOptions options = 
+                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
+                    .model(ollamaModel)
+                    .temperature(temperature)
+                    .build();
+            
+            // Create ToolCallingManager (required by Spring AI 1.1.2)
+            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
+                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
+            
+            // Create ModelManagementOptions (required by Spring AI 1.1.2)
+            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
+                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
+            
+            // Create OllamaChatModel with all required parameters
+            OllamaChatModel chatModel = new OllamaChatModel(
+                api,
+                options,
+                toolCallingManager,
+                io.micrometer.observation.ObservationRegistry.NOOP,
+                modelManagementOptions
+            );
+            
+            logger.info("[OllamaChatConfig] OllamaChatModel created successfully");
+            return chatModel;
+        } catch (Exception e) {
+            logger.error("[OllamaChatConfig] Failed to create OllamaChatModel: {}", e.getMessage());
+            logger.error("[OllamaChatConfig] Make sure Ollama is running at: {}", ollamaBaseUrl);
+            // Return null - LLMTextGenerator will handle gracefully
+            return null;
+        }
     }
 }
