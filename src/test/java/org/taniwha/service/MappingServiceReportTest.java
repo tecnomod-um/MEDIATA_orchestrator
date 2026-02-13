@@ -2,38 +2,15 @@ package org.taniwha.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.FilterType;
-import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.transformers.TransformersEmbeddingModel;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.ai.ollama.api.OllamaApi;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -45,73 +22,15 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@ExtendWith(SpringExtension.class)
-@ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
-@TestPropertySource(locations = "classpath:application-test.properties", properties = {
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
     "rdfbuilder.csvpath=/tmp/test.csv",
-    "rdfbuilder.service.url=http://localhost:8000"
+    "rdfbuilder.service.url=http://localhost:8000",
+    "ollama.launcher.enabled=true",
+    "llm.enabled=true"
 })
 public class MappingServiceReportTest {
-
-    @Configuration
-    static class TestConfig {
-        
-        @Bean
-        public EmbeddingModel embeddingModel() {
-            return new TransformersEmbeddingModel();
-        }
-        
-        @Bean
-        public RDFService rdfService() {
-            return new RDFService();
-        }
-        
-        @Bean
-        public TerminologyService terminologyService(RDFService rdfService, EmbeddingModel embeddingModel) {
-            return new TerminologyService(rdfService, embeddingModel);
-        }
-        
-        @Bean  
-        public ChatModel chatModel() {
-            // Start Ollama container
-            try {
-                ProcessBuilder pb = new ProcessBuilder("docker", "run", "-d", "--name", "ollama-test-" + System.currentTimeMillis(),
-                    "-p", "11434:11434", "ollama/ollama:latest");
-                Process p = pb.start();
-                p.waitFor();
-                
-                // Wait for ready
-                Thread.sleep(5000);
-                
-                // Pull model if needed
-                pb = new ProcessBuilder("docker", "exec", "ollama-test-" + System.currentTimeMillis(), "ollama", "pull", "llama2");
-                p = pb.start();
-                p.waitFor();
-            } catch (Exception e) {
-                System.out.println("Could not start Ollama: " + e.getMessage());
-            }
-            
-            // Create ChatModel
-            OllamaApi ollamaApi = new OllamaApi("http://localhost:11434");
-            return new OllamaChatModel(ollamaApi);
-        }
-        
-        @Bean
-        public LLMTextGenerator llmTextGenerator(ChatModel chatModel, @Value("${llm.enabled:true}") boolean llmEnabled) {
-            return new LLMTextGenerator(chatModel, llmEnabled);
-        }
-        
-        @Bean
-        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
-            return new DescriptionGenerator(llmTextGenerator);
-        }
-        
-        @Bean
-        public MappingService mappingService(EmbeddingModel embeddingModel, TerminologyService terminologyService,
-                                             DescriptionGenerator descriptionGenerator) {
-            return new MappingService(embeddingModel, terminologyService, descriptionGenerator);
-        }
-    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -119,7 +38,7 @@ public class MappingServiceReportTest {
     @Autowired
     private MappingService mappingService;
     
-    @Autowired
+    @Autowired(required = false)
     private LLMTextGenerator llmTextGenerator;
 
     @Test
