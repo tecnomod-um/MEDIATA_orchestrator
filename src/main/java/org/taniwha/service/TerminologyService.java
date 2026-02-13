@@ -56,10 +56,11 @@ public class TerminologyService {
         // Launch parallel lookups
         for (TerminologyRequest request : requests) {
             String cacheKey = request.term + "|" + (request.context != null ? request.context : "");
+            String resultKey = cacheKey; // Use same key format for results
             
             // Check cache first
             if (terminologyCache.containsKey(cacheKey)) {
-                results.put(request.term, terminologyCache.get(cacheKey));
+                results.put(resultKey, terminologyCache.get(cacheKey));
                 continue;
             }
             
@@ -67,11 +68,11 @@ public class TerminologyService {
             CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
                 try {
                     String terminology = lookupSingleTerminology(request.term, request.context);
-                    results.put(request.term, terminology);
+                    results.put(resultKey, terminology);
                     terminologyCache.put(cacheKey, terminology);
                 } catch (Exception e) {
                     logger.warn("[TerminologyService] Error looking up {}: {}", request.term, e.getMessage());
-                    results.put(request.term, "");
+                    results.put(resultKey, "");
                 }
             }, executorService);
             

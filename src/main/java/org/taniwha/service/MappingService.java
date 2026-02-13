@@ -915,7 +915,9 @@ public class MappingService {
                 SuggestedMappingDTO mapping = entry.getValue();
                 
                 // Populate column-level terminology and description
-                String columnTerminology = terminologyResults.getOrDefault(columnKey, "");
+                // Column keys don't have context, so use just the key with empty context
+                String columnLookupKey = columnKey + "|";
+                String columnTerminology = terminologyResults.getOrDefault(columnLookupKey, "");
                 mapping.setTerminology(columnTerminology);
                 
                 List<String> sampleValues = extractSampleValuesFromMapping(mapping);
@@ -930,7 +932,9 @@ public class MappingService {
                             for (SuggestedValueDTO value : group.getValues()) {
                                 String valueName = value.getName();
                                 if (valueName != null && !valueName.isEmpty()) {
-                                    String valueTerminology = terminologyResults.getOrDefault(valueName, "");
+                                    // Use the same key format as when the request was created: valueName|columnContext
+                                    String valueLookupKey = valueName + "|" + columnKey;
+                                    String valueTerminology = terminologyResults.getOrDefault(valueLookupKey, "");
                                     value.setTerminology(valueTerminology);
                                     
                                     // Extract min/max if available from value context
