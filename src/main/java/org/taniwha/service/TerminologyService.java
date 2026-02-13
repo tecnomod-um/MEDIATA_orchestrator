@@ -256,6 +256,10 @@ public class TerminologyService {
      */
     private String selectMostSimilar(String term, String context, List<OntologyTermDTO> suggestions) {
         try {
+            if (suggestions == null || suggestions.isEmpty()) {
+                return "";
+            }
+            
             // Build search text with context
             String searchText = context != null ? term + " " + context : term;
             float[] searchEmbedding = embeddingsClient.embed(searchText);
@@ -265,10 +269,15 @@ public class TerminologyService {
 
             // Compare with each suggestion
             for (OntologyTermDTO suggestion : suggestions) {
+                if (suggestion == null) {
+                    continue;
+                }
+                
                 String iri = suggestion.getIri();
                 String label = suggestion.getLabel();
                 
                 if (iri == null || label == null) {
+                    logger.debug("Skipping suggestion with null IRI or label");
                     continue;
                 }
 
@@ -288,12 +297,22 @@ public class TerminologyService {
             logger.debug("Best similarity: {} for term: {}", bestSimilarity, term);
             return bestCode;
 
+        } catch (ClassCastException e) {
+            logger.error("ClassCastException in selectMostSimilar - suggestions may be wrong type: {}", e.getMessage());
+            return "";
         } catch (Exception e) {
-            logger.warn("Error computing similarity: {}", e.getMessage());
+            logger.warn("Error computing similarity: {}", e.getMessage(), e);
             // Fallback to first suggestion
-            if (!suggestions.isEmpty()) {
-                String iri = suggestions.get(0).getIri();
-                return iri != null ? iri.replaceAll(".*sct/", "") : "";
+            if (suggestions != null && !suggestions.isEmpty()) {
+                try {
+                    OntologyTermDTO firstSuggestion = suggestions.get(0);
+                    if (firstSuggestion != null) {
+                        String iri = firstSuggestion.getIri();
+                        return iri != null ? iri.replaceAll(".*sct/", "") : "";
+                    }
+                } catch (Exception fallbackError) {
+                    logger.error("Error in fallback: {}", fallbackError.getMessage());
+                }
             }
             return "";
         }

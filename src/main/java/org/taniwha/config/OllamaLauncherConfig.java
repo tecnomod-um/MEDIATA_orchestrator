@@ -1,13 +1,14 @@
 package org.taniwha.config;
 
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -19,6 +20,7 @@ import java.util.Scanner;
 @Profile("!docker")
 @Configuration
 @ConditionalOnProperty(name = "ollama.launcher.enabled", havingValue = "true", matchIfMissing = true)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class OllamaLauncherConfig {
     private static final Logger logger = LoggerFactory.getLogger(OllamaLauncherConfig.class);
 
@@ -43,9 +45,9 @@ public class OllamaLauncherConfig {
     @Value("${ollama.volume:${env.OLLAMA_VOLUME:ollama-models}}")
     private String ollamaVolume;
 
-    @Bean
-    CommandLineRunner launchOllama() {
-        return args -> {
+    @PostConstruct
+    public void launchOllama() {
+        try {
             if (!dockerAvailable()) {
                 logger.warn("Docker not available. Ollama will not be auto-launched.");
                 logger.warn("Please start Ollama manually: ollama serve");
@@ -61,7 +63,9 @@ public class OllamaLauncherConfig {
             
             // Pull model if needed
             pullModelIfNeeded();
-        };
+        } catch (Exception e) {
+            logger.error("Error launching Ollama: {}", e.getMessage(), e);
+        }
     }
 
     private void ensureOllamaRunning() throws Exception {
