@@ -55,7 +55,9 @@ public class MappingServiceReportTest {
     })
     static class TestConfig {
         // NOTE: This test manually creates ChatModel to match deployment behavior
-        // In deployment, OllamaLauncherConfig automatically starts Ollama and Spring AI autoconfigures ChatModel
+        // In deployment, OllamaChatConfig manually creates the ChatModel bean
+        // (Spring AI autoconfiguration doesn't work because we use spring-ai-ollama
+        // without the -spring-boot-starter dependency)
         // This test mimics that behavior by expecting Ollama to be running
         
         @Bean

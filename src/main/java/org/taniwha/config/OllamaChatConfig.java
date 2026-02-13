@@ -6,6 +6,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -26,16 +27,9 @@ public class OllamaChatConfig {
     @Value("${spring.ai.ollama.chat.options.temperature:0.7}")
     private double temperature;
     
-    @Value("${llm.enabled:true}")
-    private boolean llmEnabled;
-    
     @Bean
+    @ConditionalOnProperty(name = "llm.enabled", havingValue = "true", matchIfMissing = true)
     public ChatModel chatModel() {
-        if (!llmEnabled) {
-            logger.info("[OllamaChatConfig] LLM disabled via llm.enabled=false");
-            return null;
-        }
-        
         logger.info("[OllamaChatConfig] Creating OllamaChatModel");
         logger.info("[OllamaChatConfig]   Base URL: {}", ollamaBaseUrl);
         logger.info("[OllamaChatConfig]   Model: {}", ollamaModel);
