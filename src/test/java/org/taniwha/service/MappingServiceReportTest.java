@@ -60,9 +60,14 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
+        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
+        // automatically starts Ollama and Spring AI autoconfigures ChatModel
+        // This test mimics that behavior by expecting Ollama to be running
+        
         @Bean
         public ChatModel ollamaChatModel() {
             // Create OllamaApi to connect to localhost Ollama
+            // (In deployment, OllamaLauncherConfig ensures Ollama is running)
             OllamaApi api = OllamaApi.builder()
                 .baseUrl("http://localhost:11434")
                 .build();
