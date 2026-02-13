@@ -261,6 +261,13 @@ public class TerminologyService {
                 return "";
             }
             
+            // Verify type safety - check if first element is actually an OntologyTermDTO
+            Object firstElement = suggestions.get(0);
+            if (firstElement instanceof String) {
+                logger.error("Received List<String> instead of List<OntologyTermDTO> - cannot process");
+                return "";
+            }
+            
             // Build search text with context
             String searchText = context != null ? term + " " + context : term;
             float[] searchEmbedding = embeddingsClient.embed(searchText);
@@ -300,6 +307,7 @@ public class TerminologyService {
 
         } catch (ClassCastException e) {
             logger.error("ClassCastException in selectMostSimilar - suggestions may be wrong type: {}", e.getMessage());
+            logger.error("This should not happen - RDFService should return List<OntologyTermDTO>");
             return "";
         } catch (Exception e) {
             logger.warn("Error computing similarity: {}", e.getMessage(), e);
@@ -309,7 +317,9 @@ public class TerminologyService {
                     OntologyTermDTO firstSuggestion = suggestions.get(0);
                     if (firstSuggestion != null) {
                         String iri = firstSuggestion.getIri();
-                        return iri != null ? iri.replaceAll(".*sct/", "") : "";
+                        String code = iri != null ? iri.replaceAll(".*sct/", "") : "";
+                        logger.debug("Fallback selected code: {} for term: {}", code, term);
+                        return code;
                     }
                 } catch (Exception fallbackError) {
                     logger.error("Error in fallback: {}", fallbackError.getMessage());
