@@ -119,9 +119,8 @@ services:
       retries: 10
       start_period: 180s
 
-  # Optional: Ollama LLM service (enabled by profile "ollama")
+  # Ollama LLM service - starts automatically like Snowstorm
   ollama:
-    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: mediata-ollama
     restart: unless-stopped
@@ -131,12 +130,42 @@ services:
       - mediata-network
     volumes:
       - ollama-models:/root/.ollama
+    # Override entrypoint to auto-pull llama2 model on startup
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Start Ollama server in background
+        /bin/ollama serve &
+        OLLAMA_PID=$$!
+        
+        # Wait for Ollama to be ready (check with ollama list command)
+        echo "Waiting for Ollama to start..."
+        for i in $$(seq 1 30); do
+          if /bin/ollama list >/dev/null 2>&1; then
+            echo "Ollama is ready"
+            break
+          fi
+          sleep 2
+        done
+        
+        # Pull llama2 model if not already present
+        if ! /bin/ollama list | grep -q llama2; then
+          echo "Pulling llama2 model (first time - ~3.8GB)..."
+          /bin/ollama pull llama2
+          echo "llama2 model ready"
+        else
+          echo "llama2 model already available"
+        fi
+        
+        # Keep container running with Ollama server
+        wait $$OLLAMA_PID
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      # Health check verifies both Ollama is running AND model is available
+      test: ["CMD", "/bin/sh", "-c", "/bin/ollama list | grep -q llama2"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 300s  # Give 5 minutes for model download on first start
 
   orchestrator:
     build:
@@ -146,11 +175,13 @@ services:
     restart: unless-stopped
 
     # IMPORTANT:
-    # Do NOT hard-depend on optional services. Otherwise "minimal" mode can never start.
+    # Orchestrator depends on core services: MongoDB, Snowstorm, and Ollama
     depends_on:
       mongodb:
         condition: service_healthy
       snowstorm:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
 
     ports:
