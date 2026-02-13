@@ -172,8 +172,9 @@ services:
       - PY_LAUNCHER_ENABLED=${PY_LAUNCHER_ENABLED:-true}
       - FHIR_LAUNCHER_ENABLED=${FHIR_LAUNCHER_ENABLED:-true}
 
-      # Ollama LLM configuration - can point to container (with profile) or host
-      - SPRING_AI_OLLAMA_BASE_URL=${SPRING_AI_OLLAMA_BASE_URL:-http://localhost:11434}
+      # Ollama LLM configuration - points to ollama container when using ollama profile
+      # If not using ollama profile, this should be set to external Ollama instance
+      - SPRING_AI_OLLAMA_BASE_URL=${SPRING_AI_OLLAMA_BASE_URL:-http://ollama:11434}
       - LLM_ENABLED=${LLM_ENABLED:-true}
 
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
