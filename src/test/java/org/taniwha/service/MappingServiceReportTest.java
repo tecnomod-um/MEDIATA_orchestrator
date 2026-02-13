@@ -59,241 +59,26 @@ public class MappingServiceReportTest {
         DataSourceAutoConfiguration.class,
         MongoAutoConfiguration.class
     })
+    @ComponentScan(basePackages = "org.taniwha", 
+        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, 
+            classes = {org.taniwha.Application.class}))
     static class TestConfig {
-        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
-        // automatically starts Ollama and Spring AI autoconfigures ChatModel
-        // This test mimics that behavior by expecting Ollama to be running
-        
-        @Bean
-        public ChatModel ollamaChatModel() {
-            // Create OllamaApi to connect to localhost Ollama
-            // (In deployment, OllamaLauncherConfig ensures Ollama is running)
-            OllamaApi api = OllamaApi.builder()
-                .baseUrl("http://localhost:11434")
-                .build();
-            
-            // Create default options for llama2
-            org.springframework.ai.ollama.api.OllamaChatOptions options = 
-                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                    .model("llama2")
-                    .temperature(0.7)
-                    .build();
-            
-            // Create empty ToolCallingManager (required)
-            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
-                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
-                
-            // Create ModelManagementOptions (required)
-            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
-                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
-            
-            // Create with required parameters (Spring AI 1.1.2)
-            return new OllamaChatModel(
-                api,
-                options,
-                toolCallingManager,
-                io.micrometer.observation.ObservationRegistry.NOOP,
-                modelManagementOptions
-            );
-        }
-        
-        @Bean
-        public EmbeddingModel embeddingModel() {
-            // Use Spring AI auto-configuration with default all-MiniLM-L6-v2 model
-            // This will download the model if not cached
-            return new TransformersEmbeddingModel();
-        }
-
-        @Bean
-        public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
-            return new EmbeddingsClient(embeddingModel);
-        }
-        
-        @Bean
-        public RDFService rdfService() {
-            // Mock RDFService to return realistic SNOMED codes
-            RDFService mock = Mockito.mock(RDFService.class);
-            
-            // Return realistic SNOMED suggestions based on term
-            Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.anyString()))
-                .thenAnswer(invocation -> {
-                    String term = invocation.getArgument(0);
-                    String lower = term.toLowerCase();
-                    
-                    // Return realistic SNOMED codes based on term
-                    if (lower.contains("bath")) {
-                        return Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
-                    } else if (lower.contains("toilet")) {
-                        return Arrays.asList("284548004|Ability to use toilet|", "129006006|Toileting independence|");
-                    } else if (lower.contains("dress")) {
-                        return Arrays.asList("284547009|Ability to dress|", "165235000|Dressing independence|");
-                    } else if (lower.contains("feed") || lower.contains("eat")) {
-                        return Arrays.asList("284545001|Ability to feed|", "289168000|Eating independence|");
-                    } else if (lower.contains("groom")) {
-                        return Arrays.asList("284549007|Ability to groom|", "313009003|Personal hygiene|");
-                    } else if (lower.contains("stair")) {
-                        return Arrays.asList("284551006|Ability to climb stairs|", "228869008|Stair climbing|");
-                    } else if (lower.contains("bowel")) {
-                        return Arrays.asList("129008007|Continence bowel|", "165243003|Bowel control|");
-                    } else if (lower.contains("bladder")) {
-                        return Arrays.asList("129009004|Continence urinary|", "165244009|Bladder control|");
-                    } else if (lower.contains("sex") || lower.contains("gender")) {
-                        return Arrays.asList("263495000|Gender|", "734000001|Sex|");
-                    } else if (lower.contains("type") || lower.contains("isch") || lower.contains("hem") || lower.contains("etiology")) {
-                        return Arrays.asList("230690007|Stroke|", "432504007|Cerebrovascular accident|");
-                    } else if (lower.contains("diabet")) {
-                        return Arrays.asList("73211009|Diabetes mellitus|", "44054006|Type 2 diabetes|");
-                    } else if (lower.contains("age")) {
-                        return Arrays.asList("397669002|Age|", "424144002|Current chronological age|");
-                    } else if (lower.contains("nihss")) {
-                        return Arrays.asList("450741004|NIH stroke scale|", "450703000|Stroke severity score|");
-                    } else if (lower.contains("barthel")) {
-                        return Arrays.asList("273302005|Barthel index|", "445313000|Activities of daily living score|");
-                    } else if (lower.contains("fim")) {
-                        return Arrays.asList("445713009|Functional independence measure|", "445313000|Activities of daily living score|");
-                    } else if (lower.contains("transfer")) {
-                        return Arrays.asList("284550007|Ability to transfer|", "301438001|Transfer independence|");
-                    } else if (lower.contains("mobil")) {
-                        return Arrays.asList("364666007|Ability to mobilize|", "228869008|Walking ability|");
-                    } else if (lower.contains("fac")) {
-                        return Arrays.asList("52052004|Functional ambulation|", "228869008|Walking ability|");
-                    } else if (lower.contains("independent") || term.equals("10")) {
-                        return Arrays.asList("371153006|Independent|", "165245005|Functionally independent|");
-                    } else if (lower.contains("dependent") || term.equals("0")) {
-                        return Arrays.asList("371152001|Dependent|", "371154000|Totally dependent|");
-                    } else if (term.equals("5")) {
-                        return Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
-                    } else {
-                        // Generic fallback
-                        return Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
-                    }
-                });
-            
-            return mock;
-        }
-        
-        @Bean
-        public TerminologyService terminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
-            // Use real TerminologyService with mocked RDFService
-            return new TerminologyService(rdfService, embeddingsClient);
-        }
-        
-        // ChatModel will be autoconfigured by Spring AI Ollama starter
-        // No manual bean creation needed - uses same mechanism as deployment
-        
-        @Bean
-        public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
-                                                  @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Uses REAL Ollama ChatModel from Spring Boot autoconfiguration
-            System.out.println("[TEST] Creating LLMTextGenerator");
-            System.out.println("[TEST] ChatModel available: " + (chatModel != null));
-            if (chatModel != null) {
-                System.out.println("[TEST] ChatModel class: " + chatModel.getClass().getName());
-            }
-            System.out.println("[TEST] LLM enabled: " + llmEnabled);
-            return new LLMTextGenerator(chatModel, llmEnabled);
-        }
-        
-        @Bean
-        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
-            return new DescriptionGenerator(llmTextGenerator);
-        }
-
-        @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyService terminologyService, DescriptionGenerator descriptionGenerator) {
-            return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
-        }
+        // NO MOCKS - Use real services like deployment
+        // All services are auto-discovered via @ComponentScan
+        // - Real RDFService connects to Python service (Snowstorm)
+        // - Real Ollama via Spring AI autoconfiguration  
+        // - Real LLMTextGenerator
+        // - Real TerminologyService
+        // - Real DescriptionGenerator
+        // - Real MappingService
+        // - Real OllamaLauncherConfig starts Ollama automatically
     }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    @org.junit.jupiter.api.BeforeAll
-    static void startOllama() throws Exception {
-        // Start Ollama the same way as deployment (OllamaLauncherConfig)
-        System.out.println("\n=== Starting Ollama for Test ===");
-        
-        try {
-            // Check if Docker is available
-            ProcessBuilder dockerCheck = new ProcessBuilder("docker", "version");
-            Process process = dockerCheck.start();
-            int exitCode = process.waitFor();
-            
-            if (exitCode != 0) {
-                System.out.println("Docker not available. Ollama will not be auto-launched.");
-                System.out.println("Please start Ollama manually: ollama serve");
-                return;
-            }
-            
-            System.out.println("Docker is available. Starting Ollama container...");
-            
-            // Start Ollama container
-            ProcessBuilder startOllama = new ProcessBuilder(
-                "docker", "run", "-d",
-                "--name", "ollama-test",
-                "-p", "11434:11434",
-                "-v", "ollama-models:/root/.ollama",
-                "ollama/ollama:latest"
-            );
-            Process startProcess = startOllama.start();
-            int startExitCode = startProcess.waitFor();
-            
-            if (startExitCode != 0) {
-                // Container might already exist, try to start it
-                System.out.println("Container might already exist, trying to start existing container...");
-                ProcessBuilder startExisting = new ProcessBuilder("docker", "start", "ollama-test");
-                startExisting.start().waitFor();
-            }
-            
-            // Wait for Ollama to be ready
-            System.out.println("Waiting for Ollama to be ready...");
-            int maxWait = 60;
-            boolean ready = false;
-            for (int i = 0; i < maxWait; i++) {
-                try {
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) 
-                        new java.net.URL("http://localhost:11434/").openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(1000);
-                    conn.setReadTimeout(1000);
-                    if (conn.getResponseCode() == 200) {
-                        ready = true;
-                        System.out.println("✓ Ollama is ready at http://localhost:11434/");
-                        break;
-                    }
-                } catch (Exception e) {
-                    // Not ready yet
-                }
-                Thread.sleep(1000);
-            }
-            
-            if (!ready) {
-                System.out.println("WARNING: Ollama did not become ready within 60 seconds");
-                return;
-            }
-            
-            // Pull llama2 model if needed
-            System.out.println("Ensuring llama2 model is available...");
-            ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "llama2"
-            );
-            pullModel.inheritIO();
-            Process pullProcess = pullModel.start();
-            int pullExitCode = pullProcess.waitFor();
-            
-            if (pullExitCode == 0) {
-                System.out.println("✓ llama2 model ready");
-            } else {
-                System.out.println("WARNING: Failed to pull llama2 model");
-            }
-            
-            System.out.println("=== Ollama Setup Complete ===\n");
-            
-        } catch (Exception e) {
-            System.err.println("Error starting Ollama: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
+    // NO @BeforeAll needed - OllamaLauncherConfig handles Ollama startup automatically
+    // Just like in deployment
 
     @Autowired
     private MappingService mappingService;

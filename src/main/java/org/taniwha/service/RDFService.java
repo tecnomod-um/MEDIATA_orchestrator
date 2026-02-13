@@ -146,7 +146,8 @@ public class RDFService {
     public List<OntologyTermDTO> getSNOMEDTermSuggestions(String query) {
         String url = serviceUrl + "/term/" + query;
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
-        List<OntologyTermDTO> suggestions = new ArrayList<>();
+        // Explicitly create ArrayList to ensure type safety
+        ArrayList<OntologyTermDTO> suggestions = new ArrayList<>();
         try {
             ResponseEntity<List<String>> response = restTemplate.exchange(
                     url,
@@ -164,12 +165,14 @@ public class RDFService {
                         String[] parts = term.split("\\|", 2);
                         String code = parts[0].trim();
                         String label = (parts.length > 1) ? parts[1].trim() : term;
-                        suggestions.add(new OntologyTermDTO(
+                        // Explicitly create each DTO to ensure proper type
+                        OntologyTermDTO dto = new OntologyTermDTO(
                                 String.valueOf(idCounter++),
                                 label,
                                 "",
                                 "http://snomed.info/sct/" + code
-                        ));
+                        );
+                        suggestions.add(dto);
                     }
                 }
             } else {
@@ -178,6 +181,7 @@ public class RDFService {
         } catch (RestClientException e) {
             logger.error("Error fetching SNOMED terms from python service: " + url, e);
         }
+        // Return the explicitly typed ArrayList
         return suggestions;
     }
 /*
