@@ -98,8 +98,11 @@ public class TerminologyService {
      */
     private String lookupSingleTerminology(String term, String context) {
         try {
+            // Pad short terms (Snowstorm requires min 3 characters)
+            String searchTerm = padShortTerm(term, context);
+            
             // Get SNOMED CT suggestions from Snowstorm
-            List<OntologyTermDTO> suggestions = rdfService.getSNOMEDTermSuggestions(term);
+            List<OntologyTermDTO> suggestions = rdfService.getSNOMEDTermSuggestions(searchTerm);
             
             if (suggestions == null || suggestions.isEmpty()) {
                 logger.debug("[TerminologyService] No SNOMED suggestions for: {}", term);
@@ -158,8 +161,11 @@ public class TerminologyService {
         }
 
         try {
+            // Pad short terms (Snowstorm requires min 3 characters)
+            String searchTerm = padShortTerm(term, context);
+            
             // Get SNOMED CT suggestions from Snowstorm via RDFService
-            List<OntologyTermDTO> suggestions = rdfService.getSNOMEDTermSuggestions(term);
+            List<OntologyTermDTO> suggestions = rdfService.getSNOMEDTermSuggestions(searchTerm);
             
             if (suggestions == null || suggestions.isEmpty()) {
                 logger.info("[TerminologyService] No SNOMED suggestions found for term: {}", term);
@@ -207,6 +213,41 @@ public class TerminologyService {
         } catch (Exception e) {
             logger.warn("[TerminologyService] Error generating fallback code: {}", e.getMessage());
             return "";
+        }
+    }
+
+    /**
+     * Pad short terms to meet Snowstorm's minimum search length requirement (3 characters).
+     * For terms less than 3 chars, add context or generic medical terms.
+     */
+    private String padShortTerm(String term, String context) {
+        if (term == null) {
+            return "term";
+        }
+        
+        String trimmed = term.trim();
+        
+        // If term is already 3+ characters, return as-is
+        if (trimmed.length() >= 3) {
+            return trimmed;
+        }
+        
+        // For short terms, add context or generic padding
+        if (context != null && !context.trim().isEmpty()) {
+            // Use context to make it meaningful: "AF medical" or "ID identifier"
+            return trimmed + " " + context.trim();
+        }
+        
+        // Generic medical padding for very short terms
+        switch (trimmed.length()) {
+            case 0:
+                return "term";
+            case 1:
+                return trimmed + " value";  // "A value", "B value"
+            case 2:
+                return trimmed + " term";   // "AF term", "ID term"
+            default:
+                return trimmed;
         }
     }
 
