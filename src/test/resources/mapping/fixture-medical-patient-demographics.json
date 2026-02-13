@@ -1,0 +1,74 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "demo001",
+      "fileName": "hospital_registration.csv",
+      "column": "Date of Birth",
+      "values": ["date", "min:1930-01-01", "max:2020-12-31"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "demo002",
+      "fileName": "clinic_intake.csv",
+      "column": "DOB",
+      "values": ["date", "min:1932-03-15", "max:2020-11-28"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "demo003",
+      "fileName": "hospital_registration.csv",
+      "column": "Patient Gender",
+      "values": ["Male", "Female", "Other"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "demo004",
+      "fileName": "clinic_intake.csv",
+      "column": "Sex",
+      "values": ["M", "F", "O"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "demo005",
+      "fileName": "hospital_registration.csv",
+      "column": "Race/Ethnicity",
+      "values": ["White", "Black or African American", "Asian", "Hispanic or Latino", "Other"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "demo006",
+      "fileName": "clinic_intake.csv",
+      "column": "Ethnicity",
+      "values": ["Caucasian", "African American", "Asian", "Hispanic", "Other"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "demo007",
+      "fileName": "hospital_registration.csv",
+      "column": "Marital Status",
+      "values": ["Single", "Married", "Divorced", "Widowed"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "demo008",
+      "fileName": "clinic_intake.csv",
+      "column": "Marital",
+      "values": ["S", "M", "D", "W"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "demo009",
+      "fileName": "hospital_registration.csv",
+      "column": "Primary Insurance",
+      "values": ["Medicare", "Medicaid", "Private", "Self-Pay", "Other"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "demo010",
+      "fileName": "clinic_intake.csv",
+      "column": "Insurance Type",
+      "values": ["Medicare", "Medicaid", "Commercial", "Uninsured", "Other"],
+      "color": "#4ecdc4"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.ElementFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
@@ -22,7 +23,24 @@ public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
-    private static final int D = 2048;
+    private final EmbeddingsClient embeddingsClient;
+    private final TerminologyService terminologyService;
+    private final DescriptionGenerator descriptionGenerator;
+
+    private static final java.util.concurrent.atomic.AtomicInteger embeddingLogCount = 
+        new java.util.concurrent.atomic.AtomicInteger(0);
+
+    public MappingService(EmbeddingsClient embeddingsClient, 
+                         TerminologyService terminologyService,
+                         DescriptionGenerator descriptionGenerator) {
+        this.embeddingsClient = embeddingsClient;
+        this.terminologyService = terminologyService;
+        this.descriptionGenerator = descriptionGenerator;
+        logger.info("[MappingService] Initialized with EmbeddingsClient: {}, TerminologyService: {}, DescriptionGenerator: {}", 
+            embeddingsClient != null ? "present" : "NULL!",
+            terminologyService != null ? "present" : "NULL!",
+            descriptionGenerator != null ? "present" : "NULL!");
+    }
 
     private static final int MAX_VALUES = 80;
     private static final int MAX_ENUM = 120;
@@ -62,10 +80,14 @@ public class MappingService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
+        // Reset embedding log counter for this request
+        embeddingLogCount.set(0);
+        
         List<ElementFileDTO> cols = (req == null || req.getElementFiles() == null)
                 ? Collections.emptyList()
                 : req.getElementFiles();
 
+        logger.info("[TRACE] suggestMappings called with {} element files", cols.size());
         if (cols.isEmpty()) return Collections.emptyList();
 
         // --- Prepass: collect column-name tokens to learn request-specific noise ---
@@ -93,48 +115,40 @@ public class MappingService {
             ColStats stats = parseStatsFromValues(rawValues);
 
             CanonicalName can = canonicalConceptName(colName, learnedNoise);
-
-            float[] nameVec = embedName(can.concept);
-            float[] valueVec = embedValues(rawValues);
-
-            // Adaptive weighting:
-            // - If name is short/generic, lean more on values.
-            // - If column looks numeric/date, name tends to be more reliable again.
-            double wName = DEFAULT_W_SRC_NAME;
-            double wVals = DEFAULT_W_SRC_VALUES;
-
-            boolean nameGeneric = can.genericness >= 0.55 || can.tokenCount <= 1 || can.concept.length() <= 4;
-            boolean hasStrongValues = looksLikeInformativeCategorical(stats, rawValues);
-
-            if (nameGeneric && hasStrongValues) {
-                wName = 0.45;
-                wVals = 0.55;
-            } else if (nameGeneric) {
-                wName = 0.55;
-                wVals = 0.45;
+            
+            // Log first 10 canonical concepts to see what's happening
+            if (all.size() < 10) {
+                logger.info("[TRACE] Column '{}' -> canonical concept '{}'", colName, can.concept);
             }
 
-            // If numeric/date markers exist, do not over-weight values list (because it contains "min/max" markers)
-            if (stats.hasIntegerMarker || stats.hasDoubleMarker || stats.hasDateMarker) {
-                wName = Math.max(wName, 0.65);
-                wVals = 1.0 - wName;
+            // LLM Approach: Create a single rich embedding with column name + values
+            // This allows the LLM to understand context like:
+            // "Type: Ischemic, Hemorrhagic" matching with "Etiology: Hem, HEM, Isch"
+            float[] combined = embedColumnWithValues(can.concept, rawValues, stats);
+            
+            if (combined == null || combined.length == 0) {
+                logger.error("[MappingService] Failed to embed column '{}' - got null/empty embedding!", colName);
+                continue;
             }
-
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
-                combined[k] = (float) (wName * nameVec[k] + wVals * valueVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
 
             all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, stats));
         }
         if (all.isEmpty()) return Collections.emptyList();
 
         List<SchemaFieldRef> schemaFields = parseSchemaFields(req == null ? null : req.getSchema());
-        if (!schemaFields.isEmpty()) return suggestWithSchema(schemaFields, all);
-
-        logger.info("[MappingService] No usable schema fields provided. Using schema-less suggestion mode.");
-        return suggestWithoutSchema(all);
+        
+        List<Map<String, SuggestedMappingDTO>> results;
+        if (!schemaFields.isEmpty()) {
+            results = suggestWithSchema(schemaFields, all);
+        } else {
+            logger.info("[MappingService] No usable schema fields provided. Using schema-less suggestion mode.");
+            results = suggestWithoutSchema(all);
+        }
+        
+        // Post-process: Batch lookup terminology and populate descriptions for all mappings
+        populateTerminologyAndDescriptionsBatch(results);
+        
+        return results;
     }
 
     // ============================================================
@@ -213,7 +227,9 @@ public class MappingService {
     // ============================================================
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<ColRef> all) {
+        logger.info("[TRACE] suggestWithoutSchema: clustering {} columns", all.size());
         List<ColCluster> clusters = clusterColumns(all);
+        logger.info("[TRACE] suggestWithoutSchema: formed {} clusters", clusters.size());
 
         clusters.sort((a, b) -> {
             int as = a.cols.size(), bs = b.cols.size();
@@ -221,7 +237,10 @@ public class MappingService {
             return a.representativeConcept.compareToIgnoreCase(b.representativeConcept);
         });
 
-        if (clusters.size() > MAX_SCHEMALESS_TARGETS) clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
+        if (clusters.size() > MAX_SCHEMALESS_TARGETS) {
+            logger.info("[TRACE] suggestWithoutSchema: truncating from {} to {} clusters", clusters.size(), MAX_SCHEMALESS_TARGETS);
+            clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
+        }
 
         Set<String> usedUnionKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
@@ -241,6 +260,9 @@ public class MappingService {
             String detectedType = detectTypeFromSourcesOrSchema(picked, "");
 
             String unionKey = makeUnique(concept, usedUnionKeys);
+            
+            logger.info("[TRACE] Cluster {}/{}: key='{}', representative='{}', {} cols, {} picked", 
+                out.size() + 1, clusters.size(), unionKey, cl.representativeConcept, members.size(), picked.size());
 
             SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
 
@@ -421,8 +443,11 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(String.valueOf(canonCat));
-            vd.setTerminology("");
-            vd.setDescription("Ordinal crosswalk using non-overlapping full-coverage integer intervals; canonical scale is the one with fewer categories.");
+            
+            // Add terminology and description for ordinal crosswalk value
+            populateValueTerminologyAndDescription(vd, String.valueOf(canonCat), 
+                unionKey, getAllValuesForContext(sources));
+            
             vd.setMapping(refs);
             out.add(vd);
         }
@@ -696,12 +721,28 @@ public class MappingService {
         for (Map.Entry<String, List<SuggestedRefDTO>> x : entries) {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(x.getKey());
-            vd.setTerminology("");
-            vd.setDescription("Closed-domain categorical harmonization across files (aliases merged).");
+            
+            // Add terminology and description for the value
+            populateValueTerminologyAndDescription(vd, x.getKey(), unionKey, getAllValuesForContext(sources));
+            
             vd.setMapping(x.getValue());
             out.add(vd);
         }
         return out;
+    }
+    
+    private List<String> getAllValuesForContext(List<ColRef> sources) {
+        List<String> allValues = new ArrayList<>();
+        for (ColRef src : sources) {
+            if (src.rawValues != null) {
+                for (String v : src.rawValues) {
+                    if (v != null && !v.trim().isEmpty()) {
+                        allValues.add(v.trim());
+                    }
+                }
+            }
+        }
+        return allValues;
     }
 
     private boolean joinsAcrossAtLeastTwoFiles(Map<String, List<SuggestedRefDTO>> canonToRefs) {
@@ -789,11 +830,198 @@ public class MappingService {
         mapping.setFileName(fileName);
 
         mapping.setNodeId("");
-        mapping.setTerminology("");
-        mapping.setDescription("");
+        
+        // Add terminology and description for the mapping
+        String representativeName = pickedCols.isEmpty() ? "" : pickedCols.get(0).concept;
+        populateMappingTerminologyAndDescription(mapping, representativeName, pickedCols);
 
         mapping.setColumns(extractSourceColumnNames(pickedCols));
         return mapping;
+    }
+    
+    private void populateMappingTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<ColRef> cols) {
+        // Collect sample values from columns for context
+        List<String> sampleValues = new java.util.ArrayList<>();
+        for (ColRef col : cols) {
+            if (col.rawValues != null && !col.rawValues.isEmpty()) {
+                sampleValues.addAll(col.rawValues.subList(0, Math.min(5, col.rawValues.size())));
+            }
+        }
+        
+        // Use TerminologyService to select the best SNOMED CT terminology
+        String terminology = terminologyService.selectBestTerminology(conceptName, null);
+        mapping.setTerminology(terminology);
+        
+        // Use DescriptionGenerator to create human-readable description (using terminology context)
+        String description = descriptionGenerator.generateColumnDescription(conceptName, terminology, sampleValues);
+        mapping.setDescription(description);
+    }
+
+    
+    /**
+     * Batch process all terminology lookups and description generation for all mappings.
+     * This collects all terms (columns + values), sends parallel requests to Snowstorm,
+     * waits for all to complete, then uses LLM to select best terms and generate descriptions.
+     */
+    private void populateTerminologyAndDescriptionsBatch(List<Map<String, SuggestedMappingDTO>> allMappings) {
+        if (allMappings == null || allMappings.isEmpty()) {
+            return;
+        }
+        
+        logger.info("[MappingService] Starting batch terminology and description population");
+        
+        // Step 1: Collect all terms that need terminology lookup
+        List<TerminologyService.TerminologyRequest> requests = new ArrayList<>();
+        Set<String> processedTerms = new HashSet<>();
+        
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                
+                // Collect column-level terms
+                if (columnKey != null && !columnKey.isEmpty() && processedTerms.add(columnKey)) {
+                    requests.add(new TerminologyService.TerminologyRequest(columnKey, null));
+                }
+                
+                // Collect value-level terms
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group.getValues() != null) {
+                            for (SuggestedValueDTO value : group.getValues()) {
+                                String valueName = value.getName();
+                                if (valueName != null && !valueName.isEmpty()) {
+                                    String valueKey = columnKey + "|" + valueName;
+                                    if (processedTerms.add(valueKey)) {
+                                        requests.add(new TerminologyService.TerminologyRequest(valueName, columnKey));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("[MappingService] Collected {} unique terms for terminology lookup", requests.size());
+        
+        // Step 2: Batch lookup all terminologies in parallel
+        Map<String, String> terminologyResults = terminologyService.batchLookupTerminology(requests);
+        
+        logger.info("[MappingService] Batch lookup completed, got {} results", terminologyResults.size());
+        
+        // Step 3: Populate all terminology and description fields
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                
+                // Populate column-level terminology and description
+                // Column keys don't have context, so use just the key with empty context
+                String columnLookupKey = columnKey + "|";
+                String columnTerminology = terminologyResults.getOrDefault(columnLookupKey, "");
+                mapping.setTerminology(columnTerminology);
+                
+                List<String> sampleValues = extractSampleValuesFromMapping(mapping);
+                String columnDescription = descriptionGenerator.generateColumnDescription(
+                    columnKey, columnTerminology, sampleValues);
+                mapping.setDescription(columnDescription);
+                
+                // Populate value-level terminology and descriptions
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group.getValues() != null) {
+                            for (SuggestedValueDTO value : group.getValues()) {
+                                String valueName = value.getName();
+                                if (valueName != null && !valueName.isEmpty()) {
+                                    // Use the same key format as when the request was created: valueName|columnContext
+                                    String valueLookupKey = valueName + "|" + columnKey;
+                                    String valueTerminology = terminologyResults.getOrDefault(valueLookupKey, "");
+                                    value.setTerminology(valueTerminology);
+                                    
+                                    // Extract min/max if available from value context
+                                    String min = extractMinFromValue(value);
+                                    String max = extractMaxFromValue(value);
+                                    
+                                    String valueDescription = descriptionGenerator.generateValueDescription(
+                                        columnKey, valueName, min, max);
+                                    value.setDescription(valueDescription);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        logger.info("[MappingService] Batch terminology and description population completed");
+    }
+    
+    private List<String> extractSampleValuesFromMapping(SuggestedMappingDTO mapping) {
+        List<String> values = new ArrayList<>();
+        if (mapping.getGroups() != null) {
+            for (SuggestedGroupDTO group : mapping.getGroups()) {
+                if (group.getValues() != null) {
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        if (value.getName() != null && !values.contains(value.getName())) {
+                            values.add(value.getName());
+                            if (values.size() >= 10) break; // Limit sample size
+                        }
+                    }
+                }
+                if (values.size() >= 10) break;
+            }
+        }
+        return values;
+    }
+    
+    /**
+     * Extract minimum value from SuggestedValueDTO mapping if it contains range information.
+     */
+    private String extractMinFromValue(SuggestedValueDTO value) {
+        if (value.getMapping() != null) {
+            for (SuggestedRefDTO mapped : value.getMapping()) {
+                // Look for "min:X" pattern in values
+                Object val = mapped.getValue();
+                if (val != null && val instanceof String) {
+                    String strVal = (String) val;
+                    if (strVal.startsWith("min:")) {
+                        return strVal.substring(4);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Extract maximum value from SuggestedValueDTO mapping if it contains range information.
+     */
+    private String extractMaxFromValue(SuggestedValueDTO value) {
+        if (value.getMapping() != null) {
+            for (SuggestedRefDTO mapped : value.getMapping()) {
+                // Look for "max:X" pattern in values  
+                Object val = mapped.getValue();
+                if (val != null && val instanceof String) {
+                    String strVal = (String) val;
+                    if (strVal.startsWith("max:")) {
+                        return strVal.substring(4);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    
+    // OLD METHODS - Now unused, kept for backwards compatibility
+    private void populateTerminologyAndDescription(SuggestedMappingDTO mapping, String conceptName, List<String> sourceColumnNames) {
+        // This method is now bypassed by batch processing
+        // Keeping empty to avoid breaking references
+    }
+    
+    private void populateValueTerminologyAndDescription(SuggestedValueDTO value, String valueName, String columnContext, List<String> allValues) {
+        // This method is now bypassed by batch processing  
+        // Keeping empty to avoid breaking references
     }
 
     private List<String> extractSourceColumnNames(List<ColRef> cols) {
@@ -809,8 +1037,10 @@ public class MappingService {
     private List<SuggestedValueDTO> buildRangeValue(String unionName, String type, List<ColRef> sources) {
         SuggestedValueDTO v = new SuggestedValueDTO();
         v.setName(type);
-        v.setTerminology("");
-        v.setDescription(rangeDescriptionFromSources(type, sources));
+        
+        // Add terminology and description for range values
+        populateValueTerminologyAndDescription(v, type, unionName, getAllValuesForContext(sources));
+        
         v.setMapping(new ArrayList<>());
 
         for (ColRef src : sources) {
@@ -895,8 +1125,11 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(e.getKey());
-            vd.setTerminology("");
-            vd.setDescription("");
+            
+            // Add terminology and description for enum value
+            populateValueTerminologyAndDescription(vd, e.getKey(), 
+                field.name, getAllValuesForContext(sources));
+            
             vd.setMapping(e.getValue());
             out.add(vd);
         }
@@ -961,8 +1194,10 @@ public class MappingService {
 
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(rep);
-            vd.setTerminology("");
-            vd.setDescription("");
+            
+            // Add terminology and description for clustered value
+            populateValueTerminologyAndDescription(vd, rep, unionName, getAllValuesForContext(sources));
+            
             vd.setMapping(new ArrayList<>(c.refs));
             out.add(vd);
         }
@@ -1112,18 +1347,52 @@ public class MappingService {
             String type = d.getType();
             List<String> enumVals = d.getEnumValues();
 
-            float[] nameVec = embedName(fieldName);
-            float[] enumVec = embedEnum(enumVals, type);
-
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
-                combined[k] = (float) (W_TGT_NAME * nameVec[k] + W_TGT_ENUM * enumVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
+            // Use rich combined embedding for schema fields too
+            float[] combined = embedSchemaField(fieldName, type, enumVals);
 
             out.add(new SchemaFieldRef(fieldName, type, enumVals, combined));
         }
         return out;
+    }
+
+    /**
+     * Create rich embedding for schema field with name, type, and enum values
+     */
+    private float[] embedSchemaField(String fieldName, String type, List<String> enumVals) {
+        StringBuilder prompt = new StringBuilder();
+        
+        if (fieldName != null && !fieldName.trim().isEmpty()) {
+            prompt.append(fieldName);
+        }
+        
+        if (type != null && !type.trim().isEmpty()) {
+            if (prompt.length() > 0) prompt.append(" (").append(type).append(")");
+            else prompt.append(type);
+        }
+        
+        if (enumVals != null && !enumVals.isEmpty()) {
+            StringBuilder valueStr = new StringBuilder();
+            int count = 0;
+            
+            for (String val : enumVals) {
+                if (count >= MAX_VALUES_FOR_EMBEDDING) break;
+                if (val == null) continue;
+                
+                String s = NormalizationUtil.normalizeValue(val);
+                if (s.isEmpty()) { count++; continue; }
+                
+                if (valueStr.length() > 0) valueStr.append(", ");
+                valueStr.append(s);
+                count++;
+            }
+            
+            if (valueStr.length() > 0) {
+                if (prompt.length() > 0) prompt.append(": ");
+                prompt.append(valueStr);
+            }
+        }
+        
+        return embeddingsClient.embed(prompt.toString());
     }
 
     // ============================================================
@@ -1148,6 +1417,8 @@ public class MappingService {
     // ============================================================
 
     private List<ColCluster> clusterColumns(List<ColRef> all) {
+        logger.info("[TRACE] clusterColumns: input {} columns", all.size());
+        
         Map<String, ColCluster> byConcept = new LinkedHashMap<>();
         for (ColRef c : all) {
             String key = sanitizeUnionName(StringUtil.safe(c.concept).trim().toLowerCase(Locale.ROOT));
@@ -1159,11 +1430,43 @@ public class MappingService {
             }
             cl.add(c);
         }
+        
+        logger.info("[TRACE] clusterColumns: formed {} initial concept-based clusters", byConcept.size());
+        if (byConcept.size() <= 5) {
+            logger.info("[TRACE] clusterColumns: initial cluster keys: {}", byConcept.keySet());
+        }
 
         List<ColCluster> clusters = new ArrayList<>(byConcept.values());
+        
+        // Log first 3 cluster centroids to inspect embedding quality
+        for (int i = 0; i < Math.min(3, clusters.size()); i++) {
+            ColCluster cl = clusters.get(i);
+            float[] centroid = cl.centroid;
+            float magnitude = 0;
+            for (float v : centroid) magnitude += v * v;
+            magnitude = (float) Math.sqrt(magnitude);
+            
+            logger.info("[TRACE-CENTROID] Cluster {} ({}): centroid[0..5]=[{}, {}, {}, {}, {}, {}], magnitude={}, {} cols",
+                i + 1,
+                cl.representativeConcept != null ? cl.representativeConcept : "?",
+                centroid.length > 0 ? String.format("%.4f", centroid[0]) : "?",
+                centroid.length > 1 ? String.format("%.4f", centroid[1]) : "?",
+                centroid.length > 2 ? String.format("%.4f", centroid[2]) : "?",
+                centroid.length > 3 ? String.format("%.4f", centroid[3]) : "?",
+                centroid.length > 4 ? String.format("%.4f", centroid[4]) : "?",
+                centroid.length > 5 ? String.format("%.4f", centroid[5]) : "?",
+                String.format("%.4f", magnitude),
+                cl.cols.size());
+        }
 
         // Step 2: fuzzy merge across those pre-clusters
         List<ColCluster> merged = new ArrayList<>();
+        int mergeCount = 0;
+        double maxSim = -1;
+        double minSim = 1;
+        double sumSim = 0;
+        int simCount = 0;
+        
         for (ColCluster col : clusters) {
             ColCluster best = null;
             double bestSim = -1;
@@ -1171,14 +1474,34 @@ public class MappingService {
             for (ColCluster cl : merged) {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
                 if (sim > bestSim) { bestSim = sim; best = cl; }
+                
+                // Track similarity statistics
+                if (sim > maxSim) maxSim = sim;
+                if (sim < minSim) minSim = sim;
+                sumSim += sim;
+                simCount++;
             }
 
             if (best != null && bestSim >= THRESH_COL_CLUSTER) {
                 for (ColRef r : col.cols) best.add(r);
+                mergeCount++;
+                
+                // Log first few merges to see what's happening
+                if (mergeCount <= 5) {
+                    logger.info("[TRACE-MERGE] Merging cluster {} (concept='{}') into existing cluster (similarity={})",
+                        mergeCount, col.representativeConcept, String.format("%.4f", bestSim));
+                }
             } else {
                 merged.add(col);
             }
         }
+        
+        double avgSim = simCount > 0 ? sumSim / simCount : 0;
+        logger.info("[TRACE] clusterColumns: merged {} clusters (threshold={}), final count: {}", 
+            mergeCount, THRESH_COL_CLUSTER, merged.size());
+        logger.info("[TRACE] clusterColumns: similarity stats - min={}, max={}, avg={}, comparisons={}",
+            String.format("%.4f", minSim), String.format("%.4f", maxSim), 
+            String.format("%.4f", avgSim), simCount);
 
         for (ColCluster c : merged) {
             c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
@@ -1423,29 +1746,90 @@ public class MappingService {
     }
 
     // ============================================================
-    // Embeddings
+    // Embeddings (using LLM via EmbeddingsClient)
     // ============================================================
+    
+    private static final int MAX_VALUES_FOR_EMBEDDING = 15;
+
+    /**
+     * Create a single rich embedding that combines column name with its values.
+     * This allows the LLM to understand semantic relationships like:
+     * - "Type: Ischemic, Hemorrhagic" matching "Etiology (Isch/Hem): Hem, HEM, Isch"
+     * - "Bathing: integer, min:1, max:7" matching "BathingBART1: integer, min:0, max:5"
+     */
+    private float[] embedColumnWithValues(String columnName, List<String> values, ColStats stats) {
+        StringBuilder prompt = new StringBuilder();
+        
+        // Add column name
+        if (columnName != null && !columnName.trim().isEmpty()) {
+            prompt.append(columnName);
+        }
+        
+        // Add values if informative
+        if (values != null && !values.isEmpty()) {
+            StringBuilder valueStr = new StringBuilder();
+            int count = 0;
+            
+            for (String raw : values) {
+                if (count >= MAX_VALUES_FOR_EMBEDDING) break;
+                if (raw == null) continue;
+                
+                String s = NormalizationUtil.normalizeValue(raw);
+                if (s.isEmpty()) { count++; continue; }
+                
+                if (valueStr.length() > 0) valueStr.append(", ");
+                valueStr.append(s);
+                count++;
+            }
+            
+            if (valueStr.length() > 0) {
+                if (prompt.length() > 0) prompt.append(": ");
+                prompt.append(valueStr);
+            }
+        }
+        
+        // Embed the rich combined representation
+        String promptStr = prompt.toString();
+        float[] result = embeddingsClient.embed(promptStr);
+        
+        // Log first 3 embeddings to inspect vector quality
+        int loggedSoFar = embeddingLogCount.getAndIncrement();
+        if (loggedSoFar < 3) {
+            float magnitude = 0;
+            for (float v : result) magnitude += v * v;
+            magnitude = (float) Math.sqrt(magnitude);
+            
+            logger.info("[TRACE-EMBED] Column '{}' -> vector[0..5]=[{}, {}, {}, {}, {}, {}], magnitude={}, dim={}",
+                promptStr.length() > 40 ? promptStr.substring(0, 40) + "..." : promptStr,
+                result.length > 0 ? String.format("%.4f", result[0]) : "?",
+                result.length > 1 ? String.format("%.4f", result[1]) : "?",
+                result.length > 2 ? String.format("%.4f", result[2]) : "?",
+                result.length > 3 ? String.format("%.4f", result[3]) : "?",
+                result.length > 4 ? String.format("%.4f", result[4]) : "?",
+                result.length > 5 ? String.format("%.4f", result[5]) : "?",
+                String.format("%.4f", magnitude),
+                result.length);
+        }
+        
+        return result;
+    }
 
     private float[] embedName(String name) {
-        float[] v = new float[D];
-        String s = NormalizationUtil.normalize(name);
-
-        addWordTokens(v, s, 1.6f);
-        addTokenBigrams(v, s, 0.9f);
-
-        addCharNgrams(v, s, 2, 0.45f);
-        addCharNgrams(v, s, 3, 1.05f);
-        addCharNgrams(v, s, 4, 1.00f);
-        addCharNgrams(v, s, 5, 0.80f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        if (name == null || name.trim().isEmpty()) {
+            return embeddingsClient.embed("");
+        }
+        // Just embed the name directly - combination with values happens at higher level
+        return embeddingsClient.embed(name);
     }
 
     private float[] embedValues(List<String> values) {
-        float[] v = new float[D];
-        if (values == null) return v;
+        if (values == null || values.isEmpty()) {
+            return embeddingsClient.embed("");
+        }
 
+        // Concatenate values as a list so LLM can understand relationships
+        // e.g., "Ischemic, Hemorrhagic" or "Hem, HEM, Isch"
+        StringBuilder sb = new StringBuilder();
         int count = 0;
         for (String raw : values) {
             if (count >= MAX_VALUES) break;
@@ -1454,20 +1838,20 @@ public class MappingService {
             String s = NormalizationUtil.normalizeValue(raw);
             if (s.isEmpty()) { count++; continue; }
 
-            addWordTokens(v, s, 1.0f);
-            addCharNgrams(v, s, 4, 0.55f);
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(s);
             count++;
         }
 
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        // Embed the concatenated list so relationships are preserved
+        return embeddingsClient.embed(sb.toString());
     }
 
     private float[] embedEnum(List<String> enumVals, String typeHint) {
-        float[] v = new float[D];
-
+        StringBuilder sb = new StringBuilder();
+        
         if (typeHint != null && !typeHint.trim().isEmpty()) {
-            addWordTokens(v, NormalizationUtil.normalize(typeHint), 0.9f);
+            sb.append(typeHint).append(": ");
         }
 
         if (enumVals != null) {
@@ -1479,74 +1863,26 @@ public class MappingService {
                 String s = NormalizationUtil.normalizeValue(raw);
                 if (s.isEmpty()) { count++; continue; }
 
-                addWordTokens(v, s, 1.0f);
-                addCharNgrams(v, s, 4, 0.4f);
+                if (count > 0) sb.append(", ");
+                sb.append(s);
                 count++;
             }
         }
 
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
+        return embeddingsClient.embed(sb.toString());
     }
 
     private float[] embedSingleValue(String raw) {
-        float[] v = new float[D];
+        if (raw == null) {
+            return embeddingsClient.embed("");
+        }
         String s = NormalizationUtil.normalizeValue(raw);
-        if (s.isEmpty()) return v;
-
-        addWordTokens(v, s, 1.0f);
-        addCharNgrams(v, s, 2, 0.30f);
-        addCharNgrams(v, s, 3, 0.70f);
-        addCharNgrams(v, s, 4, 0.60f);
-        addCharNgrams(v, s, 5, 0.40f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private void addWordTokens(float[] v, String s, float weight) {
-        if (s == null) return;
-
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        for (String t : parts) {
-            if (t == null) continue;
-            String x = t.trim();
-            if (x.length() < 2) continue;
-
-            int idx = (int) (NormalizationUtil.fnv1a32(x) & (D - 1));
-            v[idx] += weight;
+        if (s.isEmpty()) {
+            return embeddingsClient.embed("");
         }
-    }
 
-    private void addTokenBigrams(float[] v, String s, float weight) {
-        if (s == null) return;
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        List<String> toks = new ArrayList<>();
-        for (String p : parts) {
-            if (p == null) continue;
-            String x = p.trim();
-            if (x.length() < 2) continue;
-            toks.add(x);
-        }
-        for (int i = 0; i + 1 < toks.size(); i++) {
-            String bg = toks.get(i) + "_" + toks.get(i + 1);
-            int idx = (int) (NormalizationUtil.fnv1a32(bg) & (D - 1));
-            v[idx] += weight;
-        }
-    }
-
-    private void addCharNgrams(float[] v, String s, int n, float weight) {
-        if (s == null) return;
-        if (s.length() < n) return;
-        for (int i = 0; i <= s.length() - n; i++) {
-            String g = s.substring(i, i + n);
-            int idx = (int) (NormalizationUtil.fnv1a32(g) & (D - 1));
-            v[idx] += weight;
-        }
+        // Use LLM embeddings for better semantic understanding
+        return embeddingsClient.embed(s);
     }
 
     // ============================================================

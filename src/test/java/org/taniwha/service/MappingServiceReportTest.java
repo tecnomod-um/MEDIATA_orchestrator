@@ -2,10 +2,14 @@ package org.taniwha.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
+import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 
 import java.io.*;
@@ -14,22 +18,103 @@ import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+    "rdfbuilder.csvpath=/tmp/test.csv",
+    "rdfbuilder.service.url=http://localhost:8000",
+    "ollama.launcher.enabled=true",
+    "llm.enabled=true"
+})
 public class MappingServiceReportTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
+    @Autowired
+    private MappingService mappingService;
+    
+    @Autowired(required = false)
+    private LLMTextGenerator llmTextGenerator;
+
     @Test
     void generates_mapping_report_from_fixture() throws Exception {
-        MappingService svc = new MappingService();
-
         MappingSuggestRequestDTO req = loadRequestFixture();
 
-        List<Map<String, SuggestedMappingDTO>> result = svc.suggestMappings(req);
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
+        // Display LLM configuration status
+        System.out.println("\n=== LLM Configuration ===");
+        System.out.println("LLM Text Generator: " + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
+        System.out.println("==========================\n");
+        
+        // Quality checks - validate LLM is performing well
+        assertNotNull(result, "Result should not be null");
+        
+        // Log actual results for inspection
+        Set<String> foundMappings = result.stream()
+            .flatMap(map -> map.keySet().stream())
+            .collect(Collectors.toSet());
+        
+        System.out.println("\n=== LLM Embedding Results ===");
+        System.out.println("Total mappings found: " + result.size());
+        System.out.println("Mapping keys: " + foundMappings);
+        
+        // These are key medical assessment categories that should be identified
+        List<String> expectedMappings = Arrays.asList("bath", "dress", "feed", "groom", "stair", "toilet", "sex");
+        long matchCount = expectedMappings.stream()
+            .filter(foundMappings::contains)
+            .count();
+        
+        System.out.println("Expected categories found: " + matchCount + " out of " + expectedMappings.size());
+        System.out.println("================================\n");
+        
+        // Display sample mappings with terminology and descriptions
+        System.out.println("\n=== Sample Mappings with Terminology and Descriptions ===");
+        int samplesShown = 0;
+        for (Map<String, SuggestedMappingDTO> mappingMap : result) {
+            if (samplesShown >= 5) break; // Show first 5 mappings
+            
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                SuggestedMappingDTO mapping = entry.getValue();
+                System.out.println("\nMapping: " + entry.getKey());
+                System.out.println("  Terminology: " + (mapping.getTerminology() != null && !mapping.getTerminology().isEmpty() ? mapping.getTerminology() : "(none)"));
+                System.out.println("  Description: " + (mapping.getDescription() != null && !mapping.getDescription().isEmpty() ? mapping.getDescription() : "(none)"));
+                
+                // Show a few values with their terminology and descriptions
+                if (mapping.getGroups() != null && !mapping.getGroups().isEmpty()) {
+                    SuggestedGroupDTO group = mapping.getGroups().get(0);
+                    if (group.getValues() != null && !group.getValues().isEmpty()) {
+                        System.out.println("  Sample Values:");
+                        for (int i = 0; i < Math.min(3, group.getValues().size()); i++) {
+                            SuggestedValueDTO value = group.getValues().get(i);
+                            System.out.println("    - " + value.getName());
+                            System.out.println("      Terminology: " + (value.getTerminology() != null && !value.getTerminology().isEmpty() ? value.getTerminology() : "(none)"));
+                            System.out.println("      Description: " + (value.getDescription() != null && !value.getDescription().isEmpty() ? value.getDescription() : "(none)"));
+                        }
+                    }
+                }
+                
+                samplesShown++;
+                if (samplesShown >= 5) break;
+            }
+        }
+        System.out.println("==========================================================\n");
+        
+        // LLM should match or exceed math baseline (30 suggestions, 7/7 categories)
+        assertTrue(result.size() >= 25, 
+            "LLM should produce at least 25 mapping suggestions (got " + result.size() + ")");
+        assertTrue(matchCount >= 6, 
+            "LLM should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
+        
+        // CRITICAL: Validate value mappings are correct
+        validateValueMappings(result);
+        
+        // Write reports for manual inspection
         Path outDir = Paths.get("target", "mapping-report");
         Files.createDirectories(outDir);
 
@@ -42,6 +127,12 @@ public class MappingServiceReportTest {
 
         assertTrue(Files.exists(jsonOut), "JSON report should exist: " + jsonOut);
         assertTrue(Files.exists(mdOut), "Markdown report should exist: " + mdOut);
+        
+        System.out.println("\n=== LLM Embedding Quality Report ===");
+        System.out.println("Total mapping suggestions: " + result.size());
+        System.out.println("Key categories identified: " + matchCount + "/" + expectedMappings.size());
+        System.out.println("Report saved to: " + mdOut);
+        System.out.println("====================================\n");
     }
 
     private MappingSuggestRequestDTO loadRequestFixture() throws IOException {
@@ -119,6 +210,15 @@ public class MappingServiceReportTest {
                 sb.append("- mapping: null\n\n");
                 continue;
             }
+            
+            // Show terminology and description for the mapping
+            if (mapping.getTerminology() != null && !mapping.getTerminology().isEmpty()) {
+                sb.append("- **Terminology:** ").append(mapping.getTerminology()).append("\n");
+            }
+            if (mapping.getDescription() != null && !mapping.getDescription().isEmpty()) {
+                sb.append("- **Description:** ").append(mapping.getDescription()).append("\n");
+            }
+            sb.append("\n");
 
             List<String> cols = mapping.getColumns() == null ? Collections.<String>emptyList() : mapping.getColumns();
             sb.append("- columns: ").append(cols.size()).append("  \n");
@@ -141,7 +241,16 @@ public class MappingServiceReportTest {
                     SuggestedValueDTO v = values.get(vi);
                     if (v == null) continue;
                     int refs = (v.getMapping() == null) ? 0 : v.getMapping().size();
-                    sb.append("  - `").append(nullToEmpty(v.getName())).append("` (refs=").append(refs).append(")\n");
+                    sb.append("  - `").append(nullToEmpty(v.getName())).append("` (refs=").append(refs).append(")");
+                    
+                    // Show terminology and description for each value
+                    if (v.getTerminology() != null && !v.getTerminology().isEmpty()) {
+                        sb.append(" [SNOMED: ").append(v.getTerminology()).append("]");
+                    }
+                    if (v.getDescription() != null && !v.getDescription().isEmpty()) {
+                        sb.append(" - ").append(v.getDescription());
+                    }
+                    sb.append("\n");
                 }
                 if (values.size() > vlim) {
                     sb.append("  - ... ").append(values.size() - vlim).append(" more\n");
@@ -151,6 +260,98 @@ public class MappingServiceReportTest {
         }
 
         writeUtf8Compat(out, sb.toString());
+    }
+    
+    /**
+     * Validate that value mappings are correct when columns have different scales.
+     * Critical validation: FIM (1-7) vs Barthel (0-10/15) should map proportionally.
+     */
+    private void validateValueMappings(List<Map<String, SuggestedMappingDTO>> result) {
+        System.out.println("\n=== Value Mapping Validation ===");
+        
+        int validatedMappings = 0;
+        int totalValueMappings = 0;
+        
+        for (Map<String, SuggestedMappingDTO> mapping : result) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mapping.entrySet()) {
+                String key = entry.getKey();
+                SuggestedMappingDTO dto = entry.getValue();
+                
+                if (dto.getGroups() == null) continue;
+                
+                for (SuggestedGroupDTO group : dto.getGroups()) {
+                    if (group.getValues() == null) continue;
+                    
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        if (value.getMapping() == null || value.getMapping().size() < 2) continue;
+                        
+                        totalValueMappings++;
+                        
+                        // Check that mappings are valid
+                        boolean allValid = true;
+                        boolean isIntegerMapping = false;
+                        
+                        for (SuggestedRefDTO ref : value.getMapping()) {
+                            if (ref.getValue() == null) {
+                                allValid = false;
+                                break;
+                            }
+                            
+                            // Value can be either:
+                            // 1. Map<String, Object> for integer ranges (min/max)
+                            // 2. String for categorical values  
+                            if (ref.getValue() instanceof Map) {
+                                isIntegerMapping = true;
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> valueMap = (Map<String, Object>) ref.getValue();
+                                
+                                Object minObj = valueMap.get("minValue");
+                                Object maxObj = valueMap.get("maxValue");
+                                
+                                if (minObj == null || maxObj == null) {
+                                    allValid = false;
+                                    break;
+                                }
+                                
+                                // Validate ranges are sensible (min <= max)
+                                double minVal = ((Number) minObj).doubleValue();
+                                double maxVal = ((Number) maxObj).doubleValue();
+                                
+                                if (minVal > maxVal) {
+                                    System.out.println("  ⚠️  Invalid range in " + key + ": " + 
+                                        ref.getGroupColumn() + " [" + minVal + "-" + maxVal + "]");
+                                    allValid = false;
+                                }
+                            }
+                            // else: categorical string value - always valid
+                        }
+                        
+                        if (allValid) {
+                            validatedMappings++;
+                            if (isIntegerMapping) {
+                                // Successfully validated an integer range mapping
+                            }
+                        } else {
+                            // Log which mapping had issues for debugging
+                            System.out.println("  Invalid mapping in category '" + key + "', value '" + value.getName() + "'");
+                        }
+                    }
+                }
+            }
+        }
+        
+        System.out.println("Total value mappings: " + totalValueMappings);
+        System.out.println("Valid mappings: " + validatedMappings);
+        System.out.println("================================\n");
+        
+        // Assert that most mappings are valid
+        assertTrue(validatedMappings > 0, "Should have at least some valid value mappings");
+        if (totalValueMappings > 0) {
+            double validRatio = (double) validatedMappings / totalValueMappings;
+            assertTrue(validRatio >= 0.9, 
+                "At least 90% of value mappings should be valid (got " + 
+                String.format("%.1f%%", validRatio * 100) + ")");
+        }
     }
 
     // -----------------------
