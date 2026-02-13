@@ -45,45 +45,81 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(classes = MappingServiceReportTest.TestConfig.class)
 @TestPropertySource(locations = "classpath:application-test.properties", properties = {
     "rdfbuilder.csvpath=/tmp/test.csv",
-    "rdfbuilder.service.url=http://localhost:8000",
-    "spring.datasource.enabled=false",
-    "spring.data.mongodb.auto-index-creation=false"
+    "rdfbuilder.service.url=http://localhost:8000"
 })
 public class MappingServiceReportTest {
 
     @Configuration
-    @EnableAutoConfiguration(exclude = {
-        DataSourceAutoConfiguration.class,
-        MongoAutoConfiguration.class
-    })
-    @ComponentScan(basePackages = "org.taniwha", 
-        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, 
-            classes = {org.taniwha.Application.class}))
     static class TestConfig {
-        // NO MOCKS - Use real services like deployment
-        // All services are auto-discovered via @ComponentScan
-        // - Real RDFService connects to Python service (Snowstorm)
-        // - Real Ollama via Spring AI autoconfiguration  
-        // - Real LLMTextGenerator
-        // - Real TerminologyService
-        // - Real DescriptionGenerator
-        // - Real MappingService
-        // - Real OllamaLauncherConfig starts Ollama automatically
+        
+        @Bean
+        public EmbeddingModel embeddingModel() {
+            return new TransformersEmbeddingModel();
+        }
+        
+        @Bean
+        public RDFService rdfService() {
+            return new RDFService();
+        }
+        
+        @Bean
+        public TerminologyService terminologyService(RDFService rdfService, EmbeddingModel embeddingModel) {
+            return new TerminologyService(rdfService, embeddingModel);
+        }
+        
+        @Bean  
+        public ChatModel chatModel() {
+            // Start Ollama container
+            try {
+                ProcessBuilder pb = new ProcessBuilder("docker", "run", "-d", "--name", "ollama-test-" + System.currentTimeMillis(),
+                    "-p", "11434:11434", "ollama/ollama:latest");
+                Process p = pb.start();
+                p.waitFor();
+                
+                // Wait for ready
+                Thread.sleep(5000);
+                
+                // Pull model if needed
+                pb = new ProcessBuilder("docker", "exec", "ollama-test-" + System.currentTimeMillis(), "ollama", "pull", "llama2");
+                p = pb.start();
+                p.waitFor();
+            } catch (Exception e) {
+                System.out.println("Could not start Ollama: " + e.getMessage());
+            }
+            
+            // Create ChatModel
+            OllamaApi ollamaApi = new OllamaApi("http://localhost:11434");
+            return new OllamaChatModel(ollamaApi);
+        }
+        
+        @Bean
+        public LLMTextGenerator llmTextGenerator(ChatModel chatModel, @Value("${llm.enabled:true}") boolean llmEnabled) {
+            return new LLMTextGenerator(chatModel, llmEnabled);
+        }
+        
+        @Bean
+        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
+            return new DescriptionGenerator(llmTextGenerator);
+        }
+        
+        @Bean
+        public MappingService mappingService(EmbeddingModel embeddingModel, TerminologyService terminologyService,
+                                             DescriptionGenerator descriptionGenerator) {
+            return new MappingService(embeddingModel, terminologyService, descriptionGenerator);
+        }
     }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    // NO @BeforeAll needed - OllamaLauncherConfig handles Ollama startup automatically
-    // Just like in deployment
-
     @Autowired
     private MappingService mappingService;
     
-    @Autowired(required = false)
+    @Autowired
     private LLMTextGenerator llmTextGenerator;
 
     @Test
