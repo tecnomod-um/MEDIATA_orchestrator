@@ -875,9 +875,11 @@ public class MappingService {
         Set<String> processedTerms = new HashSet<>();
         
         for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
-            for (SuggestedMappingDTO mapping : mappingMap.values()) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                
                 // Collect column-level terms
-                String columnKey = mappingMap.keySet().iterator().next(); // The mapping key
                 if (columnKey != null && !columnKey.isEmpty() && processedTerms.add(columnKey)) {
                     requests.add(new TerminologyService.TerminologyRequest(columnKey, null));
                 }
