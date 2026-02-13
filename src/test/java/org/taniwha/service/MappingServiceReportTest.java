@@ -208,6 +208,93 @@ public class MappingServiceReportTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
+    @org.junit.jupiter.api.BeforeAll
+    static void startOllama() throws Exception {
+        // Start Ollama the same way as deployment (OllamaLauncherConfig)
+        System.out.println("\n=== Starting Ollama for Test ===");
+        
+        try {
+            // Check if Docker is available
+            ProcessBuilder dockerCheck = new ProcessBuilder("docker", "version");
+            Process process = dockerCheck.start();
+            int exitCode = process.waitFor();
+            
+            if (exitCode != 0) {
+                System.out.println("Docker not available. Ollama will not be auto-launched.");
+                System.out.println("Please start Ollama manually: ollama serve");
+                return;
+            }
+            
+            System.out.println("Docker is available. Starting Ollama container...");
+            
+            // Start Ollama container
+            ProcessBuilder startOllama = new ProcessBuilder(
+                "docker", "run", "-d",
+                "--name", "ollama-test",
+                "-p", "11434:11434",
+                "-v", "ollama-models:/root/.ollama",
+                "ollama/ollama:latest"
+            );
+            Process startProcess = startOllama.start();
+            int startExitCode = startProcess.waitFor();
+            
+            if (startExitCode != 0) {
+                // Container might already exist, try to start it
+                System.out.println("Container might already exist, trying to start existing container...");
+                ProcessBuilder startExisting = new ProcessBuilder("docker", "start", "ollama-test");
+                startExisting.start().waitFor();
+            }
+            
+            // Wait for Ollama to be ready
+            System.out.println("Waiting for Ollama to be ready...");
+            int maxWait = 60;
+            boolean ready = false;
+            for (int i = 0; i < maxWait; i++) {
+                try {
+                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) 
+                        new java.net.URL("http://localhost:11434/").openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(1000);
+                    conn.setReadTimeout(1000);
+                    if (conn.getResponseCode() == 200) {
+                        ready = true;
+                        System.out.println("✓ Ollama is ready at http://localhost:11434/");
+                        break;
+                    }
+                } catch (Exception e) {
+                    // Not ready yet
+                }
+                Thread.sleep(1000);
+            }
+            
+            if (!ready) {
+                System.out.println("WARNING: Ollama did not become ready within 60 seconds");
+                return;
+            }
+            
+            // Pull llama2 model if needed
+            System.out.println("Ensuring llama2 model is available...");
+            ProcessBuilder pullModel = new ProcessBuilder(
+                "docker", "exec", "ollama-test", "ollama", "pull", "llama2"
+            );
+            pullModel.inheritIO();
+            Process pullProcess = pullModel.start();
+            int pullExitCode = pullProcess.waitFor();
+            
+            if (pullExitCode == 0) {
+                System.out.println("✓ llama2 model ready");
+            } else {
+                System.out.println("WARNING: Failed to pull llama2 model");
+            }
+            
+            System.out.println("=== Ollama Setup Complete ===\n");
+            
+        } catch (Exception e) {
+            System.err.println("Error starting Ollama: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
     @Autowired
     private MappingService mappingService;
     
