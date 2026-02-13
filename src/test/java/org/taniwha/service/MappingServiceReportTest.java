@@ -26,6 +26,8 @@ import org.taniwha.dto.SuggestedValueDTO;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.ollama.OllamaChatModel;
+import org.springframework.ai.ollama.api.OllamaApi;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -52,10 +54,42 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // NOTE: This test relies on Spring AI autoconfiguration for ChatModel, just like deployment.
-        // In deployment, OllamaLauncherConfig starts Ollama and Spring AI autoconfigures ChatModel.
-        // In this test, Ollama must be running (started by run-report-test.sh script).
-        // Spring AI will autoconfigure OllamaChatModel based on application-test.properties settings.
+        // NOTE: This test manually creates ChatModel to match deployment behavior
+        // In deployment, OllamaLauncherConfig automatically starts Ollama and Spring AI autoconfigures ChatModel
+        // This test mimics that behavior by expecting Ollama to be running
+        
+        @Bean
+        public ChatModel ollamaChatModel() {
+            // Create OllamaApi to connect to localhost Ollama
+            // (In deployment, OllamaLauncherConfig ensures Ollama is running)
+            OllamaApi api = OllamaApi.builder()
+                .baseUrl("http://localhost:11434")
+                .build();
+            
+            // Create default options for llama2
+            org.springframework.ai.ollama.api.OllamaChatOptions options = 
+                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
+                    .model("llama2")
+                    .temperature(0.7)
+                    .build();
+            
+            // Create empty ToolCallingManager (required)
+            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
+                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
+                
+            // Create ModelManagementOptions (required)
+            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
+                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
+            
+            // Create with required parameters (Spring AI 1.1.2)
+            return new OllamaChatModel(
+                api,
+                options,
+                toolCallingManager,
+                io.micrometer.observation.ObservationRegistry.NOOP,
+                modelManagementOptions
+            );
+        }
         
         @Bean
         public EmbeddingModel embeddingModel() {
@@ -157,11 +191,10 @@ public class MappingServiceReportTest {
             return new TerminologyService(rdfService, embeddingsClient);
         }
         
-        // LLMTextGenerator uses autoconfigured ChatModel from Spring AI, just like deployment
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
                                                   @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Uses autoconfigured ChatModel from Spring AI Ollama starter (same as deployment)
+            // Uses manually created OllamaChatModel from above
             System.out.println("[TEST] Creating LLMTextGenerator");
             System.out.println("[TEST] ChatModel available: " + (chatModel != null));
             if (chatModel != null) {
