@@ -26,12 +26,6 @@ import org.taniwha.dto.SuggestedValueDTO;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 
@@ -60,8 +54,10 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
-        // automatically starts Ollama and Spring AI autoconfigures ChatModel
+        // NOTE: This test manually creates ChatModel to match deployment behavior
+        // In deployment, OllamaChatConfig manually creates the ChatModel bean
+        // (Spring AI autoconfiguration doesn't work because we use spring-ai-ollama
+        // without the -spring-boot-starter dependency)
         // This test mimics that behavior by expecting Ollama to be running
         
         @Bean
@@ -115,58 +111,77 @@ public class MappingServiceReportTest {
             RDFService mock = Mockito.mock(RDFService.class);
             
             // Return realistic SNOMED suggestions based on term
+            // Must return List<OntologyTermDTO> just like the real RDFService
             Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.anyString()))
                 .thenAnswer(invocation -> {
                     String term = invocation.getArgument(0);
                     String lower = term.toLowerCase();
                     
                     // Return realistic SNOMED codes based on term
+                    // Parse the pipe-delimited format into OntologyTermDTO objects
+                    List<String> snomedStrings;
                     if (lower.contains("bath")) {
-                        return Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
+                        snomedStrings = Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
                     } else if (lower.contains("toilet")) {
-                        return Arrays.asList("284548004|Ability to use toilet|", "129006006|Toileting independence|");
+                        snomedStrings = Arrays.asList("284548004|Ability to use toilet|", "129006006|Toileting independence|");
                     } else if (lower.contains("dress")) {
-                        return Arrays.asList("284547009|Ability to dress|", "165235000|Dressing independence|");
+                        snomedStrings = Arrays.asList("284547009|Ability to dress|", "165235000|Dressing independence|");
                     } else if (lower.contains("feed") || lower.contains("eat")) {
-                        return Arrays.asList("284545001|Ability to feed|", "289168000|Eating independence|");
+                        snomedStrings = Arrays.asList("284545001|Ability to feed|", "289168000|Eating independence|");
                     } else if (lower.contains("groom")) {
-                        return Arrays.asList("284549007|Ability to groom|", "313009003|Personal hygiene|");
+                        snomedStrings = Arrays.asList("284549007|Ability to groom|", "313009003|Personal hygiene|");
                     } else if (lower.contains("stair")) {
-                        return Arrays.asList("284551006|Ability to climb stairs|", "228869008|Stair climbing|");
+                        snomedStrings = Arrays.asList("284551006|Ability to climb stairs|", "228869008|Stair climbing|");
                     } else if (lower.contains("bowel")) {
-                        return Arrays.asList("129008007|Continence bowel|", "165243003|Bowel control|");
+                        snomedStrings = Arrays.asList("129008007|Continence bowel|", "165243003|Bowel control|");
                     } else if (lower.contains("bladder")) {
-                        return Arrays.asList("129009004|Continence urinary|", "165244009|Bladder control|");
+                        snomedStrings = Arrays.asList("129009004|Continence urinary|", "165244009|Bladder control|");
                     } else if (lower.contains("sex") || lower.contains("gender")) {
-                        return Arrays.asList("263495000|Gender|", "734000001|Sex|");
+                        snomedStrings = Arrays.asList("263495000|Gender|", "734000001|Sex|");
                     } else if (lower.contains("type") || lower.contains("isch") || lower.contains("hem") || lower.contains("etiology")) {
-                        return Arrays.asList("230690007|Stroke|", "432504007|Cerebrovascular accident|");
+                        snomedStrings = Arrays.asList("230690007|Stroke|", "432504007|Cerebrovascular accident|");
                     } else if (lower.contains("diabet")) {
-                        return Arrays.asList("73211009|Diabetes mellitus|", "44054006|Type 2 diabetes|");
+                        snomedStrings = Arrays.asList("73211009|Diabetes mellitus|", "44054006|Type 2 diabetes|");
                     } else if (lower.contains("age")) {
-                        return Arrays.asList("397669002|Age|", "424144002|Current chronological age|");
+                        snomedStrings = Arrays.asList("397669002|Age|", "424144002|Current chronological age|");
                     } else if (lower.contains("nihss")) {
-                        return Arrays.asList("450741004|NIH stroke scale|", "450703000|Stroke severity score|");
+                        snomedStrings = Arrays.asList("450741004|NIH stroke scale|", "450703000|Stroke severity score|");
                     } else if (lower.contains("barthel")) {
-                        return Arrays.asList("273302005|Barthel index|", "445313000|Activities of daily living score|");
+                        snomedStrings = Arrays.asList("273302005|Barthel index|", "445313000|Activities of daily living score|");
                     } else if (lower.contains("fim")) {
-                        return Arrays.asList("445713009|Functional independence measure|", "445313000|Activities of daily living score|");
+                        snomedStrings = Arrays.asList("445713009|Functional independence measure|", "445313000|Activities of daily living score|");
                     } else if (lower.contains("transfer")) {
-                        return Arrays.asList("284550007|Ability to transfer|", "301438001|Transfer independence|");
+                        snomedStrings = Arrays.asList("284550007|Ability to transfer|", "301438001|Transfer independence|");
                     } else if (lower.contains("mobil")) {
-                        return Arrays.asList("364666007|Ability to mobilize|", "228869008|Walking ability|");
+                        snomedStrings = Arrays.asList("364666007|Ability to mobilize|", "228869008|Walking ability|");
                     } else if (lower.contains("fac")) {
-                        return Arrays.asList("52052004|Functional ambulation|", "228869008|Walking ability|");
+                        snomedStrings = Arrays.asList("52052004|Functional ambulation|", "228869008|Walking ability|");
                     } else if (lower.contains("independent") || term.equals("10")) {
-                        return Arrays.asList("371153006|Independent|", "165245005|Functionally independent|");
+                        snomedStrings = Arrays.asList("371153006|Independent|", "165245005|Functionally independent|");
                     } else if (lower.contains("dependent") || term.equals("0")) {
-                        return Arrays.asList("371152001|Dependent|", "371154000|Totally dependent|");
+                        snomedStrings = Arrays.asList("371152001|Dependent|", "371154000|Totally dependent|");
                     } else if (term.equals("5")) {
-                        return Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
+                        snomedStrings = Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
                     } else {
                         // Generic fallback
-                        return Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
+                        snomedStrings = Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
                     }
+                    
+                    // Convert strings to OntologyTermDTO objects, matching the real RDFService behavior
+                    List<org.taniwha.dto.OntologyTermDTO> suggestions = new ArrayList<>();
+                    int idCounter = 1;
+                    for (String snomedString : snomedStrings) {
+                        String[] parts = snomedString.split("\\|", 2);
+                        String code = parts[0].trim();
+                        String label = (parts.length > 1) ? parts[1].trim() : snomedString;
+                        suggestions.add(new org.taniwha.dto.OntologyTermDTO(
+                            String.valueOf(idCounter++),
+                            label,
+                            "",
+                            "http://snomed.info/sct/" + code
+                        ));
+                    }
+                    return suggestions;
                 });
             
             return mock;
@@ -178,13 +193,10 @@ public class MappingServiceReportTest {
             return new TerminologyService(rdfService, embeddingsClient);
         }
         
-        // ChatModel will be autoconfigured by Spring AI Ollama starter
-        // No manual bean creation needed - uses same mechanism as deployment
-        
         @Bean
         public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
                                                   @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Uses REAL Ollama ChatModel from Spring Boot autoconfiguration
+            // Uses manually created OllamaChatModel from above
             System.out.println("[TEST] Creating LLMTextGenerator");
             System.out.println("[TEST] ChatModel available: " + (chatModel != null));
             if (chatModel != null) {
