@@ -1,10 +1,44 @@
 #!/bin/bash
 set -euo pipefail
 
+
+has_crlf() {
+  LC_ALL=C grep -q $'\r' "$1" 2>/dev/null
+}
+
+crlf_to_lf_inplace() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  has_crlf "$f" || return 0
+
+  echo "Fixing Windows line endings in $f"
+
+  # GNU sed
+  if sed --version >/dev/null 2>&1; then
+    sed -i 's/\r$//' "$f"
+    return 0
+  fi
+
+  # BSD/macOS sed
+  if sed -i '' 's/\r$//' "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Fallback
+  tmp="${f}.tmp.$$"
+  tr -d '\r' < "$f" > "$tmp"
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
 echo "================================================"
 echo "MEDIATA Orchestrator - Docker Build Script"
 echo "================================================"
 echo
+
+if [ -f ".env.example" ]; then
+  crlf_to_lf_inplace ".env.example"
+fi
 
 if [ ! -f ".env" ]; then
   if [ -f ".env.example" ]; then
@@ -19,8 +53,10 @@ if [ ! -f ".env" ]; then
   fi
 fi
 
+# Normalize .env before sourcing
+crlf_to_lf_inplace ".env"
+
 set -a
-# shellcheck disable=SC1091
 source ".env"
 set +a
 
@@ -43,7 +79,6 @@ echo "  ENABLE_FHIR_API=${ENABLE_FHIR_API}"
 echo "Compose profiles: ${profiles[*]:-(none)}"
 echo
 
-# Only require repos when actually building those services
 if [ "$ENABLE_RDF_BUILDER" = "true" ]; then
   if [ ! -d "mediata-rdf-builder" ]; then
     echo "ERROR: mediata-rdf-builder directory not found!"
