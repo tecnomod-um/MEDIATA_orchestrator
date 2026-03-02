@@ -37,12 +37,10 @@ services:
       - node.store.allow_mmap=false
       - node.name=snowstorm
       - cluster.name=snowstorm-cluster
-
-      - cluster.routing.allocation.disk.threshold_enabled=true
-      - cluster.routing.allocation.disk.watermark.low=20gb
-      - cluster.routing.allocation.disk.watermark.high=10gb
-      - cluster.routing.allocation.disk.watermark.flood_stage=5gb
-      - cluster.routing.allocation.disk.watermark.low.max_headroom=200gb
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD__ENABLED=true
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_LOW=20gb
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_HIGH=10gb
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_FLOOD__STAGE=5gb
 
     ports:
       - "${SNOWSTORM_ES_HOST_PORT:-9200}:9200"
