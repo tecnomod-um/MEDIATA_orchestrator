@@ -163,7 +163,8 @@ services:
 
     extra_hosts:
       - "localhost:host-gateway"
-
+      - "host.docker.internal:host-gateway"
+      
     volumes:
       - kerby-data:/app/kerby
     networks:
