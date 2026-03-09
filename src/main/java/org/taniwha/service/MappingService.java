@@ -42,6 +42,7 @@ public class MappingService {
     private static final int MAX_SUGGESTIONS_PER_SCHEMA_FIELD = 6;
 
     private static final double THRESH_COL_CLUSTER = 0.56;
+    private static final double THRESH_VALUE_CLUSTER = 0.40;
     private static final int MAX_SCHEMALESS_TARGETS = 40;
 
     // one-column-per-file
@@ -52,7 +53,7 @@ public class MappingService {
     private static final int MAX_DOMAIN_UNIQUE = 25;
     private static final int MIN_DOMAIN_UNIQUE = 2;
     private static final double THRESH_TOKEN_ALIAS = 0.72;
-    private static final int MIN_SUPPORT_FOR_CANON = 2;
+    private static final int MIN_SUPPORT_FOR_CANON = 1;
 
     // learned noise thresholds (computed per request)
     private static final double NOISE_DF_FRACTION = 0.22;     // token appears in >=22% of columns => noise
@@ -126,7 +127,7 @@ public class MappingService {
             }
             MappingMathUtil.l2NormalizeInPlace(combined);
 
-            all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, stats));
+            all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, valueVec, stats));
         }
         if (all.isEmpty()) return Collections.emptyList();
 
@@ -724,6 +725,11 @@ public class MappingService {
         if (x.length() == 1 && y.length() >= 3) return y.charAt(0) == x.charAt(0);
         if (y.length() == 1 && x.length() >= 3) return x.charAt(0) == y.charAt(0);
 
+        // prefix abbreviation: one string is a prefix of the other (min length 3).
+        // Handles medical abbreviations like "isch" -> "ischemic", "hem" -> "hemorrhagic".
+        if (x.length() >= 3 && y.startsWith(x)) return true;
+        if (y.length() >= 3 && x.startsWith(y)) return true;
+
         // unknown variants
         if ((x.equals("unk") && y.startsWith("unk")) || (y.equals("unk") && x.startsWith("unk"))) return true;
         return false;
@@ -941,6 +947,21 @@ public class MappingService {
 
         List<Cluster> clusters = new ArrayList<>();
         for (ValueItem it : items) {
+            // First: exact normalized-value match — ensures duplicates like "L"/"l" (same
+            // normalized form "l") always land in the same cluster regardless of embedding.
+            Cluster exactMatch = null;
+            for (Cluster c : clusters) {
+                if (c.normalizedValues.contains(it.normalized)) {
+                    exactMatch = c;
+                    break;
+                }
+            }
+            if (exactMatch != null) {
+                exactMatch.add(it);
+                continue;
+            }
+
+            // Fallback: embedding-based clustering
             Cluster best = null;
             double bestSim = -1;
 
@@ -1165,6 +1186,7 @@ public class MappingService {
         // Step 2: fuzzy merge across those pre-clusters
         List<ColCluster> merged = new ArrayList<>();
         for (ColCluster col : clusters) {
+            // Primary: find best match by combined vector similarity
             ColCluster best = null;
             double bestSim = -1;
 
@@ -1175,9 +1197,27 @@ public class MappingService {
 
             if (best != null && bestSim >= THRESH_COL_CLUSTER) {
                 for (ColRef r : col.cols) best.add(r);
-            } else {
-                merged.add(col);
+                continue;
             }
+
+            // Fallback: find best match by pure value-vector similarity.
+            // This catches columns whose names differ but whose value domains overlap
+            // (e.g. "Type" with ["Ischemic","Hemorrhagic"] vs "Etiology" with ["Hem","Isch"]).
+            if (col.valueCentroid != null) {
+                ColCluster bestByValue = null;
+                double bestValueSim = -1;
+                for (ColCluster cl : merged) {
+                    if (cl.valueCentroid == null) continue;
+                    double vsim = MappingMathUtil.cosine(col.valueCentroid, cl.valueCentroid);
+                    if (vsim > bestValueSim) { bestValueSim = vsim; bestByValue = cl; }
+                }
+                if (bestByValue != null && bestValueSim >= THRESH_VALUE_CLUSTER) {
+                    for (ColRef r : col.cols) bestByValue.add(r);
+                    continue;
+                }
+            }
+
+            merged.add(col);
         }
 
         for (ColCluster c : merged) {
@@ -1455,6 +1495,11 @@ public class MappingService {
             if (s.isEmpty()) { count++; continue; }
 
             addWordTokens(v, s, 1.0f);
+            // 2-grams and 3-grams carry higher weight than 4-grams so that short
+            // abbreviations (e.g. "hem", "isch") share features with their full forms
+            // ("hemorrhagic", "ischemic") through overlapping short character sequences.
+            addCharNgrams(v, s, 2, 0.30f);
+            addCharNgrams(v, s, 3, 0.70f);
             addCharNgrams(v, s, 4, 0.55f);
             count++;
         }
@@ -1573,16 +1618,19 @@ public class MappingService {
         final String column;
         final String concept;
         final List<String> rawValues;
-        final float[] vec;
+        final float[] vec;       // combined name+value embedding
+        final float[] valueVec;  // pure value embedding (may be a zero vector)
         final ColStats stats;
 
-        ColRef(String nodeId, String fileName, String column, String concept, List<String> rawValues, float[] vec, ColStats stats) {
+        ColRef(String nodeId, String fileName, String column, String concept,
+               List<String> rawValues, float[] vec, float[] valueVec, ColStats stats) {
             this.nodeId = nodeId;
             this.fileName = fileName;
             this.column = column;
             this.concept = (concept == null || concept.trim().isEmpty()) ? StringUtil.safe(column) : concept;
             this.rawValues = rawValues;
             this.vec = vec;
+            this.valueVec = valueVec;
             this.stats = (stats == null) ? new ColStats() : stats;
         }
 
@@ -1678,28 +1726,53 @@ public class MappingService {
     private static final class ColCluster {
         final List<ColRef> cols = new ArrayList<>();
         float[] centroid = null;
+        float[] valueCentroid = null;
         int count = 0;
+        int valueCount = 0;
         String representativeConcept = "";
 
         void add(ColRef col) {
             cols.add(col);
 
+            // Update combined centroid
             if (centroid == null) {
                 centroid = Arrays.copyOf(col.vec, col.vec.length);
                 count = 1;
-                return;
+            } else {
+                for (int i = 0; i < centroid.length; i++) {
+                    centroid[i] = (centroid[i] * count + col.vec[i]) / (count + 1);
+                }
+                count++;
+                double sum = 0.0;
+                for (float x : centroid) sum += (double) x * (double) x;
+                double norm = Math.sqrt(sum);
+                if (norm > 1e-12) {
+                    for (int i = 0; i < centroid.length; i++) centroid[i] = (float) (centroid[i] / norm);
+                }
             }
 
-            for (int i = 0; i < centroid.length; i++) {
-                centroid[i] = (centroid[i] * count + col.vec[i]) / (count + 1);
-            }
-            count++;
-
-            double sum = 0.0;
-            for (float x : centroid) sum += (double) x * (double) x;
-            double norm = Math.sqrt(sum);
-            if (norm > 1e-12) {
-                for (int i = 0; i < centroid.length; i++) centroid[i] = (float) (centroid[i] / norm);
+            // Update value centroid — only from columns with a non-zero value vector so that
+            // numeric and single-char-value columns do not dilute informative value embeddings.
+            if (col.valueVec != null) {
+                double vNormSq = 0.0;
+                for (float x : col.valueVec) vNormSq += (double) x * (double) x;
+                if (vNormSq > 1e-12) {
+                    if (valueCentroid == null) {
+                        valueCentroid = Arrays.copyOf(col.valueVec, col.valueVec.length);
+                        valueCount = 1;
+                    } else {
+                        for (int i = 0; i < valueCentroid.length; i++) {
+                            valueCentroid[i] = (valueCentroid[i] * valueCount + col.valueVec[i]) / (valueCount + 1);
+                        }
+                        valueCount++;
+                        double vSum = 0.0;
+                        for (float x : valueCentroid) vSum += (double) x * (double) x;
+                        double vNorm = Math.sqrt(vSum);
+                        if (vNorm > 1e-12) {
+                            for (int i = 0; i < valueCentroid.length; i++) valueCentroid[i] = (float) (valueCentroid[i] / vNorm);
+                        }
+                    }
+                }
             }
         }
     }
