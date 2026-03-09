@@ -2,7 +2,6 @@ package org.taniwha.service;
 
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
-
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,7 +26,7 @@ public class EmbeddingsClient {
         } catch (Exception e) {
             logger.error("[EmbeddingsClient] FAILED to initialize embedding model: {}", e.getMessage(), e);
             modelFailed = true;
-            embeddingDimension = 384; // fallback default
+            embeddingDimension = 384;
         }
     }
 

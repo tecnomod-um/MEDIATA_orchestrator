@@ -43,6 +43,30 @@ public class OllamaLauncherConfig {
     @Value("${ollama.volume:${env.OLLAMA_VOLUME:ollama-models}}")
     private String ollamaVolume;
 
+    @Value("${ollama.docker.cpus:${env.OLLAMA_CPUS:0}}")
+    private String dockerCpus;
+
+    @Value("${ollama.docker.memory:${env.OLLAMA_MEMORY:}}")
+    private String dockerMemory;
+
+    @Value("${ollama.docker.shmSize:${env.OLLAMA_SHM_SIZE:}}")
+    private String dockerShmSize;
+
+    @Value("${ollama.docker.gpus:${env.OLLAMA_GPUS:}}")
+    private String dockerGpus;
+
+    @Value("${ollama.env.numThreads:${env.OLLAMA_NUM_THREADS:0}}")
+    private String ollamaNumThreads;
+
+    @Value("${ollama.env.numParallel:${env.OLLAMA_NUM_PARALLEL:0}}")
+    private String ollamaNumParallel;
+
+    @Value("${ollama.env.maxLoadedModels:${env.OLLAMA_MAX_LOADED_MODELS:0}}")
+    private String ollamaMaxLoadedModels;
+
+    @Value("${ollama.env.keepAlive:${env.OLLAMA_KEEP_ALIVE:}}")
+    private String ollamaKeepAlive;
+
     @Bean
     CommandLineRunner launchOllama() {
         return args -> {
@@ -53,13 +77,19 @@ public class OllamaLauncherConfig {
             }
 
             logger.info("Starting Ollama launcher...");
-            
+            logger.info("Ollama config: image={}, containerName={}, ports={}:{}, volume={}",
+                    ollamaImage, ollamaContainer, ollamaHostPort, ollamaContainerPort, ollamaVolume);
+            logger.info("Ollama resources: cpus={}, memory={}, shmSize={}, gpus={}",
+                    dockerCpus, dockerMemory, dockerShmSize, dockerGpus);
+            logger.info("Ollama env: OLLAMA_NUM_THREADS={}, OLLAMA_NUM_PARALLEL={}, OLLAMA_MAX_LOADED_MODELS={}, OLLAMA_KEEP_ALIVE={}",
+                    ollamaNumThreads, ollamaNumParallel, ollamaMaxLoadedModels, ollamaKeepAlive);
+            logger.info("Ollama model: {}", ollamaModel);
+
             ensureImagePresent(ollamaImage);
             ensureOllamaRunning();
-            waitForHttp("http://localhost:" + ollamaHostPort + "/", 
+            waitForHttp("http://localhost:" + ollamaHostPort + "/",
                     Duration.ofSeconds(startupTimeoutSeconds), "Ollama");
-            
-            // Pull model if needed
+
             pullModelIfNeeded();
         };
     }
@@ -67,7 +97,8 @@ public class OllamaLauncherConfig {
     private void ensureOllamaRunning() throws Exception {
         String status = containerStatus(ollamaContainer);
         if ("running".equals(status)) {
-            logger.info("Ollama container {} already running.", ollamaContainer);
+            logger.info("Ollama container {} already running. NOTE: resource/env changes require recreate (docker rm -f {}).",
+                    ollamaContainer, ollamaContainer);
             return;
         }
         if ("exited".equals(status)) {
@@ -88,44 +119,86 @@ public class OllamaLauncherConfig {
         cmd.add(ollamaContainer);
         cmd.add("--restart");
         cmd.add("unless-stopped");
+
+        if (isNonBlank(dockerCpus) && !"0".equals(dockerCpus.trim())) {
+            cmd.add("--cpus");
+            cmd.add(dockerCpus.trim());
+        }
+        if (isNonBlank(dockerMemory)) {
+            cmd.add("--memory");
+            cmd.add(dockerMemory.trim());
+        }
+        if (isNonBlank(dockerShmSize)) {
+            cmd.add("--shm-size");
+            cmd.add(dockerShmSize.trim());
+        }
+        if (isNonBlank(dockerGpus)) {
+            cmd.add("--gpus");
+            cmd.add(dockerGpus.trim());
+        }
+
+        if (isNonBlank(ollamaNumThreads) && !"0".equals(ollamaNumThreads.trim())) {
+            cmd.add("-e");
+            cmd.add("OLLAMA_NUM_THREADS=" + ollamaNumThreads.trim());
+        }
+        if (isNonBlank(ollamaNumParallel) && !"0".equals(ollamaNumParallel.trim())) {
+            cmd.add("-e");
+            cmd.add("OLLAMA_NUM_PARALLEL=" + ollamaNumParallel.trim());
+        }
+        if (isNonBlank(ollamaMaxLoadedModels) && !"0".equals(ollamaMaxLoadedModels.trim())) {
+            cmd.add("-e");
+            cmd.add("OLLAMA_MAX_LOADED_MODELS=" + ollamaMaxLoadedModels.trim());
+        }
+        if (isNonBlank(ollamaKeepAlive)) {
+            cmd.add("-e");
+            cmd.add("OLLAMA_KEEP_ALIVE=" + ollamaKeepAlive.trim());
+        }
+
         cmd.add("-p");
         cmd.add(ollamaHostPort + ":" + ollamaContainerPort);
         cmd.add("-v");
         cmd.add(ollamaVolume + ":/root/.ollama");
         cmd.add(ollamaImage);
 
+        logger.info("Ollama docker run: {}", String.join(" ", cmd));
+        logger.info("Ollama settings: cpus={}, mem={}, shm={}, gpus={}, threads={}, parallel={}, maxLoadedModels={}, keepAlive={}",
+                dockerCpus, dockerMemory, dockerShmSize, dockerGpus,
+                ollamaNumThreads, ollamaNumParallel, ollamaMaxLoadedModels, ollamaKeepAlive);
+
         int rc = runAndLogIfFails(cmd.toArray(new String[0]));
         if (rc != 0) {
             throw new IllegalStateException("Failed to run Ollama container " + ollamaContainer);
         }
     }
+    
+    private static boolean isNonBlank(String s) {
+        return s != null && !s.trim().isEmpty();
+    }
 
     private void pullModelIfNeeded() {
         try {
             logger.info("Checking if model {} is available...", ollamaModel);
-            
-            // Check if model exists
+
             Process checkProcess = new ProcessBuilder(
-                "docker", "exec", ollamaContainer, "ollama", "list"
+                    "docker", "exec", ollamaContainer, "ollama", "list"
             ).redirectErrorStream(true).start();
-            
+
             String output;
             try (Scanner s = new Scanner(checkProcess.getInputStream()).useDelimiter("\\A")) {
                 output = s.hasNext() ? s.next() : "";
             }
             checkProcess.waitFor();
-            
+
             if (output.contains(ollamaModel)) {
                 logger.info("Model {} already available.", ollamaModel);
                 return;
             }
-            
+
             logger.info("Pulling model {}... This may take several minutes.", ollamaModel);
             Process pullProcess = new ProcessBuilder(
-                "docker", "exec", ollamaContainer, "ollama", "pull", ollamaModel
+                    "docker", "exec", ollamaContainer, "ollama", "pull", ollamaModel
             ).redirectErrorStream(true).start();
-            
-            // Stream output to logger
+
             try (Scanner s = new Scanner(pullProcess.getInputStream())) {
                 while (s.hasNextLine()) {
                     String line = s.nextLine();
@@ -134,7 +207,7 @@ public class OllamaLauncherConfig {
                     }
                 }
             }
-            
+
             pullProcess.waitFor();
             if (pullProcess.exitValue() == 0) {
                 logger.info("Model {} pulled successfully.", ollamaModel);
@@ -143,7 +216,7 @@ public class OllamaLauncherConfig {
             }
         } catch (Exception e) {
             logger.warn("Could not auto-pull model {}: {}", ollamaModel, e.getMessage());
-            logger.warn("You may need to manually run: docker exec {} ollama pull {}", 
+            logger.warn("You may need to manually run: docker exec {} ollama pull {}",
                     ollamaContainer, ollamaModel);
         }
     }
@@ -151,7 +224,7 @@ public class OllamaLauncherConfig {
     private void waitForHttp(String url, Duration timeout, String name) throws Exception {
         long deadline = System.currentTimeMillis() + timeout.toMillis();
         logger.info("Waiting for {} to be ready at {}...", name, url);
-        
+
         while (System.currentTimeMillis() < deadline) {
             if (httpResponds(url)) {
                 logger.info("{} is ready and reachable: {}", name, url);

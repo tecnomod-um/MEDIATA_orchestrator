@@ -7,18 +7,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.taniwha.dto.ElementFileDTO;
+import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
-import org.taniwha.dto.SuggestedGroupDTO;
-import org.taniwha.dto.SuggestedValueDTO;
 
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.lenient;
 
 /**
@@ -34,10 +30,10 @@ class MappingServiceTest {
     private EmbeddingsClient embeddingsClient;
     
     @Mock
-    private TerminologyService terminologyService;
+    private TerminologyLookupService terminologyService;
     
     @Mock
-    private DescriptionGenerator descriptionGenerator;
+    private DescriptionService descriptionGenerator;
 
     private MappingService mappingService;
     private ObjectMapper objectMapper;
@@ -104,7 +100,7 @@ class MappingServiceTest {
     @DisplayName("Should handle elementFiles with null elements")
     void testElementFilesWithNulls() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
-        List<ElementFileDTO> elements = new ArrayList<>();
+        List<ColumnInFileDTO> elements = new ArrayList<>();
         elements.add(null);
         elements.add(createElementFile("ValidColumn", Arrays.asList("val1", "val2"), "file1.csv"));
         elements.add(null);
@@ -120,7 +116,7 @@ class MappingServiceTest {
     @DisplayName("Should handle columns with empty or blank names")
     void testEmptyColumnNames() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
-        List<ElementFileDTO> elements = Arrays.asList(
+        List<ColumnInFileDTO> elements = Arrays.asList(
             createElementFile("", Arrays.asList("val1"), "file1.csv"),
             createElementFile("  ", Arrays.asList("val2"), "file2.csv"),
             createElementFile("ValidColumn", Arrays.asList("val3"), "file3.csv")
@@ -480,7 +476,7 @@ class MappingServiceTest {
     @DisplayName("Should handle very large number of columns")
     void testManyColumns() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
-        List<ElementFileDTO> elements = new ArrayList<>();
+        List<ColumnInFileDTO> elements = new ArrayList<>();
         
         // Create 100 columns
         for (int i = 0; i < 100; i++) {
@@ -655,7 +651,7 @@ class MappingServiceTest {
     @DisplayName("Should handle large request without crashing")
     void testLargeRequest() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
-        List<ElementFileDTO> elements = new ArrayList<>();
+        List<ColumnInFileDTO> elements = new ArrayList<>();
         
         // Create 50 diverse columns
         for (int i = 0; i < 50; i++) {
@@ -680,8 +676,8 @@ class MappingServiceTest {
 
     // ==================== Helper Methods ====================
 
-    private ElementFileDTO createElementFile(String columnName, List<String> values, String fileName) {
-        ElementFileDTO dto = new ElementFileDTO();
+    private ColumnInFileDTO createElementFile(String columnName, List<String> values, String fileName) {
+        ColumnInFileDTO dto = new ColumnInFileDTO();
         dto.setColumn(columnName);
         dto.setValues(values);
         dto.setFileName(fileName);
