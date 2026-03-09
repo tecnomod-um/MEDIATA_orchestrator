@@ -7,11 +7,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -27,38 +29,56 @@ import static org.mockito.Mockito.lenient;
 class MappingServiceTest {
 
     @Mock
-    private EmbeddingsClient embeddingsClient;
-    
+    private EmbeddingService embeddingService;
+
     @Mock
     private TerminologyLookupService terminologyService;
-    
+
+    @Mock
+    private TerminologyTermInferenceService terminologyInferenceService;
+
     @Mock
     private DescriptionService descriptionGenerator;
+
+    @Mock
+    private ValueMappingBuilder valueMappingBuilder;
 
     private MappingService mappingService;
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        mappingService = new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
         objectMapper = new ObjectMapper();
-        
+        MappingServiceSettings mappingSettings = new MappingServiceSettings(
+                60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
+        );
+        mappingService = new MappingService(
+                embeddingService, terminologyService, terminologyInferenceService,
+                descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings
+        );
+
         // Setup default mock behavior - return deterministic embeddings (lenient for tests that don't use it)
-        lenient().when(embeddingsClient.embed(any(String.class)))
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
             .thenAnswer(invocation -> {
                 String text = invocation.getArgument(0);
                 return createDeterministicEmbedding(text, 384);
             });
-        
+
         // Setup default mock behavior for TerminologyService
-        lenient().when(terminologyService.selectBestTerminology(any(String.class), any()))
-            .thenReturn("");
-        
+        lenient().when(terminologyService.batchLookupTerminology(any()))
+            .thenReturn(Collections.emptyMap());
+
+        // Setup default mock behavior for TerminologyTermInferenceService
+        lenient().when(terminologyInferenceService.batchSize()).thenReturn(5);
+        lenient().when(terminologyInferenceService.inferBatch(any())).thenReturn(Collections.emptyList());
+
         // Setup default mock behavior for DescriptionGenerator
-        lenient().when(descriptionGenerator.generateColumnDescription(any(String.class), any(), any()))
-            .thenAnswer(invocation -> "Description for " + invocation.getArgument(0));
-        lenient().when(descriptionGenerator.generateValueDescription(any(String.class), any(), any(), any()))
-            .thenAnswer(invocation -> "Value description for " + invocation.getArgument(0));
+        lenient().when(descriptionGenerator.generateEnrichmentBatchAsync(any()))
+            .thenReturn(CompletableFuture.completedFuture(Collections.emptyMap()));
+
+        // Setup default mock behavior for ValueMappingBuilder
+        lenient().when(valueMappingBuilder.buildValuesForConcept(any(), any(), any(), any()))
+            .thenReturn(Collections.emptyList());
     }
 
     // ==================== Input Validation Tests ====================

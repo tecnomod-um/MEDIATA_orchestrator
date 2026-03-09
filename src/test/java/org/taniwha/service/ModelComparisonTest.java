@@ -48,24 +48,32 @@ public class ModelComparisonTest {
         public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
             return new EmbeddingsClient(embeddingModel);
         }
-        
+
+        @Bean
+        public EmbeddingService embeddingService(EmbeddingsClient embeddingsClient) {
+            return new EmbeddingService(embeddingsClient);
+        }
+
         @Bean
         public TerminologyLookupService terminologyService() {
             TerminologyLookupService mock = Mockito.mock(TerminologyLookupService.class);
-            Mockito.when(mock.selectBestTerminology(Mockito.any(String.class), Mockito.any()))
-                .thenReturn("");
+            Mockito.when(mock.batchLookupTerminology(Mockito.any()))
+                .thenReturn(Collections.emptyMap());
             return mock;
         }
-        
+
+        @Bean
+        public TerminologyTermInferenceService terminologyTermInferenceService() {
+            TerminologyTermInferenceService mock = Mockito.mock(TerminologyTermInferenceService.class);
+            Mockito.when(mock.batchSize()).thenReturn(5);
+            Mockito.when(mock.inferBatch(Mockito.any())).thenReturn(Collections.emptyList());
+            return mock;
+        }
+
         @Bean
         public LLMTextGenerator llmTextGenerator() {
             LLMTextGenerator mock = Mockito.mock(LLMTextGenerator.class);
-            Mockito.when(mock.generateColumnDescription(Mockito.any(), Mockito.any(), Mockito.any()))
-                .thenReturn("Mock column description");
-            Mockito.when(mock.generateNumericValueDescription(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
-                .thenReturn("Mock numeric value description");
-            Mockito.when(mock.generateCategoricalValueDescription(Mockito.any(), Mockito.any()))
-                .thenReturn("Mock categorical value description");
+            Mockito.when(mock.isEnabled()).thenReturn(false);
             return mock;
         }
 
@@ -75,10 +83,33 @@ public class ModelComparisonTest {
             return new DescriptionService(llmTextGenerator, llmExecutor);
         }
 
+        @Bean
+        public ValueMappingBuilder valueMappingBuilder(EmbeddingService embeddingService) {
+            return new ValueMappingBuilder(embeddingService);
+        }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyLookupService terminologyService, DescriptionService descriptionGenerator) {
-            return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
+        public ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
+
+        @Bean
+        public org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings() {
+            return new org.taniwha.config.MappingConfig.MappingServiceSettings(
+                    60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
+            );
+        }
+
+        @Bean
+        public MappingService mappingService(EmbeddingService embeddingService,
+                                             TerminologyLookupService terminologyService,
+                                             TerminologyTermInferenceService terminologyTermInferenceService,
+                                             DescriptionService descriptionGenerator,
+                                             ValueMappingBuilder valueMappingBuilder,
+                                             ObjectMapper objectMapper,
+                                             org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
+            return new MappingService(embeddingService, terminologyService, terminologyTermInferenceService,
+                    descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
         }
     }
 
