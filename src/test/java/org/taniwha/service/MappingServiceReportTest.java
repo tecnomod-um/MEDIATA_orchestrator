@@ -166,14 +166,8 @@ public class MappingServiceReportTest {
             return mock;
         }
         
-        @Bean
-        public TerminologyLookupService terminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
-            // Use real TerminologyService with mocked RDFService
-            return new TerminologyLookupService(rdfService, embeddingsClient);
-        }
-        
-        // ChatModel will be autoconfigured by Spring AI Ollama starter
-        // No manual bean creation needed - uses same mechanism as deployment
+        // TerminologyLookupService and MappingService are auto-created by Spring
+        // using the beans above (rdfService mock, embeddingsClient, llmExecutor, etc.)
 
         @Bean
         public LLMTextGenerator llmTextGenerator(ObjectProvider<ChatModel> chatModelProvider,
@@ -185,12 +179,6 @@ public class MappingServiceReportTest {
         public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
                                                        java.util.concurrent.ExecutorService llmExecutor) {
             return new DescriptionService(llmTextGenerator, llmExecutor);
-        }
-
-
-        @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyLookupService terminologyService, DescriptionService descriptionGenerator) {
-            return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
         }
     }
 

@@ -67,6 +67,7 @@ public class MappingService {
 
         List<String> affectedColumnNames = new ArrayList<>(columnDTOs.size());
         for (ColumnInFileDTO dto : columnDTOs) {
+            if (dto == null) continue;
             String colName = StringUtil.safeTrim(dto.getColumn());
             if (!colName.isEmpty()) {
                 affectedColumnNames.add(colName);
@@ -1187,24 +1188,42 @@ public class MappingService {
         List<ColCluster> merged = new ArrayList<>();
 
         for (ColCluster col : clusters) {
-            ColCluster best = null;
-            double bestSim = -1;
+            String colConcept = col.cols.isEmpty() ? "" : col.cols.get(0).concept;
+
+            // Track the best unconditional target (sim >= 0.80 or sim >= threshold + Jaccard)
+            ColCluster bestUnconditional = null;
+            double bestUnconditionalSim = -1;
+
+            // Track the best abbreviation target (sim >= threshold + abbreviation detection),
+            // checked against every column in each candidate cluster — not just the first.
+            ColCluster bestAbbreviation = null;
+            double bestAbbreviationSim = -1;
 
             for (ColCluster cl : merged) {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
-                if (sim > bestSim) { bestSim = sim; best = cl; }
+                double jac = conceptTokenJaccard(col, cl);
+
+                if ((sim >= 0.80 || (sim >= mappingSettings.columnClusterThreshold() && jac >= 0.15))
+                        && sim > bestUnconditionalSim) {
+                    bestUnconditionalSim = sim;
+                    bestUnconditional = cl;
+                }
+
+                if (sim >= mappingSettings.columnClusterThreshold() && sim > bestAbbreviationSim) {
+                    for (EmbeddedColumn clCol : cl.cols) {
+                        if (isAbbreviationPair(colConcept, clCol.concept)) {
+                            bestAbbreviationSim = sim;
+                            bestAbbreviation = cl;
+                            break;
+                        }
+                    }
+                }
             }
 
-            if (best != null) {
-                double jac = conceptTokenJaccard(col, best);
-                boolean allow =
-                        (bestSim >= 0.80) ||
-                                (bestSim >= mappingSettings.columnClusterThreshold() && jac >= 0.15);
-                if (allow) {
-                    for (EmbeddedColumn r : col.cols) best.add(r);
-                } else {
-                    merged.add(col);
-                }
+            // Prefer a traditional match; fall back to an abbreviation-based match
+            ColCluster target = (bestUnconditional != null) ? bestUnconditional : bestAbbreviation;
+            if (target != null) {
+                for (EmbeddedColumn r : col.cols) target.add(r);
             } else {
                 merged.add(col);
             }
@@ -1243,6 +1262,83 @@ public class MappingService {
             out.add(t);
         }
         return out;
+    }
+
+    /**
+     * Returns true if one concept appears to be an abbreviation or acronym of the other.
+     * Handles three cases:
+     *   1. Initialism (order-insensitive): "sbp" ↔ "blood pressure systolic" ({s,b,p} are all initials)
+     *   2. Prefix: "cr" ↔ "serum creatinine" ("cr" is a prefix of "creatinine")
+     *   3. Suffix-initialism: "egfr" ↔ "glomerular filtration rate" (suffix "gfr" has all initials)
+     * The embedding-similarity gate in the caller prevents false positives from unrelated pairs
+     * that happen to share initials.
+     */
+    private boolean isAbbreviationPair(String conceptA, String conceptB) {
+        if (conceptA == null || conceptB == null) return false;
+        return looksLikeAbbreviationOf(conceptA, conceptB)
+                || looksLikeAbbreviationOf(conceptB, conceptA);
+    }
+
+    private boolean looksLikeAbbreviationOf(String candidate, String fullConcept) {
+        String[] candidateTokens = candidate.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+        String[] fullTokensArr = fullConcept.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+
+        // Full concept must have at least 2 meaningful tokens
+        List<String> fullParts = new ArrayList<>();
+        for (String t : fullTokensArr) { if (t != null && !t.isEmpty()) fullParts.add(t); }
+        if (fullParts.size() < 2) return false;
+
+        // Build initials multiset: char → how many full-concept tokens start with that char
+        // (e.g., "Low Density Lipoprotein" → {l:2, d:1} because both L and l start two words)
+        Map<Character, Integer> initialsMultiset = new LinkedHashMap<>();
+        for (String token : fullParts) initialsMultiset.merge(token.charAt(0), 1, Integer::sum);
+
+        // Try each candidate token as a potential abbreviation (2–6 chars)
+        for (String abbrev : candidateTokens) {
+            if (abbrev == null || abbrev.isEmpty()) continue;
+            if (abbrev.length() < 2 || abbrev.length() > 6) continue;
+
+            // Build multiset of abbreviation characters
+            Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
+            for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
+
+            // Case 1: Initialism — every char in the abbreviation must appear at least as often
+            // in the initials multiset. Using multiset prevents LDL from matching HDL's initials
+            // {h,d,l} even though both share {d,l}.
+            boolean initialsMatch = true;
+            for (Map.Entry<Character, Integer> e : abbrevMultiset.entrySet()) {
+                if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
+                    initialsMatch = false;
+                    break;
+                }
+            }
+            if (initialsMatch) return true;
+
+            // Case 2: Prefix — abbreviation is a STRICT prefix of a full-concept token
+            // (token must be strictly longer to avoid "score".startsWith("score") false positives)
+            for (String token : fullParts) {
+                if (token.length() > abbrev.length() && token.startsWith(abbrev)) return true;
+            }
+
+            // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR → GlomerularFiltrationRate
+            // Only runs for abbreviations of length ≥ 4 (loop starts at 1 and needs suffix length ≥ 3,
+            // i.e., abbrev.length() - start ≥ 3 → start ≤ abbrev.length() - 3).
+            // 3-char abbreviations like "gfr" are correctly handled by Case 1 (initialism) alone.
+            for (int start = 1; start <= abbrev.length() - 3; start++) {
+                String suffix = abbrev.substring(start); // length ≥ 3 because start ≤ abbrev.length()-3
+                Map<Character, Integer> suffixMultiset = new LinkedHashMap<>();
+                for (char c : suffix.toCharArray()) suffixMultiset.merge(c, 1, Integer::sum);
+                boolean suffixMatch = true;
+                for (Map.Entry<Character, Integer> e : suffixMultiset.entrySet()) {
+                    if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
+                        suffixMatch = false;
+                        break;
+                    }
+                }
+                if (suffixMatch) return true;
+            }
+        }
+        return false;
     }
 
     private String pickClusterRepresentativeConcept(List<EmbeddedColumn> cols) {
