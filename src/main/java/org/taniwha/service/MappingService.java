@@ -58,7 +58,20 @@ public class MappingService {
     // learned noise thresholds (computed per request)
     private static final double NOISE_DF_FRACTION = 0.22;     // token appears in >=22% of columns => noise
     private static final int NOISE_DF_MIN_COUNT = 4;          // or appears in >=4 columns
-    private static final int SUFFIX_NOISE_MIN_COUNT = 3;      // token appears as suffix in >=3 columns
+    private static final int SUFFIX_NOISE_MIN_COUNT = 2;      // token appears as suffix in >=2 columns
+
+    // compound-word splitting (canonicalConceptName)
+    /** Minimum length of a single-token concept before compound splitting is attempted. */
+    private static final int MIN_COMPOUND_WORD_LENGTH = 8;
+    /** Minimum character length for each half of a compound split (left and right). */
+    private static final int MIN_SUBTOKEN_LENGTH = 3;
+    /**
+     * When checking whether a suffix-noise candidate is "productive" (appears inside
+     * a longer compound token), the compound token must be at least this many characters
+     * longer than the candidate to avoid degenerate cases where a near-full token is
+     * considered a meaningful compound.
+     */
+    private static final int MIN_COMPOUND_LENGTH_DIFF = 2;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -1323,6 +1336,22 @@ public class MappingService {
             }
         }
 
+        // Protect suffix-noise candidates that are "productive": they appear as the trailing
+        // sub-token of a compound single-token word in this request (e.g. "barthel" is the
+        // suffix of "totalbarthel").  Such tokens carry real meaning and must not be stripped.
+        Set<String> singleTokenWords = new HashSet<>();
+        for (RawColName rn : rawNames) {
+            if (rn != null && rn.tokens != null && rn.tokens.size() == 1) {
+                singleTokenWords.add(rn.tokens.get(0));
+            }
+        }
+        suffixNoise.removeIf(candidate -> {
+            for (String st : singleTokenWords) {
+                if (st.length() > candidate.length() + MIN_COMPOUND_LENGTH_DIFF && st.endsWith(candidate)) return true;
+            }
+            return false;
+        });
+
         // do not mark everything as noise if dataset is tiny
         if (n <= 6 && noise.size() > 0) {
             // keep only the highest-df tokens
@@ -1401,6 +1430,15 @@ public class MappingService {
         // If we removed everything, fall back to non-noise tokens (or original tokens)
         if (kept.isEmpty()) kept = toks;
 
+        // Compound-word split: if a single long token survives (e.g. "ageinjury",
+        // "totalbarthel"), try to split it into two known vocabulary sub-tokens.
+        // This lets all-caps compound columns ("AGEINJURY", "TOTALBARTHEL") align
+        // with their space-separated counterparts ("Age at injury", "TOTBarthel1").
+        if (kept.size() == 1 && kept.get(0).length() >= MIN_COMPOUND_WORD_LENGTH && noise != null && noise.df != null) {
+            List<String> split = trySplitCompound(kept.get(0), noise.df);
+            if (split != null) kept = split;
+        }
+
         String concept = String.join(" ", kept).replaceAll("\\s+", " ").trim();
         int tokenCount = kept.size();
 
@@ -1419,6 +1457,29 @@ public class MappingService {
         else if (x.endsWith("s") && x.length() > 4 && !x.endsWith("ss")) x = x.substring(0, x.length() - 1);
 
         return x;
+    }
+
+    /**
+     * Tries to split a single compound token into two known vocabulary sub-tokens.
+     * Both the left and right part must appear in the request's token vocabulary (df >= 1).
+     * Returns null if no valid split is found.
+     * Example: "ageinjury" → ["age", "injury"]  (when "age" and "injury" are known tokens)
+     *          "totalbarthel" → ["total", "barthel"] (when both appear in other columns)
+     */
+    private List<String> trySplitCompound(String token, Map<String, Integer> vocab) {
+        int len = token.length();
+        // Try every split where each part is at least MIN_SUBTOKEN_LENGTH characters
+        for (int i = MIN_SUBTOKEN_LENGTH; i <= len - MIN_SUBTOKEN_LENGTH; i++) {
+            String left  = token.substring(0, i);
+            String right = token.substring(i);
+            if (vocab.containsKey(left) && vocab.containsKey(right)) {
+                List<String> result = new ArrayList<>();
+                result.add(left);
+                result.add(right);
+                return result;
+            }
+        }
+        return null;
     }
 
     private boolean looksLikeInformativeCategorical(ColStats stats, List<String> rawValues) {
