@@ -39,14 +39,19 @@ public class ModelComparisonTest {
             return new TransformersEmbeddingModel();
         }
 
+        @Bean(destroyMethod = "shutdown")
+        public java.util.concurrent.ExecutorService llmExecutor() {
+            return java.util.concurrent.Executors.newFixedThreadPool(8);
+        }
+
         @Bean
         public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
             return new EmbeddingsClient(embeddingModel);
         }
         
         @Bean
-        public TerminologyService terminologyService() {
-            TerminologyService mock = Mockito.mock(TerminologyService.class);
+        public TerminologyLookupService terminologyService() {
+            TerminologyLookupService mock = Mockito.mock(TerminologyLookupService.class);
             Mockito.when(mock.selectBestTerminology(Mockito.any(String.class), Mockito.any()))
                 .thenReturn("");
             return mock;
@@ -63,14 +68,16 @@ public class ModelComparisonTest {
                 .thenReturn("Mock categorical value description");
             return mock;
         }
-        
-        @Bean
-        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
-            return new DescriptionGenerator(llmTextGenerator);
-        }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyService terminologyService, DescriptionGenerator descriptionGenerator) {
+        public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
+                                                       java.util.concurrent.ExecutorService llmExecutor) {
+            return new DescriptionService(llmTextGenerator, llmExecutor);
+        }
+
+
+        @Bean
+        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyLookupService terminologyService, DescriptionService descriptionGenerator) {
             return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
         }
     }

@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.taniwha.dto.LoginRequestDTO;
 import org.taniwha.dto.LoginResponseDTO;
 import org.taniwha.dto.RegisterRequestDTO;
@@ -34,15 +35,25 @@ public class UserController {
             logger.debug("MongoDB connection is OK");
         } catch (Exception e) {
             logger.error("MongoDB connection failed", e);
-            return ResponseEntity.status(500).body(new LoginResponseDTO("Internal Server Error: MongoDB connection failed", null));
+            return ResponseEntity.status(500)
+                    .body(new LoginResponseDTO("Internal Server Error: MongoDB connection failed", null));
         }
 
         try {
-            LoginResponseDTO loginResponse = userService.loginUser(loginRequest.getUsername(), loginRequest.getPassword());
+            LoginResponseDTO loginResponse =
+                    userService.loginUser(loginRequest.getUsername(), loginRequest.getPassword());
             return ResponseEntity.ok(loginResponse);
-        } catch (Exception e) {
-            logger.error("Login failed for user {}", loginRequest.getUsername(), e);
-            return ResponseEntity.status(401).body(new LoginResponseDTO("Invalid username or password", null));
+
+        } catch (BadCredentialsException ex) {
+            logger.warn("Login failed (wrong credentials) for user {}", loginRequest.getUsername());
+            return ResponseEntity.status(401)
+                    .body(new LoginResponseDTO("Invalid username or password", null));
+
+        } catch (Exception ex) {
+            // keep stack trace for real errors
+            logger.error("Login failed for user {}", loginRequest.getUsername(), ex);
+            return ResponseEntity.status(500)
+                    .body(new LoginResponseDTO("Internal Server Error", null));
         }
     }
 

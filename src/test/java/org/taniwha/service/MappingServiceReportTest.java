@@ -2,9 +2,8 @@ package org.taniwha.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -12,12 +11,8 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.FilterType;
-import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -26,12 +21,6 @@ import org.taniwha.dto.SuggestedValueDTO;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 
@@ -63,7 +52,12 @@ public class MappingServiceReportTest {
         // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
         // automatically starts Ollama and Spring AI autoconfigures ChatModel
         // This test mimics that behavior by expecting Ollama to be running
-        
+
+        @Bean(destroyMethod = "shutdown")
+        public java.util.concurrent.ExecutorService llmExecutor() {
+            return java.util.concurrent.Executors.newFixedThreadPool(8);
+        }
+
         @Bean
         public ChatModel ollamaChatModel() {
             // Create OllamaApi to connect to localhost Ollama
@@ -173,34 +167,29 @@ public class MappingServiceReportTest {
         }
         
         @Bean
-        public TerminologyService terminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
+        public TerminologyLookupService terminologyService(RDFService rdfService, EmbeddingsClient embeddingsClient) {
             // Use real TerminologyService with mocked RDFService
-            return new TerminologyService(rdfService, embeddingsClient);
+            return new TerminologyLookupService(rdfService, embeddingsClient);
         }
         
         // ChatModel will be autoconfigured by Spring AI Ollama starter
         // No manual bean creation needed - uses same mechanism as deployment
-        
+
         @Bean
-        public LLMTextGenerator llmTextGenerator(@Autowired(required = false) ChatModel chatModel,
-                                                  @Value("${llm.enabled:true}") boolean llmEnabled) {
-            // Uses REAL Ollama ChatModel from Spring Boot autoconfiguration
-            System.out.println("[TEST] Creating LLMTextGenerator");
-            System.out.println("[TEST] ChatModel available: " + (chatModel != null));
-            if (chatModel != null) {
-                System.out.println("[TEST] ChatModel class: " + chatModel.getClass().getName());
-            }
-            System.out.println("[TEST] LLM enabled: " + llmEnabled);
-            return new LLMTextGenerator(chatModel, llmEnabled);
-        }
-        
-        @Bean
-        public DescriptionGenerator descriptionGenerator(LLMTextGenerator llmTextGenerator) {
-            return new DescriptionGenerator(llmTextGenerator);
+        public LLMTextGenerator llmTextGenerator(ObjectProvider<ChatModel> chatModelProvider,
+                                                 @Value("${llm.enabled:true}") boolean llmEnabled) {
+            return new LLMTextGenerator(chatModelProvider, llmEnabled);
         }
 
         @Bean
-        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyService terminologyService, DescriptionGenerator descriptionGenerator) {
+        public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
+                                                       java.util.concurrent.ExecutorService llmExecutor) {
+            return new DescriptionService(llmTextGenerator, llmExecutor);
+        }
+
+
+        @Bean
+        public MappingService mappingService(EmbeddingsClient embeddingsClient, TerminologyLookupService terminologyService, DescriptionService descriptionGenerator) {
             return new MappingService(embeddingsClient, terminologyService, descriptionGenerator);
         }
     }
