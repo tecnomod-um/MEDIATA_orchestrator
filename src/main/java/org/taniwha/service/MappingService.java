@@ -3,6 +3,7 @@ package org.taniwha.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.ElementFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
@@ -60,6 +61,10 @@ public class MappingService {
     private static final int SUFFIX_NOISE_MIN_COUNT = 3;      // token appears as suffix in >=3 columns
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** Injected when running in Spring context; null during direct unit-test instantiation. */
+    @Autowired(required = false)
+    private DescriptionGeneratorService descriptionGenerator;
 
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
         List<ElementFileDTO> cols = (req == null || req.getElementFiles() == null)
@@ -179,6 +184,7 @@ public class MappingService {
                 String unionKey = makeUnique(sanitizeUnionName(field.name), usedUnionKeys);
 
                 SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
+                mapping.setDescription(conceptDesc(unionKey, detectedFieldType, picked));
 
                 SuggestedGroupDTO group = new SuggestedGroupDTO();
                 group.setColumn(unionKey);
@@ -243,6 +249,7 @@ public class MappingService {
             String unionKey = makeUnique(concept, usedUnionKeys);
 
             SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
+            mapping.setDescription(conceptDesc(unionKey, detectedType, picked));
 
             SuggestedGroupDTO group = new SuggestedGroupDTO();
             group.setColumn(unionKey);
@@ -422,7 +429,7 @@ public class MappingService {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(String.valueOf(canonCat));
             vd.setTerminology("");
-            vd.setDescription("Ordinal crosswalk using non-overlapping full-coverage integer intervals; canonical scale is the one with fewer categories.");
+            vd.setDescription(valueDesc(unionKey, String.valueOf(canonCat), "ordinal", detectedType, sources, null));
             vd.setMapping(refs);
             out.add(vd);
         }
@@ -697,7 +704,7 @@ public class MappingService {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(x.getKey());
             vd.setTerminology("");
-            vd.setDescription("Closed-domain categorical harmonization across files (aliases merged).");
+            vd.setDescription(valueDesc(unionKey, x.getKey(), "categorical", "categorical", sources, null));
             vd.setMapping(x.getValue());
             out.add(vd);
         }
@@ -807,10 +814,11 @@ public class MappingService {
     // ============================================================
 
     private List<SuggestedValueDTO> buildRangeValue(String unionName, String type, List<ColRef> sources) {
+        String rangeInfo = rangeDescriptionFromSources(type, sources);
         SuggestedValueDTO v = new SuggestedValueDTO();
         v.setName(type);
         v.setTerminology("");
-        v.setDescription(rangeDescriptionFromSources(type, sources));
+        v.setDescription(valueDesc(unionName, type, "range", type, sources, rangeInfo));
         v.setMapping(new ArrayList<>());
 
         for (ColRef src : sources) {
@@ -896,7 +904,7 @@ public class MappingService {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(e.getKey());
             vd.setTerminology("");
-            vd.setDescription("");
+            vd.setDescription(valueDesc(field.name, e.getKey(), "enum", field.type, sources, null));
             vd.setMapping(e.getValue());
             out.add(vd);
         }
@@ -962,7 +970,7 @@ public class MappingService {
             SuggestedValueDTO vd = new SuggestedValueDTO();
             vd.setName(rep);
             vd.setTerminology("");
-            vd.setDescription("");
+            vd.setDescription(valueDesc(unionName, rep, "clustered", "categorical", sources, null));
             vd.setMapping(new ArrayList<>(c.refs));
             out.add(vd);
         }
@@ -1420,6 +1428,110 @@ public class MappingService {
         }
         used.add(out);
         return out;
+    }
+
+    // ============================================================
+    // Description generation helpers
+    // ============================================================
+
+    /**
+     * Generates a concept-level description for a mapping by delegating to
+     * {@link DescriptionGeneratorService} when available, or producing an
+     * improved inline template otherwise.
+     */
+    private String conceptDesc(String concept, String detectedType, List<ColRef> sources) {
+        List<String> samples = collectSampleValues(sources);
+        if (descriptionGenerator != null) {
+            return descriptionGenerator.generateConceptDescription(concept, detectedType, samples);
+        }
+        return inlineConceptDesc(concept, detectedType);
+    }
+
+    /**
+     * Generates a value-level description by delegating to
+     * {@link DescriptionGeneratorService} when available, or producing an
+     * improved inline template otherwise.
+     */
+    private String valueDesc(String concept, String value, String mappingType,
+                              String detectedType, List<ColRef> sources, String rangeInfo) {
+        List<String> samples = collectSampleValues(sources);
+        if (descriptionGenerator != null) {
+            return descriptionGenerator.generateValueDescription(
+                    concept, value, mappingType, detectedType, samples, rangeInfo);
+        }
+        return inlineValueDesc(concept, value, mappingType, detectedType, rangeInfo);
+    }
+
+    /** Collects up to 8 unique non-blank sample values from source columns. */
+    private List<String> collectSampleValues(List<ColRef> sources) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (ColRef src : sources) {
+            if (src.rawValues == null) continue;
+            for (String v : src.rawValues) {
+                if (v != null && !v.trim().isEmpty()) {
+                    seen.add(v.trim());
+                    if (seen.size() >= 8) return new ArrayList<>(seen);
+                }
+            }
+        }
+        return new ArrayList<>(seen);
+    }
+
+    /** Inline template (used when {@code descriptionGenerator} is null). */
+    private static String inlineConceptDesc(String concept, String detectedType) {
+        String h = StringUtil.humanize(concept);
+        if ("date".equalsIgnoreCase(detectedType)) {
+            return StringUtil.capitalize(h) + " date field harmonized across source datasets.";
+        }
+        if ("integer".equalsIgnoreCase(detectedType) || "double".equalsIgnoreCase(detectedType)) {
+            return StringUtil.capitalize(h) + " numeric field harmonized across source datasets.";
+        }
+        return StringUtil.capitalize(h) + " clinical data element harmonized across source datasets.";
+    }
+
+    /** Inline template (used when {@code descriptionGenerator} is null). */
+    private static String inlineValueDesc(String concept, String value, String mappingType,
+                                           String detectedType, String rangeInfo) {
+        String h = StringUtil.humanize(concept);
+        String v = (value != null && !value.isEmpty()) ? value : "";
+        String base;
+        switch (mappingType) {
+            case "ordinal":
+                base = "Ordinal " + h + " value " + v
+                        + " mapped to a canonical interval in the harmonized scale.";
+                break;
+            case "range":
+                base = "date".equalsIgnoreCase(detectedType)
+                        ? StringUtil.capitalize(h) + " date range harmonized across source datasets."
+                        : StringUtil.capitalize(h) + " numeric range harmonized across source datasets.";
+                break;
+            case "categorical":
+                base = v.isEmpty()
+                        ? StringUtil.capitalize(h) + " category harmonized across datasets."
+                        : "'" + v + "': " + h
+                                + " category harmonized from equivalent representations across datasets.";
+                break;
+            case "enum":
+                base = v.isEmpty()
+                        ? "Standardized " + h + " value matched from source data by semantic similarity."
+                        : "'" + v + "': standardized " + h
+                                + " value matched from source data by semantic similarity.";
+                break;
+            case "clustered":
+                base = v.isEmpty()
+                        ? StringUtil.capitalize(h)
+                                + " cluster grouping semantically similar values across datasets."
+                        : "'" + v + "': " + h
+                                + " cluster grouping semantically similar values across datasets.";
+                break;
+            default:
+                base = StringUtil.capitalize(h) + " value '" + v + "' harmonized across source datasets.";
+                break;
+        }
+        if (rangeInfo != null && !rangeInfo.isEmpty()) {
+            return base + " [" + rangeInfo + "]";
+        }
+        return base;
     }
 
     // ============================================================

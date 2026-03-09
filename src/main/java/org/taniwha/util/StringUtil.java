@@ -38,4 +38,23 @@ public final class StringUtil {
         }
         return s;
     }
+
+    /**
+     * Converts a raw concept/field name (e.g. {@code "age_at_injury"}) into a
+     * human-readable phrase (e.g. {@code "age at injury"}) by replacing underscores
+     * and hyphens with spaces and lower-casing the result.
+     */
+    public static String humanize(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "data element";
+        return raw.trim()
+                .replace("_", " ")
+                .replace("-", " ")
+                .toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** Returns {@code s} with its first character upper-cased; returns {@code s} unchanged if blank. */
+    public static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
 }
