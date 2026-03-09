@@ -75,11 +75,12 @@ public class EmbeddingModelBenchmarkTest {
 
         new ModelSpec(
             "pubmedbert-base-embeddings",
-            "https://huggingface.co/NeuML/pubmedbert-base-embeddings/resolve/main/model.onnx",
-            "https://huggingface.co/NeuML/pubmedbert-base-embeddings/resolve/main/tokenizer.json",
+            "https://huggingface.co/Dev-SN/pubmedbert-base-embeddings-onnx/resolve/main/onnx/model.onnx",
+            "https://huggingface.co/Dev-SN/pubmedbert-base-embeddings-onnx/resolve/main/tokenizer.json",
             "MEDICAL  — PubMedBERT fine-tuned for biomedical semantic similarity, 768 dims. "
             + "Pre-trained on 21M PubMed abstracts; fine-tuned on clinical NLI + STS data. "
-            + "Understands medical abbreviations (WBC, SBP, GCS, HbA1c, etc.) natively."
+            + "Understands medical abbreviations (WBC, SBP, GCS, HbA1c, etc.) natively. "
+            + "NOTE: NeuML repo has no ONNX export; using Dev-SN ONNX conversion (same weights)."
         )
     );
 
@@ -390,10 +391,10 @@ public class EmbeddingModelBenchmarkTest {
             System.out.println();
             System.out.println("  To switch in application.properties:");
             String modelKey = best.name().contains("pubmed")
-                ? "https://huggingface.co/NeuML/pubmedbert-base-embeddings/resolve/main/model.onnx"
+                ? "https://huggingface.co/Dev-SN/pubmedbert-base-embeddings-onnx/resolve/main/onnx/model.onnx"
                 : "https://huggingface.co/sentence-transformers/all-mpnet-base-v2/resolve/main/onnx/model.onnx";
             String tokenKey = best.name().contains("pubmed")
-                ? "https://huggingface.co/NeuML/pubmedbert-base-embeddings/resolve/main/tokenizer.json"
+                ? "https://huggingface.co/Dev-SN/pubmedbert-base-embeddings-onnx/resolve/main/tokenizer.json"
                 : "https://huggingface.co/sentence-transformers/all-mpnet-base-v2/resolve/main/tokenizer.json";
             System.out.println("    spring.ai.embedding.transformer.onnx.model-uri=" + modelKey);
             System.out.println("    spring.ai.embedding.transformer.tokenizer.uri=" + tokenKey);
@@ -405,6 +406,7 @@ public class EmbeddingModelBenchmarkTest {
         System.out.println("    PubMedBERT(768d) fine-tuned for semantic similarity. Scores >0.80 on");
         System.out.println("    biomedical STS benchmarks. Significantly outperforms general models");
         System.out.println("    on clinical abbreviation resolution (WBC, SBP, GCS, EF, etc.).");
+        System.out.println("    NOTE: NeuML repo has no ONNX export; ONNX via Dev-SN (same weights).");
         System.out.println("  • sentence-transformers/all-mpnet-base-v2  — best general-purpose upgrade");
         System.out.println("    from MiniLM. 768-dim, higher recall on semantic similarity tasks.");
         System.out.println("  • dmis-lab/biobert-base-cased-v1.2  — BioBERT on PubMed+PMC, but no");
