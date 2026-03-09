@@ -67,6 +67,7 @@ public class MappingService {
 
         List<String> affectedColumnNames = new ArrayList<>(columnDTOs.size());
         for (ColumnInFileDTO dto : columnDTOs) {
+            if (dto == null) continue;
             String colName = StringUtil.safeTrim(dto.getColumn());
             if (!colName.isEmpty()) {
                 affectedColumnNames.add(colName);
