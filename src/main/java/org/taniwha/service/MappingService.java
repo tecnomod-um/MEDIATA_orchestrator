@@ -193,10 +193,7 @@ public class MappingService {
 
                 String unionKey = makeUnique(sanitizeUnionName(field.name), usedUnionKeys);
 
-                // All batch candidates appear in the column list; value merging uses
-                // only the one-per-file picks.
-                List<ColRef> batchCols = topCols(batch, batch.size());
-                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", batchCols);
+                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
 
                 SuggestedGroupDTO group = new SuggestedGroupDTO();
                 group.setColumn(unionKey);
@@ -210,8 +207,7 @@ public class MappingService {
                 Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
                 one.put(unionKey, mapping);
                 out.add(one);
-                // Mark every batch candidate as covered so no solo fallback entry is emitted.
-                for (ColScore cs : batch) usedColKeys.add(colKey(cs.col));
+                for (ColRef p : picked) usedColKeys.add(colKey(p));
 
                 emitted++;
             }
@@ -230,6 +226,53 @@ public class MappingService {
         List<List<ColScore>> out = new ArrayList<>();
         out.add(top);
         return out;
+    }
+
+    /**
+     * Groups {@code members} by source file ({@link ColRef#fileKey()}) and returns a list of
+     * round-robin batches, each containing exactly one column per file.
+     *
+     * <p>Within each file-group, candidates are ordered by cosine similarity to the cluster
+     * centroid (best first).  On each round, the next candidate is taken from every file-group.
+     * Files that have fewer candidates than the current round reuse their best column (index 0),
+     * so every batch always includes at least one representative from every participating file.</p>
+     *
+     * <p>Example — toilet cluster with {@code fimbartheltodos} (1 col: Toileting) and
+     * {@code SCUBA_1} (2 cols: ToiletBART1, ToiletBART2):</p>
+     * <ul>
+     *   <li>Round 0: [Toileting, ToiletBART1]  — first timepoint, valid cross-file join</li>
+     *   <li>Round 1: [Toileting, ToiletBART2]  — second timepoint, valid cross-file join</li>
+     * </ul>
+     */
+    private List<List<ColRef>> partitionMembersByFile(List<ColRef> members, float[] centroid) {
+        // Group by fileKey, preserving insertion order for determinism.
+        Map<String, List<ColRef>> byFile = new LinkedHashMap<>();
+        for (ColRef c : members) {
+            byFile.computeIfAbsent(c.fileKey(), k -> new ArrayList<>()).add(c);
+        }
+
+        // Sort each file-group by cosine similarity to centroid (highest first).
+        for (List<ColRef> grp : byFile.values()) {
+            grp.sort((a, b) -> {
+                double sa = (centroid == null || a.vec == null) ? 0.0 : MappingMathUtil.cosine(a.vec, centroid);
+                double sb = (centroid == null || b.vec == null) ? 0.0 : MappingMathUtil.cosine(b.vec, centroid);
+                return Double.compare(sb, sa);
+            });
+        }
+
+        int maxRounds = 0;
+        for (List<ColRef> grp : byFile.values()) maxRounds = Math.max(maxRounds, grp.size());
+
+        List<List<ColRef>> batches = new ArrayList<>();
+        for (int round = 0; round < maxRounds; round++) {
+            List<ColRef> batch = new ArrayList<>();
+            for (List<ColRef> grp : byFile.values()) {
+                // For files with fewer candidates, reuse the best (index 0) as anchor.
+                batch.add(grp.get(Math.min(round, grp.size() - 1)));
+            }
+            batches.add(batch);
+        }
+        return batches;
     }
 
     // ============================================================
@@ -259,34 +302,42 @@ public class MappingService {
 
             List<ColRef> members = new ArrayList<>(cl.cols);
 
-            // One column per source file (nodeId+fileName) for value computation —
-            // prevents duplicating patient rows in a join.
-            List<ColRef> picked = pickBestPerFileFromCols(members, cl.centroid, MAX_COLS_PER_MAPPING);
-            if (picked.isEmpty()) continue;
+            // Partition the cluster members into round-robin batches, one column per
+            // source file per batch.  Files with a single candidate contribute that
+            // same column (the "anchor") to every batch.  Files with multiple same-concept
+            // columns (e.g. ToiletBART1 and ToiletBART2 from the same SCUBA file) rotate
+            // their columns across batches, producing one valid one-per-file mapping for
+            // each measurement timepoint.
+            List<List<ColRef>> batches = partitionMembersByFile(members, cl.centroid);
 
-            String detectedType = detectTypeFromSourcesOrSchema(picked, "");
+            int emitted = 0;
+            for (List<ColRef> batch : batches) {
+                if (emitted >= MAX_SUGGESTIONS_PER_SCHEMA_FIELD) break;
+                if (batch.isEmpty()) continue;
 
-            String unionKey = makeUnique(concept, usedUnionKeys);
+                String detectedType = detectTypeFromSourcesOrSchema(batch, "");
+                String unionKey = makeUnique(concept, usedUnionKeys);
 
-            // All cluster members appear in the column list so the user can see every
-            // column that belongs to this concept, including same-file duplicates that
-            // cannot participate in a join but are still semantically equivalent.
-            SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", members);
+                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", batch);
 
-            SuggestedGroupDTO group = new SuggestedGroupDTO();
-            group.setColumn(unionKey);
+                SuggestedGroupDTO group = new SuggestedGroupDTO();
+                group.setColumn(unionKey);
 
-            // Value merging still uses only the one-per-file picks.
-            List<SuggestedValueDTO> values = buildValuesForConcept(unionKey, detectedType, null, picked);
-            if (values.isEmpty()) continue;
+                List<SuggestedValueDTO> values = buildValuesForConcept(unionKey, detectedType, null, batch);
+                if (values.isEmpty()) continue;
 
-            group.setValues(values);
-            mapping.setGroups(Collections.singletonList(group));
+                group.setValues(values);
+                mapping.setGroups(Collections.singletonList(group));
 
-            Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
-            one.put(unionKey, mapping);
-            out.add(one);
-            // Mark every cluster member as covered so no solo fallback entry is emitted.
+                Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
+                one.put(unionKey, mapping);
+                out.add(one);
+                for (ColRef c : batch) usedColKeys.add(colKey(c));
+                emitted++;
+            }
+
+            // Mark every cluster member as covered so no solo fallback entry is emitted,
+            // even for columns that were not in any emitted batch (e.g. due to the cap).
             for (ColRef m : members) usedColKeys.add(colKey(m));
         }
 
