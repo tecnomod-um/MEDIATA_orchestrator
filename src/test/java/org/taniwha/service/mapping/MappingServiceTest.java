@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.mapping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,6 +8,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.service.DescriptionService;
+import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.TerminologyTermInferenceService;
+import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -50,7 +55,7 @@ class MappingServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         MappingServiceSettings mappingSettings = new MappingServiceSettings(
-                60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6
+                60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
         );
         mappingService = new MappingService(
                 embeddingService, terminologyService, terminologyInferenceService,

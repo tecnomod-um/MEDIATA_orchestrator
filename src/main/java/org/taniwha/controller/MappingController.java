@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.*;
-import org.taniwha.service.MappingService;
+import org.taniwha.service.mapping.MappingService;
 import org.taniwha.service.jobs.MappingEnrichmentJobs;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.Collections;
