@@ -193,7 +193,10 @@ public class MappingService {
 
                 String unionKey = makeUnique(sanitizeUnionName(field.name), usedUnionKeys);
 
-                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
+                // All batch candidates appear in the column list; value merging uses
+                // only the one-per-file picks.
+                List<ColRef> batchCols = topCols(batch, batch.size());
+                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", batchCols);
 
                 SuggestedGroupDTO group = new SuggestedGroupDTO();
                 group.setColumn(unionKey);
@@ -207,7 +210,8 @@ public class MappingService {
                 Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
                 one.put(unionKey, mapping);
                 out.add(one);
-                for (ColRef p : picked) usedColKeys.add(colKey(p));
+                // Mark every batch candidate as covered so no solo fallback entry is emitted.
+                for (ColScore cs : batch) usedColKeys.add(colKey(cs.col));
 
                 emitted++;
             }
@@ -255,7 +259,8 @@ public class MappingService {
 
             List<ColRef> members = new ArrayList<>(cl.cols);
 
-            // FIX: one column per file (nodeId+fileName), pick best match to cluster centroid
+            // One column per source file (nodeId+fileName) for value computation —
+            // prevents duplicating patient rows in a join.
             List<ColRef> picked = pickBestPerFileFromCols(members, cl.centroid, MAX_COLS_PER_MAPPING);
             if (picked.isEmpty()) continue;
 
@@ -263,11 +268,15 @@ public class MappingService {
 
             String unionKey = makeUnique(concept, usedUnionKeys);
 
-            SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
+            // All cluster members appear in the column list so the user can see every
+            // column that belongs to this concept, including same-file duplicates that
+            // cannot participate in a join but are still semantically equivalent.
+            SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", members);
 
             SuggestedGroupDTO group = new SuggestedGroupDTO();
             group.setColumn(unionKey);
 
+            // Value merging still uses only the one-per-file picks.
             List<SuggestedValueDTO> values = buildValuesForConcept(unionKey, detectedType, null, picked);
             if (values.isEmpty()) continue;
 
@@ -277,7 +286,8 @@ public class MappingService {
             Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
             one.put(unionKey, mapping);
             out.add(one);
-            for (ColRef p : picked) usedColKeys.add(colKey(p));
+            // Mark every cluster member as covered so no solo fallback entry is emitted.
+            for (ColRef m : members) usedColKeys.add(colKey(m));
         }
 
         // Ensure every input column appears in at least one mapping, even if it was
