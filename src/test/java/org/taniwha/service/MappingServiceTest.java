@@ -50,7 +50,7 @@ class MappingServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         MappingServiceSettings mappingSettings = new MappingServiceSettings(
-                60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
+                60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6
         );
         mappingService = new MappingService(
                 embeddingService, terminologyService, terminologyInferenceService,

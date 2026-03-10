@@ -130,7 +130,7 @@ public class MappingServiceReportTest {
         @Bean
         public org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings() {
             return new org.taniwha.config.MappingConfig.MappingServiceSettings(
-                    60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
+                    60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6
             );
         }
 
