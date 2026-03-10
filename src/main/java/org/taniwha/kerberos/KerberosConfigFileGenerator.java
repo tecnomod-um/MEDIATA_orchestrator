@@ -33,6 +33,7 @@ public class KerberosConfigFileGenerator {
     }
 
     // Backward-compatible overload
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
     public static String generateKrb5ConfContent(String realm, int kdcPort) {
         return generateKrb5ConfContent(realm, kdcPort, "127.0.0.1");
     }

@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.mapping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,6 +8,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.service.DescriptionService;
+import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.TerminologyTermInferenceService;
+import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -412,6 +417,98 @@ class MappingServiceTest {
         
         assertNotNull(result, "Result should not be null");
         // These dissimilar columns should not cluster together
+    }
+
+    @Test
+    @DisplayName("Should cluster generic 'Type' column with typed 'Etiology' column via value character-ngram similarity")
+    void testClusteringByValueEmbeddingSimilarity() {
+        // Use identical combined embeddings (cosine sim = 1.0) so the ONLY deciding factor is
+        // structural evidence.  Before the fix, concept-level evidence is absent ("type" vs
+        // "etiology isch hem" share no tokens and no abbreviation pair), so the two columns
+        // would remain separate.
+        //
+        // After the fix, char-n-gram value similarity provides the necessary structural evidence:
+        // "ischemic" contains the 3-gram "hem" (positions 3-5) and shares "isc"/"sch" with
+        // "isch"; "hemorrhagic" starts with "hem".  ValueVectorUtil.build() runs with its real
+        // implementation (it is a pure, dependency-free utility — no mock needed).
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("Type", Arrays.asList("Ischemic", "Hemorrhagic"), "fimb.csv"),
+            // "HEM" (uppercase) mirrors real-world fixture data; normalizeValue lowercases it.
+            createElementFile("Etiology (Isch/Hem)", Arrays.asList("Hem", "HEM", "Isch"), "scuba.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(1, result.size(),
+            "Type [Ischemic, Hemorrhagic] and Etiology (Isch/Hem) [Hem, Isch] should cluster "
+            + "into one group because their char-n-gram value vectors share features "
+            + "('hem' appears in both 'ischemic' and 'hemorrhagic', 'isc'/'sch' appear in both)");
+        // The group key must use the meaningful concept name, not the structural "type"
+        assertTrue(result.get(0).containsKey("etiology_isch_hem"),
+            "Group key should be 'etiology_isch_hem' (the non-structural representative concept), "
+            + "not 'type'. Found keys: " + result.get(0).keySet());
+    }
+
+    @Test
+    @DisplayName("TOTAL MOTOR (FIM subscale) should NOT cluster with TOT BARTHEL (Barthel index)")
+    void testTotalMotorShouldNotMergeWithTotBarthel() {
+        // Both are "total" rehabilitation scores, so PubMedBERT embeddings are close.
+        // The bug was that "tot" (from "tot barthel") is a prefix of "total" (from "total motor"),
+        // so the abbreviation check fired — ignoring that "barthel" has no match in "motor".
+        // After the fix, the multi-token prefix guard requires ALL other tokens to also match.
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("TOTAL MOTOR", Arrays.asList("integer", "min:13", "max:91"), "fimb.csv"),
+            createElementFile("TOTBarthel", Arrays.asList("integer", "min:0", "max:100"), "scuba.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+            "TOTAL MOTOR (FIM subscale) and TOT BARTHEL (Barthel index) are different scales "
+            + "and must remain separate clusters");
+    }
+
+    @Test
+    @DisplayName("LOS (days) should NOT cluster with TSI to admission (days)")
+    void testLosDaysShouldNotMergeWithTsiAdmissionDays() {
+        // "LOS (days)" measures hospital length-of-stay (typically 2-56 days) while
+        // "TSI to admission (days)" measures time since spinal injury to rehab admission
+        // (typically 200-7000 days).  Before the fix, they merged because "days" gave a
+        // Jaccard overlap of 0.2 (≥ the 0.15 threshold).  After the fix "days" is a
+        // Jaccard stop-token, so no structural evidence exists and they stay separate.
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("LOS (days)", Arrays.asList("integer", "min:2", "max:56"), "scuba1.csv"),
+            createElementFile("TSI to admission (days)",
+                    Arrays.asList("integer", "min:203", "max:7726"), "scuba2.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+            "LOS (days) and TSI to admission (days) are completely different duration measures "
+            + "and must remain separate clusters (sharing only the unit token 'days' is not "
+            + "sufficient structural evidence)");
     }
 
     // ==================== Value Mapping Tests ====================

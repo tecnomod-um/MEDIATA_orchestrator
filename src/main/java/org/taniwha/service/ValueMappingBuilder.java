@@ -82,7 +82,7 @@ public class ValueMappingBuilder {
         }
 
         if (log.isDebugEnabled()) {
-            debugPickedSources("entry", uk, dt, picked);
+            debugPickedSources("entry", uk, picked);
             if (hasSchemaEnum) {
                 int n = schemaFieldOrNull.enumValues.size();
                 List<String> sample = schemaFieldOrNull.enumValues.subList(0, Math.min(n, LOG_MAX_VALUES_SAMPLE));
@@ -262,7 +262,7 @@ public class ValueMappingBuilder {
 
                 if (log.isDebugEnabled()) {
                     log.debug("[VMB] ordinalCrosswalk: canonBucket i={}/{} name='{}' -> src={} srcKind={} srcCats={} idx=[{},{}] interval={}",
-                            i, (nCanon - 1), canonCat,
+                            i, nCanon - 1, canonCat,
                             sourceKey(src),
                             srcDom.kind,
                             srcDom.categories.size(),
@@ -299,7 +299,7 @@ public class ValueMappingBuilder {
         double num = (double) (canonSize - 1);
 
         for (int j = 0; j < srcSize; j++) {
-            int ci = (int) Math.round((j / denom) * num);
+            int ci = (int) Math.round(j / denom * num);
             if (ci < 0) ci = 0;
             if (ci >= canonSize) ci = canonSize - 1;
             assigned.get(ci).add(j);
@@ -307,7 +307,7 @@ public class ValueMappingBuilder {
 
         List<Integer> bucket = assigned.get(canonIndex);
         if (bucket.isEmpty()) {
-            int nearest = (int) Math.round(((double) canonIndex / (double) (canonSize - 1)) * (srcSize - 1));
+            int nearest = (int) Math.round((double) canonIndex / (double) (canonSize - 1) * (srcSize - 1));
             nearest = MappingMathUtil.clamp(nearest, 0, srcSize - 1);
             return new RangeIdx(nearest, nearest);
         }
@@ -410,9 +410,7 @@ public class ValueMappingBuilder {
 
             // Prefer fewer categories (as in your original code)
             if (dc < bc) best = d;
-            else if (dc == bc) {
-                if (kindRank(d.kind) > kindRank(best.kind)) best = d;
-            }
+            else if (dc == bc && kindRank(d.kind) > kindRank(best.kind)) best = d;
         }
 
         if (log.isDebugEnabled() && best != null) {
@@ -781,8 +779,8 @@ public class ValueMappingBuilder {
             if (best == null || score > bestScore) {
                 best = t;
                 bestScore = score;
-            } else if (score == bestScore && best != null) {
-                if (t.compareToIgnoreCase(best) < 0) best = t;
+            } else if (score == bestScore && best != null && t.compareToIgnoreCase(best) < 0) {
+                best = t;
             }
         }
 
@@ -935,8 +933,8 @@ public class ValueMappingBuilder {
         for (String nv : c.normalizedValues) {
             int f = freq.getOrDefault(nv, 0);
             if (f > bestFreq) { best = nv; bestFreq = f; }
-            else if (f == bestFreq && best != null) {
-                if (nv.length() < best.length()) best = nv;
+            else if (f == bestFreq && best != null && nv.length() < best.length()) {
+                best = nv;
             }
         }
         return best == null ? c.normalizedValues.iterator().next() : best;
@@ -1004,7 +1002,7 @@ public class ValueMappingBuilder {
     // Logging helpers
     // ============================================================
 
-    private void debugPickedSources(String stage, String unionKey, String detectedType, List<EmbeddedColumn> picked) {
+    private void debugPickedSources(String stage, String unionKey, List<EmbeddedColumn> picked) {
         if (!log.isDebugEnabled()) return;
         if (picked == null || picked.isEmpty()) {
             log.debug("[VMB] {}: picked sources empty (union='{}')", stage, unionKey);

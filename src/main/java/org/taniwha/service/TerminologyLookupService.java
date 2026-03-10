@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -218,17 +219,18 @@ public class TerminologyLookupService {
 
     private String firstCodeFromSuggestions(List<OntologyTermDTO> suggestions) {
         if (suggestions == null || suggestions.isEmpty()) return "";
-        for (OntologyTermDTO s : suggestions) {
-            if (s == null) continue;
-            String iri = s.getIri();
-            if (iri == null || iri.isBlank()) continue;
-            String code = iri.replaceAll(".*sct/", "").trim();
-            if (code.isEmpty()) continue;
-            String label = s.getLabel();
-            label = (label == null) ? "" : label.trim();
-            return label.isEmpty() ? code : (code + "|" + label);
-        }
-        return "";
+        return suggestions.stream()
+                .filter(s -> s != null && s.getIri() != null && !s.getIri().isBlank())
+                .map(s -> {
+                    String code = s.getIri().replaceAll(".*sct/", "").trim();
+                    if (code.isEmpty()) return null;
+                    String label = s.getLabel();
+                    label = (label == null) ? "" : label.trim();
+                    return label.isEmpty() ? code : (code + "|" + label);
+                })
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse("");
     }
 
 
@@ -240,7 +242,8 @@ public class TerminologyLookupService {
 
             try {
                 if (embeddingsClient != null) embeddingsClient.embed(searchTerm);
-            } catch (Exception ignore) {
+            } catch (Exception e) {
+                logger.debug("[TermLookup] Fallback embed call failed (non-critical): {}", e.getMessage());
             }
 
             int hashCode = (t + ctx).hashCode();
@@ -270,7 +273,7 @@ public class TerminologyLookupService {
 
     private static void sleepQuietly(long ms) {
         if (ms <= 0) return;
-        try { Thread.sleep(ms); } catch (Exception ignore) {}
+        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     private static String shortStr(String s) {
