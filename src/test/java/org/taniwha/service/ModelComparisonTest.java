@@ -15,6 +15,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.service.mapping.MappingService;
 import org.taniwha.dto.SuggestedMappingDTO;
 
 import java.io.*;

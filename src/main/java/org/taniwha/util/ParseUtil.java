@@ -1,7 +1,7 @@
 package org.taniwha.util;
 
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
+
 import java.util.Date;
 import java.util.List;
 
@@ -36,18 +36,16 @@ public final class ParseUtil {
 
         try {
             return Instant.parse(x).toEpochMilli();
-        } catch (Exception ignore) {
-            // fall through
+        } catch (Exception ignored) {
+            return tryParseLegacyDateMs(x);
         }
+    }
 
+    private static Long tryParseLegacyDateMs(String x) {
         try {
             return Date.parse(x);
-        } catch (Exception ignore) {
-            try {
-                return new Date(Date.parse(x)).getTime();
-            } catch (Exception ignore2) {
-                return null;
-            }
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

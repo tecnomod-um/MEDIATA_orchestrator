@@ -2,6 +2,7 @@ package org.taniwha.service;
 
 import org.springframework.stereotype.Service;
 import org.taniwha.util.NormalizationUtil;
+import org.taniwha.util.ParseUtil;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -51,13 +52,15 @@ public class EmbeddingService {
                 }
 
                 if (low.startsWith("min:")) {
-                    try { min = Double.parseDouble(low.substring(4).trim()); } catch (Exception ignore) {}
+                    Double parsed = ParseUtil.tryParseDouble(low.substring(4).trim());
+                    if (parsed != null) min = parsed;
                     count++;
                     continue;
                 }
 
                 if (low.startsWith("max:")) {
-                    try { max = Double.parseDouble(low.substring(4).trim()); } catch (Exception ignore) {}
+                    Double parsed = ParseUtil.tryParseDouble(low.substring(4).trim());
+                    if (parsed != null) max = parsed;
                     count++;
                     continue;
                 }

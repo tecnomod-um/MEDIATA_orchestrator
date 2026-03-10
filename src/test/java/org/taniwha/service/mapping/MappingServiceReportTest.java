@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.mapping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -18,8 +18,15 @@ import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
+import org.taniwha.service.DescriptionService;
+import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.TerminologyTermInferenceService;
+import org.taniwha.service.ValueMappingBuilder;
+import org.taniwha.service.EmbeddingsClient;
+import org.taniwha.service.LLMTextGenerator;
+import org.taniwha.service.RDFService;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
@@ -91,18 +98,64 @@ public class MappingServiceReportTest {
             );
         }
         
-        @Bean
-        public EmbeddingModel embeddingModel() {
-            // Use Spring AI auto-configuration with default all-MiniLM-L6-v2 model
-            // This will download the model if not cached
-            return new TransformersEmbeddingModel();
-        }
+        // EmbeddingModel is intentionally NOT declared here so that Spring AI
+        // auto-configuration picks up the production PubMedBERT model from
+        // application.properties (spring.ai.embedding.transformer.onnx.model-uri).
+        // The cached ONNX file is reused so no network download is needed.
 
         @Bean
         public EmbeddingsClient embeddingsClient(EmbeddingModel embeddingModel) {
             return new EmbeddingsClient(embeddingModel);
         }
-        
+
+        @Bean
+        public EmbeddingService embeddingService(EmbeddingsClient embeddingsClient) {
+            return new EmbeddingService(embeddingsClient);
+        }
+
+        @Bean
+        public TerminologyLookupService terminologyLookupService(
+                RDFService rdfService,
+                EmbeddingsClient embeddingsClient,
+                @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
+                org.springframework.beans.factory.ObjectProvider<java.util.concurrent.ExecutorService> exec) {
+            return new TerminologyLookupService(rdfService, embeddingsClient, exec);
+        }
+
+        @Bean
+        public TerminologyTermInferenceService terminologyTermInferenceService(
+                LLMTextGenerator llmTextGenerator,
+                @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
+                java.util.concurrent.ExecutorService llmExecutor) {
+            return new TerminologyTermInferenceService(llmTextGenerator, llmExecutor);
+        }
+
+        @Bean
+        public ValueMappingBuilder valueMappingBuilder(EmbeddingService embeddingService) {
+            return new ValueMappingBuilder(embeddingService);
+        }
+
+        @Bean
+        public org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings() {
+            return new org.taniwha.config.MappingConfig.MappingServiceSettings(
+                    60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6
+            );
+        }
+
+        @Bean
+        public MappingService mappingService(
+                EmbeddingService embeddingService,
+                TerminologyLookupService terminologyLookupService,
+                TerminologyTermInferenceService terminologyTermInferenceService,
+                DescriptionService descriptionGenerator,
+                ValueMappingBuilder valueMappingBuilder,
+                com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
+            return new MappingService(embeddingService, terminologyLookupService,
+                    terminologyTermInferenceService, descriptionGenerator,
+                    valueMappingBuilder, objectMapper, mappingSettings);
+        }
+
         @Bean
         public RDFService rdfService() {
             // Mock RDFService to return realistic SNOMED codes
@@ -166,9 +219,6 @@ public class MappingServiceReportTest {
             return mock;
         }
         
-        // TerminologyLookupService and MappingService are auto-created by Spring
-        // using the beans above (rdfService mock, embeddingsClient, llmExecutor, etc.)
-
         @Bean
         public LLMTextGenerator llmTextGenerator(ObjectProvider<ChatModel> chatModelProvider,
                                                  @Value("${llm.enabled:true}") boolean llmEnabled) {
@@ -301,13 +351,15 @@ public class MappingServiceReportTest {
         System.out.println("Total mappings found: " + result.size());
         System.out.println("Mapping keys: " + foundMappings);
         
-        // These are key medical assessment categories that should be identified
-        List<String> expectedMappings = Arrays.asList("bath", "dress", "feed", "groom", "stair", "toilet", "sex");
-        long matchCount = expectedMappings.stream()
-            .filter(foundMappings::contains)
+        // Check for key medical assessment categories using substring matching so the test
+        // is not sensitive to exact sanitized key names (e.g. "bathing" matches "bath",
+        // "dressing" matches "dress", "stairs" matches "stair", etc.).
+        List<String> expectedCategories = Arrays.asList("bath", "dress", "feed", "groom", "stair", "toilet", "sex");
+        long matchCount = expectedCategories.stream()
+            .filter(cat -> foundMappings.stream().anyMatch(k -> k.contains(cat)))
             .count();
         
-        System.out.println("Expected categories found: " + matchCount + " out of " + expectedMappings.size());
+        System.out.println("Expected categories found: " + matchCount + " out of " + expectedCategories.size());
         System.out.println("================================\n");
         
         // Display sample mappings with terminology and descriptions
@@ -341,17 +393,9 @@ public class MappingServiceReportTest {
             }
         }
         System.out.println("==========================================================\n");
-        
-        // LLM should match or exceed math baseline (30 suggestions, 7/7 categories)
-        assertTrue(result.size() >= 25, 
-            "LLM should produce at least 25 mapping suggestions (got " + result.size() + ")");
-        assertTrue(matchCount >= 6, 
-            "LLM should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
-        
-        // CRITICAL: Validate value mappings are correct
-        validateValueMappings(result);
-        
-        // Write reports for manual inspection
+
+        // Write reports for manual inspection before assertions so the report is always
+        // available regardless of assertion outcome.
         Path outDir = Paths.get("target", "mapping-report");
         Files.createDirectories(outDir);
 
@@ -367,9 +411,19 @@ public class MappingServiceReportTest {
         
         System.out.println("\n=== LLM Embedding Quality Report ===");
         System.out.println("Total mapping suggestions: " + result.size());
-        System.out.println("Key categories identified: " + matchCount + "/" + expectedMappings.size());
+        System.out.println("Key categories identified: " + matchCount + "/" + expectedCategories.size());
         System.out.println("Report saved to: " + mdOut);
         System.out.println("====================================\n");
+        
+        // Quality checks - validate embedding model is producing useful pairings
+        assertNotNull(result, "Result should not be null");
+        assertTrue(result.size() >= 25, 
+            "Embedding model should produce at least 25 mapping suggestions (got " + result.size() + ")");
+        assertTrue(matchCount >= 6, 
+            "Embedding model should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
+        
+        // CRITICAL: Validate value mappings are correct
+        validateValueMappings(result);
     }
 
     private MappingSuggestRequestDTO loadRequestFixture() throws IOException {
