@@ -31,6 +31,20 @@ public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
+    /** Minimum length of a single-token concept before compound splitting is attempted. */
+    private static final int MIN_COMPOUND_WORD_LENGTH = 8;
+    /** Minimum character length for each half of a compound split (left and right). */
+    private static final int MIN_SUBTOKEN_LENGTH = 3;
+    /**
+     * Grammatical inflection suffixes used in the single-token abbreviation check.
+     * When a candidate token is a strict prefix of a single-token full concept, we only
+     * recognise it as an abbreviation when the remainder is a standard English morphological
+     * suffix, NOT a compound-word second part (e.g. "fim" in "totalfim").
+     */
+    private static final Set<String> GRAMMATICAL_SUFFIXES = new HashSet<>(Arrays.asList(
+            "ing", "ed", "er", "ers", "s", "es"
+    ));
+
     private final EmbeddingService embeddingService;
     private final TerminologyLookupService terminologyLookupService;
     private final TerminologyTermInferenceService terminologyInferenceService;
@@ -140,6 +154,15 @@ public class MappingService {
             if (e.getValue() >= mappingSettings.suffixNoiseMinCount()) suffixCandidates.add(e.getKey());
         }
 
+        // High-frequency suffix override: a token appearing as the last token in >= 8 columns
+        // is almost certainly a dataset-specific technical marker (e.g. "bart" in Barthel ADL
+        // column names: BowelBART1, BladderBART1, BathingBART1 … 16 occurrences).  Strip it
+        // regardless of whether it contains vowels — the vowel heuristic only applies to the
+        // low-count case.
+        for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
+            if (e.getValue() >= 8 && e.getKey().length() <= 5) suffixCandidates.add(e.getKey());
+        }
+
         Set<String> globalStop = new HashSet<>();
         for (String t : globalCandidates) {
             if (isStructuralToken(t)) globalStop.add(t);
@@ -148,6 +171,11 @@ public class MappingService {
         Set<String> suffixStop = new HashSet<>();
         for (String t : suffixCandidates) {
             if (isStructuralSuffixToken(t)) suffixStop.add(t);
+        }
+        // High-frequency suffix tokens (added above) that passed the count threshold are added
+        // unconditionally — they are structurally meaningful noise even with vowels.
+        for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
+            if (e.getValue() >= 8 && e.getKey().length() <= 5) suffixStop.add(e.getKey());
         }
 
         if (n <= 6 && globalStop.size() > 3) {
@@ -950,8 +978,42 @@ public class MappingService {
             kept.add(t);
         }
         if (kept.isEmpty()) kept = tokens;
+
+        // Compound-word split: if a single long token survives (e.g. "ageinjury",
+        // "totalbarthel"), try to split it into two known vocabulary sub-tokens.
+        // This lets all-caps compound columns ("AGEINJURY", "TOTALBARTHEL") align
+        // with their space-separated counterparts ("Age at injury", "TOTBarthel1").
+        if (kept.size() == 1 && kept.get(0).length() >= MIN_COMPOUND_WORD_LENGTH
+                && noise != null && noise.df() != null) {
+            List<String> split = trySplitCompound(kept.get(0), noise.df());
+            if (split != null) kept = split;
+        }
+
         return String.join(" ", kept).replaceAll("\\s+", " ").trim();
     }
+
+    /**
+     * Tries to split a single compound token into two known vocabulary sub-tokens.
+     * Both the left and right part must appear in the request's token vocabulary (df >= 1).
+     * Returns null if no valid split is found.
+     * Example: "ageinjury" → ["age", "injury"]  (when "age" and "injury" are known tokens)
+     *          "totalbarthel" → ["total", "barthel"] (when both appear in other columns)
+     */
+    private List<String> trySplitCompound(String token, Map<String, Integer> vocab) {
+        int len = token.length();
+        for (int i = MIN_SUBTOKEN_LENGTH; i <= len - MIN_SUBTOKEN_LENGTH; i++) {
+            String left  = token.substring(0, i);
+            String right = token.substring(i);
+            if (vocab.containsKey(left) && vocab.containsKey(right)) {
+                List<String> result = new ArrayList<>();
+                result.add(left);
+                result.add(right);
+                return result;
+            }
+        }
+        return null;
+    }
+
 
     private List<List<SimilarityScore<EmbeddedColumn>>> partitionTopCandidates(List<SimilarityScore<EmbeddedColumn>> candidates) {
         int take = Math.min(80, candidates.size());
@@ -1253,49 +1315,62 @@ public class MappingService {
         List<ColCluster> merged = new ArrayList<>();
 
         for (ColCluster col : clusters) {
-            String colConcept = col.cols.isEmpty() ? "" : col.cols.get(0).concept;
+            // Set the representative concept before the inner loop so conceptTokenJaccard
+            // has a non-empty string to work with for this cluster.
+            col.representativeConcept = pickClusterRepresentativeConcept(col.cols);
+            String colConcept = col.representativeConcept;
 
-            // Track the best unconditional target (sim >= 0.80 or sim >= threshold + Jaccard)
-            ColCluster bestUnconditional = null;
-            double bestUnconditionalSim = -1;
-
-            // Track the best abbreviation target (sim >= threshold + abbreviation detection),
-            // checked against every column in each candidate cluster — not just the first.
-            ColCluster bestAbbreviation = null;
-            double bestAbbreviationSim = -1;
+            // Best candidate for merging (highest sim that satisfies structural evidence).
+            ColCluster bestMatch = null;
+            double bestMatchSim = -1;
 
             for (ColCluster cl : merged) {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
+
                 double jac = conceptTokenJaccard(col, cl);
+                boolean hasTokenOverlap = (jac >= 0.15);
 
-                if ((sim >= 0.80 || (sim >= mappingSettings.columnClusterThreshold() && jac >= 0.15))
-                        && sim > bestUnconditionalSim) {
-                    bestUnconditionalSim = sim;
-                    bestUnconditional = cl;
-                }
-
-                if (sim >= mappingSettings.columnClusterThreshold() && sim > bestAbbreviationSim) {
+                // Abbreviation check — only when token overlap is absent (avoids redundant work).
+                boolean hasAbbrevPair = false;
+                if (!hasTokenOverlap) {
                     for (EmbeddedColumn clCol : cl.cols) {
                         if (isAbbreviationPair(colConcept, clCol.concept)) {
-                            bestAbbreviationSim = sim;
-                            bestAbbreviation = cl;
+                            hasAbbrevPair = true;
                             break;
                         }
                     }
                 }
+
+                // Require structural evidence of relation (token overlap OR abbreviation pair).
+                // This prevents pure domain-level semantic similarity (e.g., PubMedBERT groups
+                // ALL Barthel ADL items with sim >= 0.80) from merging distinct clinical concepts
+                // like "toilet" and "bowel" that happen to score high in the same medical domain.
+                if (!(hasTokenOverlap || hasAbbrevPair)) continue;
+
+                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}",
+                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair);
+
+                if (sim >= mappingSettings.columnClusterThreshold() && sim > bestMatchSim) {
+                    bestMatchSim = sim;
+                    bestMatch = cl;
+                }
             }
 
-            // Prefer a traditional match; fall back to an abbreviation-based match
-            ColCluster target = (bestUnconditional != null) ? bestUnconditional : bestAbbreviation;
-            if (target != null) {
-                for (EmbeddedColumn r : col.cols) target.add(r);
+            if (bestMatch != null) {
+                for (EmbeddedColumn r : col.cols) bestMatch.add(r);
+                // Keep the representative concept current after the cluster grows.
+                bestMatch.representativeConcept = pickClusterRepresentativeConcept(bestMatch.cols);
             } else {
                 merged.add(col);
             }
         }
 
+        // Final pass — ensures every cluster has a representative concept set
+        // (the incremental updates above cover all clusters, this is a safety net).
         for (ColCluster c : merged) {
-            c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
+            if (c.representativeConcept == null || c.representativeConcept.isEmpty()) {
+                c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
+            }
         }
 
         return merged;
@@ -1348,9 +1423,27 @@ public class MappingService {
         String[] candidateTokens = candidate.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
         String[] fullTokensArr = fullConcept.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
 
-        // Full concept must have at least 2 meaningful tokens
+        // Full concept must have at least 2 meaningful tokens; handle single-token below.
         List<String> fullParts = new ArrayList<>();
         for (String t : fullTokensArr) { if (t != null && !t.isEmpty()) fullParts.add(t); }
+
+        // Single-token full concept (e.g. "grooming", "toileting", "dressing"):
+        // detect when any candidate token is a strict prefix of that token.
+        // This lets "groom" match "grooming", "toilet" match "toileting", etc.
+        // The remainder must be a grammatical inflection suffix (not a compound-word
+        // second part like "fim" in "totalfim") to avoid false positives.
+        if (fullParts.size() == 1) {
+            String singleToken = fullParts.get(0);
+            if (singleToken.length() < 4) return false; // too short to be a meaningful base
+            for (String abbrev : candidateTokens) {
+                if (abbrev == null || abbrev.length() < 3) continue;
+                if (singleToken.length() > abbrev.length() && singleToken.startsWith(abbrev)) {
+                    String remainder = singleToken.substring(abbrev.length());
+                    if (GRAMMATICAL_SUFFIXES.contains(remainder)) return true;
+                }
+            }
+            return false;
+        }
         if (fullParts.size() < 2) return false;
 
         // Build initials multiset: char → how many full-concept tokens start with that char
