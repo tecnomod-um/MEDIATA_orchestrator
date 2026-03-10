@@ -7,6 +7,7 @@ import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
+import org.taniwha.service.mapping.MappingService;
 import org.taniwha.util.MappingMathUtil;
 
 import java.io.InputStream;

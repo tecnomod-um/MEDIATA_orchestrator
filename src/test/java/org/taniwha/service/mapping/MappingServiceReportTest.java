@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.mapping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -18,6 +18,14 @@ import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
+import org.taniwha.service.DescriptionService;
+import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.TerminologyTermInferenceService;
+import org.taniwha.service.ValueMappingBuilder;
+import org.taniwha.service.EmbeddingsClient;
+import org.taniwha.service.LLMTextGenerator;
+import org.taniwha.service.RDFService;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.ollama.OllamaChatModel;
