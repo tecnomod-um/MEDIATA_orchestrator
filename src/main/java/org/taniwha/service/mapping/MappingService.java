@@ -23,6 +23,7 @@ import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.JsonSchemaParsingUtil;
 import org.taniwha.util.ParseUtil;
 import org.taniwha.util.StringUtil;
+import org.taniwha.util.ValueVectorUtil;
 
 import java.util.*;
 
@@ -111,7 +112,10 @@ public class MappingService {
                 logger.warn("[MappingService] embed failed for '{}' (skipping column)", colName);
                 return;
             }
-            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, stats));
+            // Compute a char-n-gram value vector for categorical columns so that the clusterer
+            // can use value-level character similarity as structural alignment evidence.
+            float[] valueVec = ValueVectorUtil.build(rawValues);
+            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, valueVec, stats));
         });
         if (processedColumns.isEmpty()) return Collections.emptyList();
 

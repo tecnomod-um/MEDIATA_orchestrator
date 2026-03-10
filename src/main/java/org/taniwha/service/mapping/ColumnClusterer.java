@@ -12,11 +12,12 @@ import java.util.*;
 
 /**
  * Groups {@link EmbeddedColumn} instances into conceptually similar clusters using cosine
- * similarity with structural-evidence guards (token Jaccard + abbreviation detection).
+ * similarity with structural-evidence guards (token Jaccard + abbreviation detection +
+ * value-embedding similarity).
  * <p>
  * Pure domain-level semantic similarity alone is <em>not</em> sufficient for a merge —
- * structural evidence (shared tokens or abbreviation pair) is required to prevent distinct
- * clinical concepts from collapsing into one cluster.
+ * structural evidence (shared tokens, abbreviation pair, or similar value embeddings) is
+ * required to prevent distinct clinical concepts from collapsing into one cluster.
  * </p>
  * <p>
  * Extracted from {@link MappingService} for maintainability.
@@ -33,6 +34,19 @@ class ColumnClusterer {
      * suffix, NOT a compound-word second part (e.g. "fim" in "totalfim").
      */
     private static final Set<String> GRAMMATICAL_SUFFIXES = Set.of("ing", "ed", "er", "ers", "s", "es");
+
+    /**
+     * Minimum cosine similarity between two clusters' char-n-gram value centroids required to
+     * treat value-level character similarity as structural alignment evidence.
+     */
+    private static final double VALUE_EMBEDDING_THRESHOLD = 0.30;
+
+    /**
+     * When two clusters' value centroids have cosine similarity at or above this bound their
+     * value distributions are considered <em>identical</em> (e.g. two different binary
+     * {@code "yes/no"} columns) and value-level evidence is suppressed to avoid spurious merges.
+     */
+    private static final double VALUE_EMBEDDING_IDENTICAL = 0.99;
 
     private final MappingServiceSettings settings;
 
@@ -86,12 +100,12 @@ class ColumnClusterer {
                     }
                 }
 
-                // Value-token prefix check — catches columns whose concept names are too generic
-                // (e.g. "Type") but whose categorical values share a prefix relationship with
-                // values in the candidate cluster (e.g. "Isch" is a prefix of "Ischemic").
+                // Value-embedding similarity check — catches columns whose concept names are too
+                // generic (e.g. "Type") but whose categorical values embed close to another
+                // cluster's values (e.g. "Ischemic"/"Hemorrhagic" ≈ "Isch"/"Hem").
                 boolean hasValueEvidence = false;
                 if (!hasTokenOverlap && !hasAbbrevPair) {
-                    hasValueEvidence = hasValueTokenPrefixOverlap(col, cl);
+                    hasValueEvidence = hasValueEmbeddingSimilarity(col, cl);
                 }
 
                 // Require structural evidence to prevent pure domain-level PubMedBERT similarity
@@ -315,57 +329,39 @@ class ColumnClusterer {
     }
 
     // ------------------------------------------------------------------
-    // Value-token evidence
+    // Value-embedding evidence
     // ------------------------------------------------------------------
 
     /**
-     * Returns {@code true} when any categorical value token from cluster {@code a} is a
-     * strict prefix of a value token from cluster {@code b}, or vice versa.
+     * Returns {@code true} when the char-n-gram value centroids of the two clusters have
+     * sufficient similarity to serve as structural alignment evidence, but are not identical.
      * <p>
-     * This catches columns whose concept names are too generic to provide structural evidence
-     * on their own (e.g. {@code "Type"} with values {@code ["Ischemic", "Hemorrhagic"]}) but
-     * whose domain values have a clear abbreviation relationship with another cluster's values
-     * (e.g. {@code "Etiology (Isch/Hem)"} with values {@code ["Hem", "Isch"]}).
-     * Both tokens must be at least 3 characters long, and one must be strictly shorter than
-     * the other (no equality match) to avoid spurious overlap from very short categorical codes.
+     * <strong>Similarity ≥ {@link #VALUE_EMBEDDING_THRESHOLD} (0.30)</strong>: the clusters'
+     * value domains share enough character-level features to suggest the same underlying concept
+     * encoded differently — e.g. {@code "Ischemic"/"Hemorrhagic"} vs {@code "Hem"/"Isch"}.
+     * The 3-gram {@code "hem"} appears in {@code "ischemic"} (positions 3-5) and in
+     * {@code "hemorrhagic"}, and is also the full word in the second column; similarly
+     * {@code "isc"}/{@code "sch"} appear in both sides.
+     * </p>
+     * <p>
+     * <strong>Similarity &lt; {@link #VALUE_EMBEDDING_IDENTICAL} (0.99)</strong>: vectors that
+     * are practically identical indicate two columns with the <em>same</em> value distribution
+     * (e.g. two separate binary {@code "yes/no"} clinical variables such as
+     * {@code "diabetes"} and {@code "hypertension"}).  Those must not be merged even when their
+     * PubMedBERT combined-embedding similarity is high.
+     * </p>
+     * <p>
+     * Only clusters where at least one member carries a non-null {@link EmbeddedColumn#valueVec}
+     * participate; numeric/date columns return {@code null} from {@link org.taniwha.util.ValueVectorUtil}
+     * and are therefore excluded via {@code valueCentroid == null}.
      * </p>
      */
-    private boolean hasValueTokenPrefixOverlap(ColCluster a, ColCluster b) {
-        Set<String> tokA = collectCategoricalValueTokens(a);
-        Set<String> tokB = collectCategoricalValueTokens(b);
-        if (tokA.isEmpty() || tokB.isEmpty()) return false;
-        for (String ta : tokA) {
-            for (String tb : tokB) {
-                if (ta.length() < tb.length() && tb.startsWith(ta)) return true;
-                if (tb.length() < ta.length() && ta.startsWith(tb)) return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Collects lower-cased alphabetic tokens (length ≥ 3) from the categorical values of
-     * every column in the cluster.  Numeric descriptors ({@code integer}, {@code double},
-     * {@code float}) and range markers ({@code min:…}, {@code max:…}) are excluded so that
-     * numeric columns do not produce spurious value-token evidence.
-     */
-    private static Set<String> collectCategoricalValueTokens(ColCluster cluster) {
-        Set<String> tokens = new LinkedHashSet<>();
-        for (EmbeddedColumn col : cluster.cols) {
-            if (col.rawValues == null) continue;
-            for (String val : col.rawValues) {
-                if (val == null) continue;
-                String v = val.trim().toLowerCase(Locale.ROOT);
-                if (v.isEmpty() || v.equals("integer") || v.equals("double") || v.equals("float")
-                        || v.startsWith("min:") || v.startsWith("max:")) continue;
-                for (String p : v.split("[^a-z0-9]+")) {
-                    if (p.length() >= 3 && !p.matches("\\d+")) {
-                        tokens.add(p);
-                    }
-                }
-            }
-        }
-        return tokens;
+    private boolean hasValueEmbeddingSimilarity(ColCluster a, ColCluster b) {
+        if (a.valueCentroid == null || b.valueCentroid == null) return false;
+        double sim = MappingMathUtil.cosine(a.valueCentroid, b.valueCentroid);
+        logger.debug("[CLUSTER] value-ngram sim '{}' vs '{}': {}", a.representativeConcept, b.representativeConcept, sim);
+        if (sim >= VALUE_EMBEDDING_IDENTICAL) return false;
+        return sim >= VALUE_EMBEDDING_THRESHOLD;
     }
 
     // ------------------------------------------------------------------
