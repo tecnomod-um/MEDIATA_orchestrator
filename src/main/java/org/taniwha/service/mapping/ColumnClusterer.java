@@ -36,6 +36,21 @@ class ColumnClusterer {
     private static final Set<String> GRAMMATICAL_SUFFIXES = Set.of("ing", "ed", "er", "ers", "s", "es");
 
     /**
+     * Generic temporal/unit/qualifier tokens that should not contribute to Jaccard token overlap.
+     * <ul>
+     *   <li>Time-unit tokens (e.g. {@code "days"}): two columns sharing only {@code "days"}
+     *       (e.g. {@code "LOS (days)"} range 2-56 vs {@code "TSI to admission (days)"} range
+     *       203-7726) measure entirely different durations and must not merge on that alone.</li>
+     *   <li>{@code "total"}: a generic measurement qualifier that appears in many unrelated
+     *       clinical scales (e.g. {@code "TOTAL MOTOR"} and {@code "TOTAL COGNITIU"} are
+     *       different FIM subscales; they must not merge just because both names start with
+     *       {@code "total"}).</li>
+     * </ul>
+     */
+    private static final Set<String> JACCARD_STOP_TOKENS =
+            Set.of("total", "days", "weeks", "months", "years", "hours", "minutes");
+
+    /**
      * Minimum cosine similarity between two clusters' char-n-gram value centroids required to
      * treat value-level character similarity as structural alignment evidence.
      */
@@ -234,7 +249,8 @@ class ColumnClusterer {
         for (String p : parts) {
             if (p == null) continue;
             String t = p.trim();
-            if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1) continue;
+            if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1
+                    || JACCARD_STOP_TOKENS.contains(t)) continue;
             out.add(t);
         }
         return out;
@@ -290,6 +306,13 @@ class ColumnClusterer {
             if (abbrev == null || abbrev.isEmpty()) continue;
             if (abbrev.length() < 2 || abbrev.length() > 6) continue;
 
+            // Multi-token guard for Case 1 (initialism): in a multi-token → multi-token
+            // context, tokens shorter than 3 characters are typically prepositions or articles
+            // ("at", "to", "by") and must not act as initialism abbreviations.  Without this
+            // guard "at" in "age at injury" would incorrectly match the initials of
+            // "tsi to admission days" (which share 'a' and 't').
+            if (candidateTokens.length > 1 && fullParts.size() > 1 && abbrev.length() < 3) continue;
+
             Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
             for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
 
@@ -305,9 +328,19 @@ class ColumnClusterer {
             }
             if (initialsMatch) return true;
 
-            // Case 2: Prefix — abbreviation is a STRICT prefix of a full-concept token
+            // Case 2: Prefix — abbreviation is a STRICT prefix of a full-concept token.
+            // Multi-token guard: when BOTH concepts have more than one token, every OTHER
+            // candidate token must also match some remaining full token (by equality or prefix).
+            // This prevents "tot barthel" from abbreviating "total motor" just because "tot" is
+            // a strict prefix of "total" — "barthel" has no match in ["motor"].
             for (String token : fullParts) {
-                if (token.length() > abbrev.length() && token.startsWith(abbrev)) return true;
+                if (token.length() > abbrev.length() && token.startsWith(abbrev)) {
+                    if (candidateTokens.length > 1 && fullParts.size() > 1) {
+                        if (remainingTokensMatch(abbrev, candidateTokens, token, fullParts)) return true;
+                    } else {
+                        return true;
+                    }
+                }
             }
 
             // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR
@@ -326,6 +359,42 @@ class ColumnClusterer {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns {@code true} when every candidate token other than {@code matchedCandidateToken}
+     * has a matching counterpart among the full-concept tokens other than
+     * {@code matchedFullToken}. Matching is by equality or strict prefix relationship in either
+     * direction.
+     * <p>
+     * Used by the Case 2 (prefix) multi-token guard in
+     * {@link #looksLikeAbbreviationOf(String, String)} to prevent {@code "tot barthel"} from
+     * abbreviating {@code "total motor"} just because {@code "tot"} is a prefix of
+     * {@code "total"} — the other token {@code "barthel"} has no match in {@code ["motor"]}.
+     * </p>
+     */
+    private static boolean remainingTokensMatch(
+            String matchedCandidateToken, String[] candidateTokens,
+            String matchedFullToken,      List<String> fullParts) {
+        // Build the set of remaining full tokens (exclude the already-matched full token).
+        List<String> remaining = new ArrayList<>(fullParts.size());
+        boolean excluded = false;
+        for (String ft : fullParts) {
+            if (!excluded && ft.equals(matchedFullToken)) { excluded = true; continue; }
+            remaining.add(ft);
+        }
+        for (String ct : candidateTokens) {
+            if (ct == null || ct.equals(matchedCandidateToken)) continue;
+            boolean found = false;
+            for (String ft : remaining) {
+                if (ft.equals(ct) || ft.startsWith(ct) || ct.startsWith(ft)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------
