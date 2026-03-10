@@ -4,283 +4,215 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.taniwha.dto.ElementFileDTO;
+import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
+import org.taniwha.model.*;
 import org.taniwha.util.JsonSchemaParsingUtil;
+import org.taniwha.util.MappingMathUtil;
 import org.taniwha.util.NormalizationUtil;
 import org.taniwha.util.StringUtil;
-import org.taniwha.util.MappingMathUtil;
+import org.taniwha.util.ParseUtil;
+import org.taniwha.service.jobs.ProgressReporter;
 
 import java.util.*;
+import java.util.Objects;
+import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 @Service
 public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
-    private static final int D = 2048;
+    private final EmbeddingService embeddingService;
+    private final TerminologyLookupService terminologyLookupService;
+    private final TerminologyTermInferenceService terminologyInferenceService;
+    private final DescriptionService descriptionGenerator;
+    private final ValueMappingBuilder valueMappingBuilder;
+    private final ObjectMapper objectMapper;
 
-    private static final int MAX_VALUES = 80;
-    private static final int MAX_ENUM = 120;
+    private final MappingServiceSettings mappingSettings;
 
-    private static final double DEFAULT_W_SRC_NAME = 0.70;
-    private static final double DEFAULT_W_SRC_VALUES = 0.30;
+    public MappingService(EmbeddingService embeddingService,
+                          TerminologyLookupService terminologyLookupService,
+                          TerminologyTermInferenceService terminologyInferenceService,
+                          DescriptionService descriptionGenerator,
+                          ValueMappingBuilder valueMappingBuilder,
+                          ObjectMapper objectMapper,
+                          MappingServiceSettings mappingSettings) {
+        this.embeddingService = embeddingService;
+        this.terminologyLookupService = terminologyLookupService;
+        this.terminologyInferenceService = terminologyInferenceService;
+        this.descriptionGenerator = descriptionGenerator;
+        this.valueMappingBuilder = valueMappingBuilder;
+        this.objectMapper = objectMapper;
 
-    private static final double W_TGT_NAME = 0.70;
-    private static final double W_TGT_ENUM = 0.30;
+        this.mappingSettings = mappingSettings;
+        logger.info("[MappingService] Initialized.");
+    }
 
-    private static final double THRESH_SCHEMA_COL = 0.33;
-    private static final double THRESH_ENUM_VALUE = 0.40;
-
-    private static final double THRESH_CLUSTER = 0.55;
-
-    private static final int MAX_VALUES_PER_UNION = 220;
-    private static final int MAX_SUGGESTIONS_PER_SCHEMA_FIELD = 6;
-
-    private static final double THRESH_COL_CLUSTER = 0.56;
-    private static final double THRESH_VALUE_CLUSTER = 0.40;
-    private static final int MAX_SCHEMALESS_TARGETS = 40;
-
-    // one-column-per-file
-    private static final int MAX_COLS_PER_MAPPING = 10;
-
-    private static final int MAX_ORDINAL_CATEGORIES = 60;
-
-    private static final int MAX_DOMAIN_UNIQUE = 25;
-    private static final int MIN_DOMAIN_UNIQUE = 2;
-    private static final double THRESH_TOKEN_ALIAS = 0.72;
-    private static final int MIN_SUPPORT_FOR_CANON = 1;
-
-    // learned noise thresholds (computed per request)
-    private static final double NOISE_DF_FRACTION = 0.22;     // token appears in >=22% of columns => noise
-    private static final int NOISE_DF_MIN_COUNT = 4;          // or appears in >=4 columns
-    private static final int SUFFIX_NOISE_MIN_COUNT = 2;      // token appears as suffix in >=2 columns
-
-    // compound-word splitting (canonicalConceptName)
-    /** Minimum length of a single-token concept before compound splitting is attempted. */
-    private static final int MIN_COMPOUND_WORD_LENGTH = 8;
-    /** Minimum character length for each half of a compound split (left and right). */
-    private static final int MIN_SUBTOKEN_LENGTH = 3;
-    /**
-     * When checking whether a suffix-noise candidate is "productive" (appears inside
-     * a longer compound token), the compound token must be at least this many characters
-     * longer than the candidate to avoid degenerate cases where a near-full token is
-     * considered a meaningful compound.
-     */
-    private static final int MIN_COMPOUND_LENGTH_DIFF = 2;
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
+    // Creates suggested mappings for columns and their values
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
-        List<ElementFileDTO> cols = (req == null || req.getElementFiles() == null)
-                ? Collections.emptyList()
-                : req.getElementFiles();
 
-        if (cols.isEmpty()) return Collections.emptyList();
+        List<ColumnInFileDTO> columnDTOs = (req == null || req.getElementFiles() == null) ? Collections.emptyList() : req.getElementFiles();
+        logger.info("[TRACE] suggestMappings: {} element files", columnDTOs.size());
+        if (columnDTOs.isEmpty()) return Collections.emptyList();
 
-        // --- Prepass: collect column-name tokens to learn request-specific noise ---
-        List<RawColName> rawNames = new ArrayList<>(cols.size());
-        for (ElementFileDTO c : cols) {
-            if (c == null) continue;
-            String colName = StringUtil.safe(c.getColumn());
-            if (!colName.trim().isEmpty()) {
-                rawNames.add(new RawColName(colName, tokenizeName(colName)));
+        List<String> affectedColumnNames = new ArrayList<>(columnDTOs.size());
+        for (ColumnInFileDTO dto : columnDTOs) {
+            if (dto == null) continue;
+            String colName = StringUtil.safeTrim(dto.getColumn());
+            if (!colName.isEmpty()) {
+                affectedColumnNames.add(colName);
             }
         }
 
-        LearnedNoise learnedNoise = learnNoiseFromRequest(rawNames);
+        // Structural noise to avoid
+        LearnedNoise learnedNoise = learnNoiseFromRequest(affectedColumnNames);
+        List<EmbeddedColumn> processedColumns = new ArrayList<>(columnDTOs.size());
 
-        // --- Build ColRefs with learned canonicalization + adaptive weights ---
-        List<ColRef> all = new ArrayList<>(cols.size());
-        for (ElementFileDTO c : cols) {
-            if (c == null) continue;
-
+        columnDTOs.stream().filter(Objects::nonNull).forEach(c -> {
             String nodeId = StringUtil.safe(c.getNodeId());
             String fileName = StringUtil.safe(c.getFileName());
             String colName = StringUtil.safe(c.getColumn());
             List<String> rawValues = c.getValues();
+            ColStats stats = ParseUtil.parseColStats(rawValues);
 
-            ColStats stats = parseStatsFromValues(rawValues);
-
-            CanonicalName can = canonicalConceptName(colName, learnedNoise);
-
-            float[] nameVec = embedName(can.concept);
-            float[] valueVec = embedValues(rawValues);
-
-            // Adaptive weighting:
-            // - If name is short/generic, lean more on values.
-            // - If column looks numeric/date, name tends to be more reliable again.
-            double wName = DEFAULT_W_SRC_NAME;
-            double wVals = DEFAULT_W_SRC_VALUES;
-
-            boolean nameGeneric = can.genericness >= 0.55 || can.tokenCount <= 1 || can.concept.length() <= 4;
-            boolean hasStrongValues = looksLikeInformativeCategorical(stats, rawValues);
-
-            if (nameGeneric && hasStrongValues) {
-                wName = 0.45;
-                wVals = 0.55;
-            } else if (nameGeneric) {
-                wName = 0.55;
-                wVals = 0.45;
+            String concept = normalizeRawColumn(colName, learnedNoise);
+            float[] combined = embeddingService.embedColumnWithValues(concept, rawValues);
+            if (combined == null || combined.length == 0) {
+                logger.warn("[MappingService] embed failed for '{}' (skipping column)", colName);
+                return;
             }
+            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, stats));
+        });
+        if (processedColumns.isEmpty()) return Collections.emptyList();
 
-            // If numeric/date markers exist, do not over-weight values list (because it contains "min/max" markers)
-            if (stats.hasIntegerMarker || stats.hasDoubleMarker || stats.hasDateMarker) {
-                wName = Math.max(wName, 0.65);
-                wVals = 1.0 - wName;
-            }
+        List<EmbeddedSchemaField> schemaFields = embedSchemaFields(req.getSchema());
+        List<Map<String, SuggestedMappingDTO>> suggestionsOutput = schemaFields.isEmpty() ?
+                suggestWithoutSchema(processedColumns) : suggestWithSchema(schemaFields, processedColumns);
 
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
-                combined[k] = (float) (wName * nameVec[k] + wVals * valueVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
-
-            all.add(new ColRef(nodeId, fileName, colName, can.concept, rawValues, combined, valueVec, stats));
-        }
-        if (all.isEmpty()) return Collections.emptyList();
-
-        List<SchemaFieldRef> schemaFields = parseSchemaFields(req == null ? null : req.getSchema());
-        if (!schemaFields.isEmpty()) return suggestWithSchema(schemaFields, all);
-
-        logger.info("[MappingService] No usable schema fields provided. Using schema-less suggestion mode.");
-        return suggestWithoutSchema(all);
+        ensureAllColumnsCovered(processedColumns, suggestionsOutput);
+        return suggestionsOutput;
     }
 
-    // ============================================================
-    // Schema mode
-    // ============================================================
+    private LearnedNoise learnNoiseFromRequest(List<String> rawColumnNames) {
+        Map<String, Integer> df = new HashMap<>();
+        Map<String, Integer> suffixCount = new HashMap<>();
 
-    private List<Map<String, SuggestedMappingDTO>> suggestWithSchema(List<SchemaFieldRef> schemaFields, List<ColRef> all) {
-        Map<String, List<ColScore>> colsBySchema = new HashMap<>();
+        int n = 0;
+        for (String rawColumnName : (rawColumnNames == null ? List.<String>of() : rawColumnNames)) {
+            String name = StringUtil.safeTrim(rawColumnName);
+            if (name.isEmpty()) continue;
+            List<String> tokens = tokenizeName(name);
+            if (tokens.isEmpty()) continue;
+            n++;
 
-        for (ColRef src : all) {
-            SchemaScore best = bestSchemaMatch(src, schemaFields);
-            if (best == null) continue;
-            if (best.sim < THRESH_SCHEMA_COL) continue;
+            Set<String> uniq = new HashSet<>(tokens);
+            for (String t : uniq) {
+                if (t == null || t.isEmpty()) continue;
+                df.put(t, df.getOrDefault(t, 0) + 1);
+            }
 
-            colsBySchema.computeIfAbsent(best.field.name, k -> new ArrayList<>())
-                    .add(new ColScore(src, best.sim));
+            String last = tokens.get(tokens.size() - 1);
+            if (last != null && !last.isEmpty()) {
+                suffixCount.put(last, suffixCount.getOrDefault(last, 0) + 1);
+            }
+        }
+        Set<String> globalCandidates = new HashSet<>();
+        Set<String> suffixCandidates = new HashSet<>();
+
+        for (Map.Entry<String, Integer> e : df.entrySet()) {
+            String t = e.getKey();
+            int c = e.getValue();
+            if (c >= mappingSettings.noiseDocumentFrequencyMinCount()) globalCandidates.add(t);
+            else if (n > 0 && (c / (double) n) >= mappingSettings.noiseDocumentFrequencyFraction()) globalCandidates.add(t);
         }
 
-        if (colsBySchema.isEmpty()) return Collections.emptyList();
+        for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
+            if (e.getValue() >= mappingSettings.suffixNoiseMinCount()) suffixCandidates.add(e.getKey());
+        }
+
+        Set<String> globalStop = new HashSet<>();
+        for (String t : globalCandidates) {
+            if (isStructuralToken(t)) globalStop.add(t);
+        }
+
+        Set<String> suffixStop = new HashSet<>();
+        for (String t : suffixCandidates) {
+            if (isStructuralSuffixToken(t)) suffixStop.add(t);
+        }
+
+        if (n <= 6 && globalStop.size() > 3) {
+            List<Map.Entry<String, Integer>> entries = new ArrayList<>();
+            for (String t : globalStop) {
+                entries.add(Map.entry(t, df.getOrDefault(t, 0)));
+            }
+            entries.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+            Set<String> keep = new HashSet<>();
+            for (int i = 0; i < Math.min(3, entries.size()); i++) keep.add(entries.get(i).getKey());
+            globalStop.retainAll(keep);
+        }
+
+        return new LearnedNoise(globalStop, suffixStop, df, n);
+    }
+
+    private List<Map<String, SuggestedMappingDTO>> suggestWithSchema(
+            List<EmbeddedSchemaField> schemaFields,
+            List<EmbeddedColumn> allColumns
+    ) {
+        Map<String, List<SimilarityScore<EmbeddedColumn>>> colsBySchema = new HashMap<>();
+
+        for (EmbeddedColumn src : allColumns) {
+            SimilarityScore<EmbeddedSchemaField> best = bestSchemaMatch(src, schemaFields);
+            if (best == null || best.sim() < mappingSettings.schemaToColumnThreshold()) continue;
+
+            colsBySchema
+                    .computeIfAbsent(best.item().name, k -> new ArrayList<>())
+                    .add(new SimilarityScore<>(src, best.sim()));
+        }
 
         Set<String> usedUnionKeys = new HashSet<>();
-        Set<String> usedColKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
 
-        for (SchemaFieldRef field : schemaFields) {
-            List<ColScore> candidates = colsBySchema.get(field.name);
+        for (EmbeddedSchemaField field : schemaFields) {
+            List<SimilarityScore<EmbeddedColumn>> candidates = colsBySchema.get(field.name);
             if (candidates == null || candidates.isEmpty()) continue;
 
-            candidates.sort((a, b) -> Double.compare(b.sim, a.sim));
+            candidates.sort((a, b) -> Double.compare(b.sim(), a.sim()));
+            String detectedFieldType = detectTypeFromSourcesOrSchema(
+                    topCols(candidates),
+                    StringUtil.safe(field.type)
+            );
 
-            String schemaType = StringUtil.safe(field.type);
-            String detectedFieldType = detectTypeFromSourcesOrSchema(topCols(candidates, 30), schemaType);
-
-            List<List<ColScore>> batches = partitionTopCandidates(candidates, 80);
+            // Flatten top candidates into a column list, then do multi-round batching so
+            // that each file's secondary/tertiary columns (e.g. ToiletBART2 when ToiletBART1
+            // was already used) each get their own cross-file mapping instead of being
+            // silently dropped.
+            List<EmbeddedColumn> candidateCols = topCols(candidates);
+            List<List<EmbeddedColumn>> batches = partitionMembersByFile(candidateCols, null);
 
             int emitted = 0;
-            for (List<ColScore> batch : batches) {
-                if (emitted >= MAX_SUGGESTIONS_PER_SCHEMA_FIELD) break;
+            for (List<EmbeddedColumn> batch : batches) {
+                if (emitted >= mappingSettings.maxSuggestionsPerSchemaField()) break;
+                if (batch.isEmpty()) continue;
 
-                List<ColRef> picked = pickBestPerFileFromScores(batch, MAX_COLS_PER_MAPPING);
-                if (picked.isEmpty()) continue;
-
-                String unionKey = makeUnique(sanitizeUnionName(field.name), usedUnionKeys);
-
-                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
-
-                SuggestedGroupDTO group = new SuggestedGroupDTO();
-                group.setColumn(unionKey);
-
-                List<SuggestedValueDTO> values = buildValuesForConcept(unionKey, detectedFieldType, field, picked);
-                if (values.isEmpty()) continue;
-
-                group.setValues(values);
-                mapping.setGroups(Collections.singletonList(group));
-
-                Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
-                one.put(unionKey, mapping);
-                out.add(one);
-                for (ColRef p : picked) usedColKeys.add(colKey(p));
-
+                addSuggestedMapping(out, usedUnionKeys, field.name, detectedFieldType, field, batch);
                 emitted++;
             }
         }
-
-        // Ensure every input column appears in at least one mapping, even if it could
-        // not be matched to any schema field or was excluded by the one-per-file rule.
-        out.addAll(buildSoloMappingsForUnusedColumns(all, usedColKeys, usedUnionKeys));
-
         return out;
     }
 
-    private List<List<ColScore>> partitionTopCandidates(List<ColScore> candidates, int maxTake) {
-        int take = Math.min(maxTake, candidates.size());
-        List<ColScore> top = new ArrayList<>(candidates.subList(0, take));
-        List<List<ColScore>> out = new ArrayList<>();
-        out.add(top);
-        return out;
-    }
-
-    /**
-     * Groups {@code members} by source file ({@link ColRef#fileKey()}) and returns a list of
-     * round-robin batches, each containing exactly one column per file.
-     *
-     * <p>Within each file-group, candidates are ordered by cosine similarity to the cluster
-     * centroid (best first).  On each round, the next candidate is taken from every file-group.
-     * Files that have fewer candidates than the current round reuse their best column (index 0),
-     * so every batch always includes at least one representative from every participating file.</p>
-     *
-     * <p>Example — toilet cluster with {@code fimbartheltodos} (1 col: Toileting) and
-     * {@code SCUBA_1} (2 cols: ToiletBART1, ToiletBART2):</p>
-     * <ul>
-     *   <li>Round 0: [Toileting, ToiletBART1]  — first timepoint, valid cross-file join</li>
-     *   <li>Round 1: [Toileting, ToiletBART2]  — second timepoint, valid cross-file join</li>
-     * </ul>
-     */
-    private List<List<ColRef>> partitionMembersByFile(List<ColRef> members, float[] centroid) {
-        // Group by fileKey, preserving insertion order for determinism.
-        Map<String, List<ColRef>> byFile = new LinkedHashMap<>();
-        for (ColRef c : members) {
-            byFile.computeIfAbsent(c.fileKey(), k -> new ArrayList<>()).add(c);
-        }
-
-        // Sort each file-group by cosine similarity to centroid (highest first).
-        for (List<ColRef> grp : byFile.values()) {
-            grp.sort((a, b) -> {
-                double sa = (centroid == null || a.vec == null) ? 0.0 : MappingMathUtil.cosine(a.vec, centroid);
-                double sb = (centroid == null || b.vec == null) ? 0.0 : MappingMathUtil.cosine(b.vec, centroid);
-                return Double.compare(sb, sa);
-            });
-        }
-
-        int maxRounds = 0;
-        for (List<ColRef> grp : byFile.values()) maxRounds = Math.max(maxRounds, grp.size());
-
-        List<List<ColRef>> batches = new ArrayList<>();
-        for (int round = 0; round < maxRounds; round++) {
-            List<ColRef> batch = new ArrayList<>();
-            for (List<ColRef> grp : byFile.values()) {
-                // For files with fewer candidates, reuse the best (index 0) as anchor.
-                batch.add(grp.get(Math.min(round, grp.size() - 1)));
-            }
-            batches.add(batch);
-        }
-        return batches;
-    }
-
-    // ============================================================
-    // Schema-less mode
-    // ============================================================
-
-    private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<ColRef> all) {
-        List<ColCluster> clusters = clusterColumns(all);
+    private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<EmbeddedColumn> allColumns) {
+        List<ColCluster> clusters = clusterColumns(allColumns);
 
         clusters.sort((a, b) -> {
             int as = a.cols.size(), bs = b.cols.size();
@@ -288,160 +220,931 @@ public class MappingService {
             return a.representativeConcept.compareToIgnoreCase(b.representativeConcept);
         });
 
-        if (clusters.size() > MAX_SCHEMALESS_TARGETS) clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
+        if (clusters.size() > mappingSettings.maxSchemalessTargets()) {
+            clusters = clusters.subList(0, mappingSettings.maxSchemalessTargets());
+        }
 
         Set<String> usedUnionKeys = new HashSet<>();
-        Set<String> usedColKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
 
         for (ColCluster cl : clusters) {
             if (cl.cols.isEmpty()) continue;
 
-            String concept = sanitizeUnionName(cl.representativeConcept);
-            if (concept.isEmpty()) continue;
+            String concept = StringUtil.safe(cl.representativeConcept);
+            if (concept.trim().isEmpty()) continue;
 
-            List<ColRef> members = new ArrayList<>(cl.cols);
-
-            // Partition the cluster members into round-robin batches, one column per
-            // source file per batch.  Files with a single candidate contribute that
-            // same column (the "anchor") to every batch.  Files with multiple same-concept
-            // columns (e.g. ToiletBART1 and ToiletBART2 from the same SCUBA file) rotate
-            // their columns across batches, producing one valid one-per-file mapping for
-            // each measurement timepoint.
-            List<List<ColRef>> batches = partitionMembersByFile(members, cl.centroid);
+            // Multi-round batching: group cluster members by source file and rotate.
+            // Round 0 picks the best column from each file; round 1 picks the next-best
+            // (or repeats the only candidate for single-column files), and so on.
+            // This ensures columns like ToiletBART1 and ToiletBART2 (same file) each get
+            // their own cross-file mapping rather than the second one falling through as
+            // an unmapped singleton.
+            List<List<EmbeddedColumn>> batches = partitionMembersByFile(new ArrayList<>(cl.cols), cl.centroid);
 
             int emitted = 0;
-            for (List<ColRef> batch : batches) {
-                if (emitted >= MAX_SUGGESTIONS_PER_SCHEMA_FIELD) break;
+            for (List<EmbeddedColumn> batch : batches) {
+                if (emitted >= mappingSettings.maxSuggestionsPerSchemaField()) break;
                 if (batch.isEmpty()) continue;
 
                 String detectedType = detectTypeFromSourcesOrSchema(batch, "");
-                String unionKey = makeUnique(concept, usedUnionKeys);
-
-                SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", batch);
-
-                SuggestedGroupDTO group = new SuggestedGroupDTO();
-                group.setColumn(unionKey);
-
-                List<SuggestedValueDTO> values = buildValuesForConcept(unionKey, detectedType, null, batch);
-                if (values.isEmpty()) continue;
-
-                group.setValues(values);
-                mapping.setGroups(Collections.singletonList(group));
-
-                Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
-                one.put(unionKey, mapping);
-                out.add(one);
-                for (ColRef c : batch) usedColKeys.add(colKey(c));
+                addSuggestedMapping(out, usedUnionKeys, concept, detectedType, null, batch);
                 emitted++;
             }
-
-            // Mark every cluster member as covered so no solo fallback entry is emitted,
-            // even for columns that were not in any emitted batch (e.g. due to the cap).
-            for (ColRef m : members) usedColKeys.add(colKey(m));
         }
 
-        // Ensure every input column appears in at least one mapping, even if it was
-        // excluded by the one-per-file rule or the MAX_SCHEMALESS_TARGETS cluster cap.
-        out.addAll(buildSoloMappingsForUnusedColumns(all, usedColKeys, usedUnionKeys));
+        return out;
+    }
 
+    private void addSuggestedMapping(
+            List<Map<String, SuggestedMappingDTO>> out,
+            Set<String> usedUnionKeys,
+            String baseUnionKey,
+            String detectedType,
+            EmbeddedSchemaField schemaFieldOrNull,
+            List<EmbeddedColumn> picked
+    ) {
+        if (out == null || usedUnionKeys == null || picked == null || picked.isEmpty()) return;
+
+        String base = sanitizeUnionName(StringUtil.safe(baseUnionKey));
+        if (base.isEmpty()) base = "field";
+        String unionKey = makeUnique(base, usedUnionKeys);
+
+        SuggestedMappingDTO mapping = buildMappingSkeleton("standard", "suggested_mapping", picked);
+
+        SuggestedGroupDTO group = new SuggestedGroupDTO();
+        group.setColumn(unionKey);
+
+        List<SuggestedValueDTO> values =
+                valueMappingBuilder.buildValuesForConcept(unionKey, detectedType, schemaFieldOrNull, picked);
+
+        if (values == null || values.isEmpty()) {
+            values = fallbackValuesForPicked(unionKey, detectedType, picked);
+        }
+
+        group.setValues(values);
+        mapping.setGroups(Collections.singletonList(group));
+        Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
+        one.put(unionKey, mapping);
+        out.add(one);
+    }
+
+    // Fetch metadata for mappings
+    public List<Map<String, SuggestedMappingDTO>> enrichHierarchy(
+            List<Map<String, SuggestedMappingDTO>> hierarchy,
+            String schema,
+            ProgressReporter progress
+    ) {
+        if (hierarchy == null || hierarchy.isEmpty()) return Collections.emptyList();
+        populateTerminologyAndDescriptionsBatch(hierarchy, progress == null ? ProgressReporter.noop() : progress);
+        ensureNonEmptyMappingDescriptions(hierarchy);
+        return hierarchy;
+    }
+
+    private void ensureNonEmptyMappingDescriptions(List<Map<String, SuggestedMappingDTO>> allMappings) {
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            if (mappingMap == null) continue;
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                if (mapping == null) continue;
+                String d = mapping.getDescription();
+                if (d == null || d.trim().isEmpty()) mapping.setDescription(columnKey);
+                if (mapping.getTerminology() == null) mapping.setTerminology("");
+            }
+        }
+    }
+
+    private void populateTerminologyAndDescriptionsBatch(
+            List<Map<String, SuggestedMappingDTO>> allMappings,
+            ProgressReporter cb
+    ){
+        if (allMappings == null || allMappings.isEmpty()) return;
+        if (cb != null) cb.report(5, "Inferring terminology search terms…");
+        List<ColumnRecord> colInputs = getColumnInputs(allMappings);
+        int inferBatchSize = terminologyInferenceService == null ? 0 : terminologyInferenceService.batchSize();
+        if (inferBatchSize <= 0) inferBatchSize = 5;
+
+        Map<String, String> colLookupKeyByCol = new LinkedHashMap<>();
+        Map<String, String> valLookupKeyByValueKey = new LinkedHashMap<>();
+
+        int inferredCols = 0;
+
+        int totalInferBatches = colInputs.isEmpty()
+                ? 0
+                : ((colInputs.size() + inferBatchSize - 1) / inferBatchSize);
+
+        int inferBatchNo = 0;
+
+        // ---------------------------
+        // 1) Terminology inference (batched) + progress
+        // ---------------------------
+        for (int i = 0; i < colInputs.size(); i += inferBatchSize) {
+            int end = Math.min(colInputs.size(), i + inferBatchSize);
+            List<ColumnRecord> batch = colInputs.subList(i, end);
+
+            inferBatchNo++;
+            if (cb != null) {
+                // 5..29 while running batches
+                double frac = (inferBatchNo - 1) / (double) Math.max(1, totalInferBatches);
+                int pct = 5 + (int) Math.floor(frac * 25.0);
+                pct = Math.max(5, Math.min(29, pct));
+                cb.report(pct, "Inferring terminology… (batch " + inferBatchNo + "/" + totalInferBatches + ")");
+            }
+
+            List<TerminologyTermInferenceService.InferredTerm> inferred =
+                    terminologyInferenceService == null ? List.of() : terminologyInferenceService.inferBatch(batch);
+
+            if (inferred.isEmpty()) {
+                // fallback: use raw colKey/value as lookup phrase
+                for (ColumnRecord ci : batch) {
+                    if (ci == null) continue;
+                    String colKey = StringUtil.safeTrim(ci.colKey());
+                    if (colKey.isEmpty()) continue;
+
+                    String lookupKey = colKey + "|" + colKey;
+                    colLookupKeyByCol.put(colKey, lookupKey);
+
+                    if (ci.values() != null) {
+                        for (String rv : ci.values()) {
+                            String v = StringUtil.safeTrim(rv);
+                            if (v.isEmpty()) continue;
+                            String valueKey = colKey + "|" + v;
+                            String vLookupKey = colKey + "|" + v;
+                            valLookupKeyByValueKey.put(valueKey, vLookupKey);
+                        }
+                    }
+                }
+
+                logger.info("[TermInfer] batch {}/{} -> inferred {}", inferBatchNo, Math.max(1, totalInferBatches), 0);
+                continue;
+            }
+
+            for (TerminologyTermInferenceService.InferredTerm it : inferred) {
+                if (it == null) continue;
+                String colKey = StringUtil.safeTrim(it.colKey());
+                if (colKey.isEmpty()) continue;
+
+                String colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                if (colSearchTerm.isEmpty()) colSearchTerm = colKey;
+
+                String colLookupKey = colKey + "|" + colSearchTerm;
+                colLookupKeyByCol.put(colKey, colLookupKey);
+
+                Map<String, String> vmap = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+                for (Map.Entry<String, String> ve : vmap.entrySet()) {
+                    String rawVal = StringUtil.safeTrim(ve.getKey());
+                    String vTerm = StringUtil.safeTrim(ve.getValue());
+                    if (rawVal.isEmpty() || vTerm.isEmpty()) continue;
+
+                    String valueKey = colKey + "|" + rawVal;
+                    String vLookupKey = colKey + "|" + vTerm;
+                    valLookupKeyByValueKey.put(valueKey, vLookupKey);
+                }
+
+                inferredCols++;
+            }
+
+            logger.info("[TermInfer] batch {}/{} -> inferred {}",
+                    inferBatchNo, Math.max(1, totalInferBatches), inferred.size());
+
+            // Include what was inferred (bounded)
+            if (logger.isInfoEnabled()) {
+                logger.info("[TermInfer] inferred detail batch {}/{}: {}",
+                        inferBatchNo, Math.max(1, totalInferBatches),
+                        summarizeInferred(inferred, 4, 2, 90));
+            }
+
+            // end-of-batch inference progress (5..30)
+            if (cb != null) {
+                double fracDone = inferBatchNo / (double) Math.max(1, totalInferBatches);
+                int pct = 5 + (int) Math.floor(fracDone * 25.0);
+                pct = Math.max(5, Math.min(30, pct));
+                cb.report(pct, "Inferring terminology… (" + inferBatchNo + "/" + totalInferBatches + ")");
+            }
+        }
+
+        logger.info("[MappingService] terminology inference: cols={}, inferred={}", colInputs.size(), inferredCols);
+
+        if (cb != null) cb.report(30, "Terminology inference complete.");
+        if (cb != null) cb.report(35, "Looking up SNOMED codes…");
+
+        List<TerminologyLookupService.TerminologyRequest> requests = new ArrayList<>();
+        Set<String> seenReq = new HashSet<>();
+
+        for (Map.Entry<String, String> e : colLookupKeyByCol.entrySet()) {
+            String lookupKey = e.getValue();
+            if (!StringUtil.safeTrim(lookupKey).isEmpty() && seenReq.add(lookupKey)) {
+                requests.add(new TerminologyLookupService.TerminologyRequest(lookupKey, null));
+            }
+        }
+        for (Map.Entry<String, String> e : valLookupKeyByValueKey.entrySet()) {
+            String valueKey = e.getKey();
+            String lookupKey = e.getValue();
+            String colKey = "";
+            int bar = valueKey.indexOf('|');
+            if (bar > 0) colKey = valueKey.substring(0, bar);
+
+            if (!StringUtil.safeTrim(lookupKey).isEmpty() && seenReq.add(lookupKey)) {
+                requests.add(new TerminologyLookupService.TerminologyRequest(lookupKey, colKey));
+            }
+        }
+
+        logger.info("[MappingService] SNOMED lookup requests={}", requests.size());
+
+        Map<String, String> terminologyResults =
+                terminologyLookupService == null ? Map.of() : terminologyLookupService.batchLookupTerminology(requests);
+
+        // Retry missing once (as before)
+        int missing = 0;
+        List<TerminologyLookupService.TerminologyRequest> retryReqs = new ArrayList<>();
+        for (TerminologyLookupService.TerminologyRequest r : requests) {
+            if (r == null) continue;
+            String k = StringUtil.safeTrim(r.term);
+            if (k.isEmpty()) continue;
+            if (!terminologyResults.containsKey(k)) {
+                missing++;
+                retryReqs.add(r);
+            }
+        }
+
+        if (missing > 0 && terminologyLookupService != null) {
+            logger.warn("[MappingService] SNOMED missing {} keys, retrying once", missing);
+            Map<String, String> retry = terminologyLookupService.batchLookupTerminology(retryReqs);
+            if (retry != null && !retry.isEmpty()) {
+                Map<String, String> merged = new LinkedHashMap<>(terminologyResults);
+                merged.putAll(retry);
+                terminologyResults = merged;
+            }
+        }
+
+        logger.info("[MappingService] SNOMED lookup done: returned={}", terminologyResults.size());
+        if (cb != null) cb.report(60, "SNOMED lookup complete. Applying terminologies…");
+
+        record EnrichTask(String colKey, SuggestedMappingDTO mapping, List<DescriptionService.ValueSpec> valueSpecs) {}
+
+        List<EnrichTask> tasks = new ArrayList<>();
+        int colCount = 0;
+
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            if (mappingMap == null) continue;
+
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String columnKey = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                if (mapping == null) continue;
+
+                final String colKey = Optional.ofNullable(columnKey)
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .orElse("field");
+
+                // Column terminology
+                String colLookupKey = colLookupKeyByCol.getOrDefault(colKey, colKey + "|" + colKey);
+                String columnTerminology = terminologyResults.getOrDefault(colLookupKey, "");
+                mapping.setTerminology(columnTerminology == null ? "" : columnTerminology);
+
+                // Value terminology
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group == null || group.getValues() == null) continue;
+                        for (SuggestedValueDTO value : group.getValues()) {
+                            if (value == null) continue;
+                            String valueName = StringUtil.safeTrim(value.getName());
+                            if (valueName.isEmpty()) continue;
+
+                            String valueKey = colKey + "|" + valueName;
+                            String vLookupKey = valLookupKeyByValueKey.get(valueKey);
+                            String valueTerminology =
+                                    (vLookupKey == null) ? "" : terminologyResults.getOrDefault(vLookupKey, "");
+                            value.setTerminology(valueTerminology == null ? "" : valueTerminology);
+                        }
+                    }
+                }
+
+                // Prepare description tasks
+                if (colCount < mappingSettings.maxColumnDescTasks()) {
+                    List<DescriptionService.ValueSpec> specs = extractValueSpecs(mapping);
+                    tasks.add(new EnrichTask(colKey, mapping, specs));
+                    colCount++;
+                } else {
+                    // Hard cap safety fallback
+                    if (mapping.getDescription() == null || mapping.getDescription().trim().isEmpty()) {
+                        mapping.setDescription(colKey);
+                    }
+                    if (mapping.getGroups() != null) {
+                        for (SuggestedGroupDTO group : mapping.getGroups()) {
+                            if (group == null || group.getValues() == null) continue;
+                            for (SuggestedValueDTO value : group.getValues()) {
+                                if (value == null) continue;
+                                String valueName = StringUtil.safeTrim(value.getName());
+                                if (value.getDescription() == null || value.getDescription().trim().isEmpty()) {
+                                    value.setDescription(valueName.isEmpty() ? "value" : valueName);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (cb != null) cb.report(65, "Terminologies applied. Generating descriptions…");
+        final int totalColsToDescribe = tasks.size();
+
+        IntConsumer reportProgress = doneCols -> {
+            if (cb == null) return;
+            if (totalColsToDescribe == 0) {
+                cb.report(100, "Done.");
+                return;
+            }
+            int pct = 65 + (int) Math.floor((doneCols / (double) totalColsToDescribe) * 35.0);
+            pct = Math.max(65, Math.min(99, pct));
+            cb.report(pct, "Generating descriptions… (" + doneCols + "/" + totalColsToDescribe + ")");
+        };
+
+        final AtomicInteger doneCols = new AtomicInteger(0);
+
+        Consumer<List<CompletableFuture<Void>>> flushWindow = window -> {
+            if (window.isEmpty()) return;
+            CompletableFuture.allOf(window.toArray(new CompletableFuture[0])).join();
+            window.clear();
+        };
+
+        List<List<EnrichTask>> descBatches = partition(tasks, Math.max(1, mappingSettings.descriptionBatchColumns()));
+        List<CompletableFuture<Void>> window = new ArrayList<>(mappingSettings.descriptionConcurrencyWindow());
+
+        int batchNo = 0;
+        for (List<EnrichTask> batch : descBatches) {
+            batchNo++;
+            final int thisBatchNo = batchNo;
+
+            List<DescriptionService.ColumnEnrichmentInput> inputs = new ArrayList<>(batch.size());
+            for (EnrichTask t : batch) {
+                if (t == null || t.mapping == null) continue;
+                inputs.add(new DescriptionService.ColumnEnrichmentInput(
+                        t.colKey,
+                        StringUtil.safe(t.mapping.getTerminology()),
+                        t.valueSpecs
+                ));
+            }
+            if (inputs.isEmpty()) continue;
+
+            window.add(
+                    descriptionGenerator
+                            .generateEnrichmentBatchAsync(inputs)
+                            .thenAccept(results -> {
+                                for (EnrichTask t : batch) {
+                                    if (t == null || t.mapping == null) continue;
+
+                                    DescriptionService.EnrichmentResult r =
+                                            (results == null) ? null : results.get(t.colKey);
+
+                                    SuggestedMappingDTO mapping = t.mapping;
+
+                                    if (r != null) {
+                                        String cd = r.colDesc();
+                                        if (cd != null && !cd.trim().isEmpty()) {
+                                            mapping.setDescription(cd);
+                                        } else if (mapping.getDescription() == null || mapping.getDescription().trim().isEmpty()) {
+                                            mapping.setDescription(t.colKey);
+                                        }
+
+                                        Map<String, String> vm = r.valueDescByValue();
+                                        if (mapping.getGroups() != null && vm != null) {
+                                            for (SuggestedGroupDTO group : mapping.getGroups()) {
+                                                if (group == null || group.getValues() == null) continue;
+                                                for (SuggestedValueDTO value : group.getValues()) {
+                                                    if (value == null) continue;
+                                                    String vn = StringUtil.safeTrim(value.getName());
+                                                    if (vn.isEmpty()) continue;
+                                                    String vd = vm.get(vn);
+                                                    if (vd != null && !vd.trim().isEmpty()) value.setDescription(vd);
+                                                    else if (value.getDescription() == null || value.getDescription().trim().isEmpty())
+                                                        value.setDescription(vn);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // fallback
+                                        if (mapping.getDescription() == null || mapping.getDescription().trim().isEmpty()) {
+                                            mapping.setDescription(t.colKey);
+                                        }
+                                        if (mapping.getGroups() != null) {
+                                            for (SuggestedGroupDTO group : mapping.getGroups()) {
+                                                if (group == null || group.getValues() == null) continue;
+                                                for (SuggestedValueDTO value : group.getValues()) {
+                                                    if (value == null) continue;
+                                                    String vn = StringUtil.safeTrim(value.getName());
+                                                    if (vn.isEmpty()) continue;
+                                                    if (value.getDescription() == null || value.getDescription().trim().isEmpty())
+                                                        value.setDescription(vn);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    int done = doneCols.incrementAndGet();
+                                    reportProgress.accept(done);
+                                }
+
+                                if (thisBatchNo <= 3) {
+                                    logger.info("[DESC-BATCH] completed batch {}/{} (cols={})",
+                                            thisBatchNo, descBatches.size(), batch.size());
+                                }
+                            })
+                            .exceptionally(ex -> {
+                                logger.warn("[DESC-BATCH] failed batch {}/{} ({})",
+                                        thisBatchNo, descBatches.size(), ex.toString());
+
+                                // fallback for entire batch
+                                for (EnrichTask t : batch) {
+                                    if (t == null || t.mapping == null) continue;
+                                    SuggestedMappingDTO mapping = t.mapping;
+
+                                    if (mapping.getDescription() == null || mapping.getDescription().trim().isEmpty()) {
+                                        mapping.setDescription(t.colKey);
+                                    }
+                                    if (mapping.getGroups() != null) {
+                                        for (SuggestedGroupDTO group : mapping.getGroups()) {
+                                            if (group == null || group.getValues() == null) continue;
+                                            for (SuggestedValueDTO value : group.getValues()) {
+                                                if (value == null) continue;
+                                                String vn = StringUtil.safeTrim(value.getName());
+                                                if (vn.isEmpty()) continue;
+                                                if (value.getDescription() == null || value.getDescription().trim().isEmpty())
+                                                    value.setDescription(vn);
+                                            }
+                                        }
+                                    }
+
+                                    int done = doneCols.incrementAndGet();
+                                    reportProgress.accept(done);
+                                }
+                                return null;
+                            })
+            );
+
+            if (window.size() >= mappingSettings.descriptionConcurrencyWindow()) flushWindow.accept(window);
+        }
+
+        flushWindow.accept(window);
+
+        if (cb != null) cb.report(100, "Done.");
+    }
+
+    private static List<ColumnRecord> getColumnInputs(List<Map<String, SuggestedMappingDTO>> allMappings) {
+        List<ColumnRecord> colInputs = new ArrayList<>();
+        Map<String, Set<String>> valuesByCol = new LinkedHashMap<>();
+
+        for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
+            if (mappingMap == null) continue;
+
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String colKeyRaw = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                if (mapping == null) continue;
+
+                String colKey = StringUtil.safeTrim(colKeyRaw);
+                if (colKey.isEmpty()) continue;
+
+                Set<String> vals = valuesByCol.computeIfAbsent(colKey, k -> new LinkedHashSet<>());
+                if (mapping.getGroups() != null) {
+                    for (SuggestedGroupDTO group : mapping.getGroups()) {
+                        if (group == null || group.getValues() == null) continue;
+                        for (SuggestedValueDTO v : group.getValues()) {
+                            if (v == null) continue;
+                            String name = StringUtil.safeTrim(v.getName());
+                            if (!name.isEmpty()) vals.add(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (Map.Entry<String, Set<String>> e : valuesByCol.entrySet()) {
+            colInputs.add(new ColumnRecord(e.getKey(), new ArrayList<>(e.getValue())));
+        }
+        return colInputs;
+    }
+
+    private static String summarizeInferred(List<TerminologyTermInferenceService.InferredTerm> inferred,
+                                            int maxCols,
+                                            int maxValsPerCol,
+                                            int maxLen) {
+        if (inferred == null || inferred.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("[");
+        int cols = 0;
+
+        for (TerminologyTermInferenceService.InferredTerm it : inferred) {
+            if (it == null) continue;
+            if (cols++ >= Math.max(1, maxCols)) break;
+
+            String ck = shortStr(it.colKey(), maxLen);
+            String ct = shortStr(it.colSearchTerm(), maxLen);
+
+            sb.append("{colKey=").append(ck)
+                    .append(", colSearchTerm=").append(ct);
+
+            Map<String, String> vm = (it.valueSearchTerms() == null) ? Map.of() : it.valueSearchTerms();
+            if (!vm.isEmpty()) {
+                sb.append(", values=[");
+                int v = 0;
+                for (Map.Entry<String, String> e : vm.entrySet()) {
+                    if (v++ >= Math.max(1, maxValsPerCol)) break;
+                    sb.append("{raw=").append(shortStr(e.getKey(), maxLen))
+                            .append(", term=").append(shortStr(e.getValue(), maxLen))
+                            .append("},");
+                }
+                if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
+                sb.append("]");
+            }
+
+            sb.append("},");
+        }
+
+        if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
+        if (inferred.size() > cols) sb.append(", …");
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private static String shortStr(String s, int maxLen) {
+        String x = StringUtil.safeTrim(s).replaceAll("\\s+", " ");
+        if (x.length() <= Math.max(1, maxLen)) return x;
+        return x.substring(0, Math.max(1, maxLen)) + "...";
+    }
+
+    private static <T> List<List<T>> partition(List<T> items, int batchSize) {
+        if (items == null || items.isEmpty()) return List.of();
+        int bs = Math.max(1, batchSize);
+        List<List<T>> out = new ArrayList<>();
+        for (int i = 0; i < items.size(); i += bs) {
+            out.add(items.subList(i, Math.min(items.size(), i + bs)));
+        }
+        return out;
+    }
+
+    private List<DescriptionService.ValueSpec> extractValueSpecs(SuggestedMappingDTO mapping) {
+        List<DescriptionService.ValueSpec> out = new ArrayList<>();
+        if (mapping == null || mapping.getGroups() == null) return out;
+
+        Set<String> seen = new HashSet<>();
+        for (SuggestedGroupDTO group : mapping.getGroups()) {
+            if (group == null || group.getValues() == null) continue;
+            for (SuggestedValueDTO value : group.getValues()) {
+                if (value == null) continue;
+                String name = StringUtil.safeTrim(value.getName());
+                if (name.isEmpty() || !seen.add(name)) continue;
+                String min = extractMinFromValue(value);
+                String max = extractMaxFromValue(value);
+                out.add(new DescriptionService.ValueSpec(name, min, max));
+                if (out.size() >= 10) return out;
+            }
+        }
+        return out;
+    }
+
+    private String extractMinFromValue(SuggestedValueDTO value) {
+        if (value == null || value.getMapping() == null) return null;
+
+        for (SuggestedRefDTO ref : value.getMapping()) {
+            if (ref == null) continue;
+            Object v = ref.getValue();
+            if (v instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = (Map<String, Object>) v;
+                Object min = m.get("minValue");
+                if (min != null) return String.valueOf(min);
+            } else if (v instanceof String s) {
+                if (s.startsWith("min:")) return s.substring(4);
+            }
+        }
+        return null;
+    }
+
+    private String extractMaxFromValue(SuggestedValueDTO value) {
+        if (value == null || value.getMapping() == null) return null;
+
+        for (SuggestedRefDTO ref : value.getMapping()) {
+            if (ref == null) continue;
+            Object v = ref.getValue();
+            if (v instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = (Map<String, Object>) v;
+                Object max = m.get("maxValue");
+                if (max != null) return String.valueOf(max);
+            } else if (v instanceof String s && s.startsWith("max:")) return s.substring(4);
+        }
+        return null;
+    }
+
+    private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
+        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
+                JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schemaJson, mappingSettings.maxEnum());
+
+        if (defs.isEmpty()) return Collections.emptyList();
+
+        List<EmbeddedSchemaField> out = new ArrayList<>();
+        for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
+            String fieldName = d.getName();
+            String type = d.getType();
+            List<String> enumVals = d.getEnumValues();
+
+            float[] combined = embeddingService.embedSchemaField(fieldName, type, enumVals);
+            out.add(new EmbeddedSchemaField(fieldName, type, enumVals, combined));
+        }
+        return out;
+    }
+
+    private List<String> tokenizeName(String rawColumn) {
+        String s0 = StringUtil.safeTrim(rawColumn);
+        if (s0.isEmpty()) return Collections.emptyList();
+
+        String s = NormalizationUtil.splitCamelStrong(s0);
+        s = s.toLowerCase(Locale.ROOT);
+
+        // Split alpha<->digit boundaries before non-alnum split, so "bart2" becomes "bart 2"
+        s = s.replaceAll("([a-z])([0-9])", "$1 $2");
+        s = s.replaceAll("([0-9])([a-z])", "$1 $2");
+
+        String[] parts = s.split("[^a-z0-9]+");
+        List<String> toks = new ArrayList<>();
+        for (String p : parts) {
+            if (p == null) continue;
+            String t = p.trim();
+            if (t.isEmpty()) continue;
+
+            // drop pure digits
+            if (t.matches("\\d+")) continue;
+
+            // drop single-letter tokens (y/n, etc.) - structural noise, not clinical meaning
+            if (t.length() == 1) continue;
+
+            toks.add(t);
+        }
+
+        return toks;
+    }
+
+    private boolean isStructuralToken(String t) {
+        if (t == null) return false;
+        String x = t.trim().toLowerCase(Locale.ROOT);
+        if (x.isEmpty()) return false;
+
+        if (x.matches("\\d+")) return true;
+        if (x.length() == 1) return true;
+
+        if (x.length() == 2) {
+            return !containsVowel(x);
+        }
+
+        return x.equals("id")
+                || x.equals("code")
+                || x.equals("name")
+                || x.equals("value")
+                || x.equals("flag")
+                || x.equals("indicator")
+                || x.equals("status")
+                || x.equals("type");
+    }
+
+    private boolean isStructuralSuffixToken(String t) {
+        if (t == null) return false;
+        String x = t.trim().toLowerCase(Locale.ROOT);
+        if (x.isEmpty()) return false;
+
+        if (x.matches("\\d+")) return true;
+        if (x.length() == 1) return true;
+
+        // If suffix is short and vowel-less, it's likely structural (dataset marker)
+        return x.length() <= 4 && !containsVowel(x);
+        // If suffix is long and looks like a normal word (has vowels), keep it (likely meaningful)
+    }
+
+    private boolean containsVowel(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') return true;
+        }
+        return false;
+    }
+
+    private String normalizeRawColumn(String rawColumn, LearnedNoise noise) {
+        List<String> tokens = tokenizeName(rawColumn);
+        if (tokens.isEmpty()) return "";
+        List<String> kept = new ArrayList<>();
+
+        for (int i = 0; i < tokens.size(); i++) {
+            String t = tokens.get(i);
+
+            if (noise != null) {
+                if (noise.globalStopTokens().contains(t)) {
+                    logger.debug("[Noise] Removed token '{}' from column '{}' (structural global)", t, rawColumn);
+                    continue;
+                }
+                if (i == tokens.size() - 1 && noise.suffixStopTokens().contains(t)) {
+                    logger.debug("[Noise] Removed token '{}' from column '{}' (structural suffix)", t, rawColumn);
+                    continue;
+                }
+            }
+            kept.add(t);
+        }
+        if (kept.isEmpty()) kept = tokens;
+        return String.join(" ", kept).replaceAll("\\s+", " ").trim();
+    }
+
+    private List<List<SimilarityScore<EmbeddedColumn>>> partitionTopCandidates(List<SimilarityScore<EmbeddedColumn>> candidates) {
+        int take = Math.min(80, candidates.size());
+        List<SimilarityScore<EmbeddedColumn>> top = new ArrayList<>(candidates.subList(0, take));
+        List<List<SimilarityScore<EmbeddedColumn>>> out = new ArrayList<>();
+        out.add(top);
         return out;
     }
 
     /**
-     * For every column in {@code all} whose identity (fileKey + column name) is not yet
-     * in {@code usedColKeys}, emits a standalone single-column mapping.  This guarantees
-     * that every input column appears in the result at least once, even when it was
-     * excluded by the one-per-file constraint or by the cluster-count cap.
+     * Groups {@code members} by source file and produces round-robin batches, each
+     * containing exactly one column per file.
+     *
+     * <p>Files that have only one candidate ("anchor" files) contribute that same column
+     * in every round so that every batch remains a complete cross-file join.  Files with
+     * multiple candidates (e.g. ToiletBART1 and ToiletBART2 from the same file) rotate
+     * through them across rounds — round 0 gets the best match, round 1 the next-best,
+     * etc. — so each timepoint produces its own valid mapping.</p>
+     *
+     * <p>Within each file group, columns are sorted by cosine similarity to
+     * {@code centroid} (highest first) when a centroid is available.</p>
      */
-    private List<Map<String, SuggestedMappingDTO>> buildSoloMappingsForUnusedColumns(
-            List<ColRef> all, Set<String> usedColKeys, Set<String> usedUnionKeys) {
-
-        List<Map<String, SuggestedMappingDTO>> solos = new ArrayList<>();
-
-        for (ColRef c : all) {
-            String colKey = colKey(c);
-            if (usedColKeys.contains(colKey)) continue;
-
-            // Derive a union key from the column's canonical concept (fall back to raw column name).
-            String concept = sanitizeUnionName(StringUtil.safe(c.concept).trim());
-            if (concept.isEmpty()) concept = sanitizeUnionName(StringUtil.safe(c.column).trim());
-            if (concept.isEmpty()) {
-                // No valid identifier can be generated for this column; mark it as processed
-                // so the loop does not attempt it again.  No union key is allocated because
-                // none is needed (the mapping will not be emitted).
-                usedColKeys.add(colKey);
-                continue;
-            }
-
-            String unionKey = makeUnique(concept, usedUnionKeys);
-            String detectedType = detectTypeFromSourcesOrSchema(Collections.singletonList(c), "");
-
-            SuggestedMappingDTO mapping = buildMappingSkeleton(
-                    "standard", "suggested_mapping", Collections.singletonList(c));
-
-            SuggestedGroupDTO group = new SuggestedGroupDTO();
-            group.setColumn(unionKey);
-
-            List<SuggestedValueDTO> values = buildValuesForConcept(
-                    unionKey, detectedType, null, Collections.singletonList(c));
-            if (values.isEmpty()) {
-                // No usable value representation for this column. Release the union key so
-                // subsequent columns with the same concept name can still claim it.
-                usedUnionKeys.remove(unionKey);
-                usedColKeys.add(colKey);
-                continue;
-            }
-
-            group.setValues(values);
-            mapping.setGroups(Collections.singletonList(group));
-
-            Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
-            one.put(unionKey, mapping);
-            solos.add(one);
-            usedColKeys.add(colKey);
+    private List<List<EmbeddedColumn>> partitionMembersByFile(List<EmbeddedColumn> members, float[] centroid) {
+        // Group by file key, preserving insertion order so the output is stable.
+        Map<String, List<EmbeddedColumn>> byFile = new LinkedHashMap<>();
+        for (EmbeddedColumn c : members) {
+            byFile.computeIfAbsent(c.fileKey(), k -> new ArrayList<>()).add(c);
         }
 
-        return solos;
-    }
-
-    /** Returns a stable identity key for a column reference used to track placement. */
-    private static String colKey(ColRef c) {
-        return c.fileKey() + "::" + c.column;
-    }
-
-    // ============================================================
-    // JOIN RULE (one column per file)
-    // ============================================================
-
-    private List<ColRef> pickBestPerFileFromScores(List<ColScore> scored, int cap) {
-        Map<String, ColScore> best = new LinkedHashMap<>();
-        for (ColScore cs : scored) {
-            String fk = cs.col.fileKey();
-            ColScore cur = best.get(fk);
-            if (cur == null || cs.sim > cur.sim) best.put(fk, cs);
+        // Sort each file group by similarity to centroid (best first).
+        for (List<EmbeddedColumn> grp : byFile.values()) {
+            if (centroid != null) {
+                grp.sort((a, b) -> {
+                    double sa = (a.vec == null) ? 0.0 : MappingMathUtil.cosine(a.vec, centroid);
+                    double sb = (b.vec == null) ? 0.0 : MappingMathUtil.cosine(b.vec, centroid);
+                    return Double.compare(sb, sa);
+                });
+            }
         }
 
-        List<ColScore> list = new ArrayList<>(best.values());
-        list.sort((a, b) -> Double.compare(b.sim, a.sim));
+        int maxRounds = 0;
+        for (List<EmbeddedColumn> grp : byFile.values()) {
+            maxRounds = Math.max(maxRounds, grp.size());
+        }
 
-        List<ColRef> out = new ArrayList<>();
-        for (ColScore cs : list) {
-            if (out.size() >= cap) break;
-            out.add(cs.col);
+        List<List<EmbeddedColumn>> batches = new ArrayList<>(maxRounds);
+        for (int round = 0; round < maxRounds; round++) {
+            List<EmbeddedColumn> batch = new ArrayList<>(byFile.size());
+            for (List<EmbeddedColumn> grp : byFile.values()) {
+                // Anchor files reuse their best column once their list is exhausted.
+                batch.add(grp.get(Math.min(round, grp.size() - 1)));
+            }
+            batches.add(batch);
+        }
+        return batches;
+    }
+
+    private void ensureAllColumnsCovered(List<EmbeddedColumn> all, List<Map<String, SuggestedMappingDTO>> out) {
+        if (all == null || all.isEmpty()) return;
+        if (out == null) return;
+
+        Set<String> usedSourceKeys = collectUsedSourceKeys(out);
+        Set<String> usedUnionKeys = collectUsedUnionKeys(out);
+
+        int added = 0;
+        for (EmbeddedColumn src : all) {
+            String sk = sourceKey(src);
+            if (usedSourceKeys.contains(sk)) continue;
+
+            emitSingletonMapping(out, usedUnionKeys, src);
+            added++;
+        }
+
+        if (added > 0) {
+            logger.info("[MappingService] full coverage: emitted {} singleton mappings for previously-unmapped columns", added);
+        }
+    }
+
+    private void emitSingletonMapping(List<Map<String, SuggestedMappingDTO>> out, Set<String> usedUnionKeys, EmbeddedColumn src) {
+        if (out == null || usedUnionKeys == null || src == null) return;
+
+        String base = StringUtil.safe(!StringUtil.safe(src.concept).isEmpty() ? src.concept : src.column);
+        if (base.trim().isEmpty()) base = "field";
+
+        List<EmbeddedColumn> picked = Collections.singletonList(src);
+        String detectedType = detectTypeFromSourcesOrSchema(picked, "");
+        addSuggestedMapping(out, usedUnionKeys, base, detectedType, null, picked);
+    }
+
+    private List<SuggestedValueDTO> fallbackValuesForPicked(String unionKey, String detectedType, List<EmbeddedColumn> picked) {
+        String dt = StringUtil.safeTrim(detectedType).toLowerCase(Locale.ROOT);
+        if (dt.isEmpty()) {
+            dt = detectTypeFromSourcesOrSchema(picked, "");
+            dt = StringUtil.safeTrim(dt).toLowerCase(Locale.ROOT);
+        }
+        if (dt.isEmpty()) dt = "value";
+
+        // Minimal bucket: one SuggestedValueDTO with refs to each source column
+        SuggestedValueDTO v = new SuggestedValueDTO();
+        v.setName(dt);
+        List<SuggestedRefDTO> refs = new ArrayList<>();
+
+        if (picked != null) {
+            for (EmbeddedColumn src : picked) {
+                if (src == null) continue;
+                SuggestedRefDTO ref = new SuggestedRefDTO();
+                ref.setNodeId(src.nodeId);
+                ref.setFileName(src.fileName);
+                ref.setGroupColumn(src.column);
+                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
+                ref.setValue(dt);
+                refs.add(ref);
+            }
+        }
+        v.setMapping(refs);
+        return Collections.singletonList(v);
+    }
+
+    private static String sourceKey(EmbeddedColumn c) {
+        if (c == null) return "";
+        return StringUtil.safe(c.nodeId) + "::" + StringUtil.safe(c.fileName) + "::" + StringUtil.safe(c.column);
+    }
+
+    private static Set<String> collectUsedUnionKeys(List<Map<String, SuggestedMappingDTO>> out) {
+        Set<String> used = new HashSet<>();
+        if (out == null) return used;
+        for (Map<String, SuggestedMappingDTO> mm : out) {
+            if (mm == null) continue;
+            used.addAll(mm.keySet());
+        }
+        return used;
+    }
+
+    private static Set<String> collectUsedSourceKeys(List<Map<String, SuggestedMappingDTO>> out) {
+        Set<String> used = new HashSet<>();
+        if (out == null) return used;
+
+        for (Map<String, SuggestedMappingDTO> mm : out) {
+            if (mm == null) continue;
+
+            for (SuggestedMappingDTO m : mm.values()) {
+                if (m == null || m.getGroups() == null) continue;
+
+                for (SuggestedGroupDTO g : m.getGroups()) {
+                    if (g == null || g.getValues() == null) continue;
+
+                    for (SuggestedValueDTO v : g.getValues()) {
+                        if (v == null || v.getMapping() == null) continue;
+
+                        for (SuggestedRefDTO r : v.getMapping()) {
+                            if (r == null) continue;
+                            String k = StringUtil.safe(r.getNodeId()) + "::" + StringUtil.safe(r.getFileName()) + "::" + StringUtil.safe(r.getGroupColumn());
+                            used.add(k);
+                        }
+                    }
+                }
+            }
+        }
+        return used;
+    }
+
+    private List<EmbeddedColumn> pickBestPerFileFromScores(List<SimilarityScore<EmbeddedColumn>> scored) {
+        Map<String, SimilarityScore<EmbeddedColumn>> best = new LinkedHashMap<>();
+
+        for (SimilarityScore<EmbeddedColumn> s : scored) {
+            EmbeddedColumn col = s.item();
+            String fk = col.fileKey();
+
+            SimilarityScore<EmbeddedColumn> cur = best.get(fk);
+            if (cur == null || s.sim() > cur.sim()) {
+                best.put(fk, s);
+            }
+        }
+
+        List<SimilarityScore<EmbeddedColumn>> list = new ArrayList<>(best.values());
+        list.sort((a, b) -> Double.compare(b.sim(), a.sim()));
+        List<EmbeddedColumn> out = new ArrayList<>();
+        for (SimilarityScore<EmbeddedColumn> s : list) {
+            if (out.size() >= mappingSettings.maxColumnsPerMapping()) break;
+            out.add(s.item());
         }
         return out;
     }
 
-    private List<ColRef> pickBestPerFileFromCols(List<ColRef> cols, float[] centroid, int cap) {
-        Map<String, ColRef> best = new LinkedHashMap<>();
+    private List<EmbeddedColumn> pickBestPerFileFromCols(List<EmbeddedColumn> cols, float[] centroid, int cap) {
+        Map<String, EmbeddedColumn> best = new LinkedHashMap<>();
         Map<String, Double> bestSim = new HashMap<>();
 
-        for (ColRef c : cols) {
+        for (EmbeddedColumn c : cols) {
             String fk = c.fileKey();
             double sim = (centroid == null) ? 0.0 : MappingMathUtil.cosine(c.vec, centroid);
 
-            ColRef cur = best.get(fk);
+            EmbeddedColumn cur = best.get(fk);
             if (cur == null) {
                 best.put(fk, c);
                 bestSim.put(fk, sim);
@@ -453,7 +1156,6 @@ public class MappingService {
                 best.put(fk, c);
                 bestSim.put(fk, sim);
             } else if (Math.abs(sim - curSim) <= 1e-9) {
-                // tie-breaker: prefer "cleaner" (shorter) column names
                 String a = StringUtil.safe(c.column);
                 String b = StringUtil.safe(cur.column);
                 if (a.length() < b.length() || (a.length() == b.length() && a.compareToIgnoreCase(b) < 0)) {
@@ -463,7 +1165,11 @@ public class MappingService {
             }
         }
 
-        List<ColRef> out = new ArrayList<>(best.values());
+        return getEmbeddedColumns(cap, best, bestSim);
+    }
+
+    private List<EmbeddedColumn> getEmbeddedColumns(int cap, Map<String, EmbeddedColumn> best, Map<String, Double> bestSim) {
+        List<EmbeddedColumn> out = new ArrayList<>(best.values());
         out.sort((a, b) -> {
             double sa = bestSim.getOrDefault(a.fileKey(), 0.0);
             double sb = bestSim.getOrDefault(b.fileKey(), 0.0);
@@ -478,848 +1184,62 @@ public class MappingService {
         return out;
     }
 
-    // ============================================================
-    // Values
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildValuesForConcept(
-            String unionKey,
-            String detectedType,
-            SchemaFieldRef schemaFieldOrNull,
-            List<ColRef> picked
-    ) {
-        String dt = StringUtil.safe(detectedType).toLowerCase(Locale.ROOT);
-
-        if ("date".equals(dt)) {
-            return buildRangeValue(unionKey, "date", picked);
-        }
-
-        if ("integer".equals(dt) || "double".equals(dt)) {
-            // Ordinal only when all participating sources are integer-ordinal compatible
-            List<SuggestedValueDTO> ordinal = buildOrdinalNumericCrosswalkAsNonOverlappingRanges(unionKey, dt, picked);
-            if (!ordinal.isEmpty()) return ordinal;
-
-            return buildRangeValue(unionKey, dt, picked);
-        }
-
-        if (schemaFieldOrNull != null && schemaFieldOrNull.enumValues != null && !schemaFieldOrNull.enumValues.isEmpty()) {
-            List<SuggestedValueDTO> ev = buildEnumValueMappings(schemaFieldOrNull, picked);
-            if (!ev.isEmpty()) return ev;
-        }
-
-        List<SuggestedValueDTO> harmonized = buildClosedDomainCategorical(unionKey, picked);
-        if (!harmonized.isEmpty()) return harmonized;
-
-        return buildClusteredValueMappings(unionKey, picked);
-    }
-
-    // ============================================================
-    // Numeric ordinal crosswalk (NON-OVERLAPPING, FULL-COVERAGE integer intervals)
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildOrdinalNumericCrosswalkAsNonOverlappingRanges(
-            String unionKey,
-            String detectedType,
-            List<ColRef> sources
-    ) {
-        // only integer ordinal crosswalk
-        if (!"integer".equalsIgnoreCase(StringUtil.safe(detectedType))) return Collections.emptyList();
-
-        List<ScaleDomain> domains = new ArrayList<>();
-        for (ColRef s : sources) {
-            ScaleDomain d = inferScaleDomain(s);
-            if (d != null) domains.add(d);
-        }
-        if (domains.size() < 2) return Collections.emptyList();
-
-        // IMPORTANT: map towards the encoding with fewer values to avoid "making up" extra buckets.
-        ScaleDomain canon = pickCanonicalScaleDomainPreferFewer(domains);
-        if (canon == null) return Collections.emptyList();
-        if (canon.categories.size() < 2 || canon.categories.size() > MAX_ORDINAL_CATEGORIES) return Collections.emptyList();
-
-        List<SuggestedValueDTO> out = new ArrayList<>();
-        int nCanon = canon.categories.size();
-
-        for (int i = 0; i < nCanon; i++) {
-            int canonCat = canon.categories.get(i);
-
-            List<SuggestedRefDTO> refs = new ArrayList<>();
-            for (ColRef src : sources) {
-                ScaleDomain srcDom = inferScaleDomain(src);
-                if (srcDom == null) continue;
-                if (srcDom.categories.size() < 2) continue;
-
-                RangeIdx r = mapCanonBucketToSourceIndexRangeByPartition(i, nCanon, srcDom.categories.size());
-
-                int loIdx = MappingMathUtil.clamp(r.lo, 0, srcDom.categories.size() - 1);
-                int hiIdx = MappingMathUtil.clamp(r.hi, 0, srcDom.categories.size() - 1);
-                if (hiIdx < loIdx) { int tmp = loIdx; loIdx = hiIdx; hiIdx = tmp; }
-
-                SuggestedRefDTO ref = new SuggestedRefDTO();
-                ref.setNodeId(src.nodeId);
-                ref.setFileName(src.fileName);
-                ref.setGroupColumn(src.column);
-                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
-
-                // Example cats [0,5,10,15] => idx 2 => 10..14, idx 3 => 15..15.
-                ref.setValue(idxRangeToNumericInterval(srcDom.categories, loIdx, hiIdx));
-                refs.add(ref);
-            }
-
-            if (refs.isEmpty()) continue;
-
-            SuggestedValueDTO vd = new SuggestedValueDTO();
-            vd.setName(String.valueOf(canonCat));
-            vd.setTerminology("");
-            vd.setDescription("Ordinal crosswalk using non-overlapping full-coverage integer intervals; canonical scale is the one with fewer categories.");
-            vd.setMapping(refs);
-            out.add(vd);
-        }
-
-        out.sort(Comparator.comparingInt(a -> MappingMathUtil.safeInt(a.getName(), Integer.MIN_VALUE)));
-        return out;
-    }
-
-    private RangeIdx mapCanonBucketToSourceIndexRangeByPartition(int canonIndex, int canonSize, int srcSize) {
-        if (canonSize <= 1 || srcSize <= 1) return new RangeIdx(0, 0);
-
-        // Assign each source index to a canonical bucket using proportional rounding, then take min/max index per bucket.
-        List<List<Integer>> assigned = new ArrayList<>(canonSize);
-        for (int i = 0; i < canonSize; i++) assigned.add(new ArrayList<>());
-
-        double denom = (double) (srcSize - 1);
-        double num = (double) (canonSize - 1);
-
-        for (int j = 0; j < srcSize; j++) {
-            int ci = (int) Math.round((j / denom) * num);
-            if (ci < 0) ci = 0;
-            if (ci >= canonSize) ci = canonSize - 1;
-            assigned.get(ci).add(j);
-        }
-
-        List<Integer> bucket = assigned.get(canonIndex);
-        if (bucket.isEmpty()) {
-            int nearest = (int) Math.round(((double) canonIndex / (double) (canonSize - 1)) * (srcSize - 1));
-            nearest = MappingMathUtil.clamp(nearest, 0, srcSize - 1);
-            return new RangeIdx(nearest, nearest);
-        }
-
-        int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
-        for (int j : bucket) {
-            if (j < lo) lo = j;
-            if (j > hi) hi = j;
-        }
-        return new RangeIdx(lo, hi);
-    }
-
-    private static final class RangeIdx {
-        final int lo;
-        final int hi;
-
-        RangeIdx(int lo, int hi) {
-            this.lo = lo;
-            this.hi = hi;
-        }
-    }
-
-    private Map<String, Object> makeRangeValue(double minValue, double maxValue, String type) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("minValue", minValue);
-        m.put("maxValue", maxValue);
-        m.put("type", type);
-        return m;
-    }
-
-    // Recognize common ordinal scale shapes from min/max (+ optional tokens)
-    // (No hardcoded name tokens; only uses numeric/stat hints.)
-    private ScaleDomain inferScaleDomain(ColRef src) {
-        if (src == null || src.stats == null) return null;
-        if (!src.stats.hasIntegerMarker) return null;
-        if (src.stats.numMin == null || src.stats.numMax == null) return null;
-
-        int min = (int) Math.round(src.stats.numMin);
-        int max = (int) Math.round(src.stats.numMax);
-        if (max < min) return null;
-
-        Integer hintStep = src.stats.stepHint;
-
-        // FIM item: 1..7
-        if (min == 1 && max == 7) {
-            return ScaleDomain.linear(src, 1, 7, 1, ScaleKind.FIM, "shape(1..7)");
-        }
-
-        // Barthel item: 0..5/10/15 step 5
-        if (min == 0 && (max == 5 || max == 10 || max == 15)) {
-            return ScaleDomain.linear(src, 0, max, 5, ScaleKind.BARTHEL_ITEM, "shape(0.." + max + " step5)");
-        }
-
-        // Barthel total: 0..100 step from hint or default 5
-        if (min == 0 && max == 100) {
-            int step = (hintStep != null && hintStep > 0) ? hintStep : 5;
-            return ScaleDomain.linear(src, 0, 100, step, ScaleKind.BARTHEL_TOTAL, "shape(0..100 step" + step + ")");
-        }
-
-        // Generic small ordinal integer domain
-        int span = max - min;
-        if (span >= 1 && span <= 20) {
-            return ScaleDomain.linear(src, min, max, 1, ScaleKind.GENERIC, "shape(" + min + ".." + max + ")");
-        }
-
-        return null;
-    }
-
-    private Map<String, Object> idxRangeToNumericInterval(List<Integer> cats, int loIdx, int hiIdx) {
-        if (cats == null || cats.isEmpty()) return makeRangeValue(0, 0, "integer");
-
-        int lo = MappingMathUtil.clamp(loIdx, 0, cats.size() - 1);
-        int hi = MappingMathUtil.clamp(hiIdx, 0, cats.size() - 1);
-        if (hi < lo) { int tmp = lo; lo = hi; hi = tmp; }
-
-        int min = cats.get(lo);
-
-        int max;
-        if (hi >= cats.size() - 1) {
-            // last bucket ends at the last code itself (cannot infer beyond observed code list)
-            max = cats.get(cats.size() - 1);
-        } else {
-            int next = cats.get(hi + 1);
-            max = next - 1;
-            if (max < min) max = min;
-        }
-
-        return makeRangeValue(min, max, "integer");
-    }
-
-    private ScaleDomain pickCanonicalScaleDomainPreferFewer(List<ScaleDomain> domains) {
-        if (domains == null || domains.isEmpty()) return null;
-
-        ScaleDomain best = null;
-        for (ScaleDomain d : domains) {
-            if (d == null) continue;
-            if (best == null) {
-                best = d;
-                continue;
-            }
-
-            int dc = d.categories.size();
-            int bc = best.categories.size();
-
-            if (dc < bc) {
-                best = d; // fewer values wins
-            } else if (dc == bc) {
-                if (kindRank(d.kind) > kindRank(best.kind)) best = d;
-            }
-        }
-        return best;
-    }
-
-    private int kindRank(ScaleKind k) {
-        if (k == ScaleKind.BARTHEL_ITEM) return 4;
-        if (k == ScaleKind.FIM) return 3;
-        if (k == ScaleKind.BARTHEL_TOTAL) return 2;
-        return 1;
-    }
-
-    private enum ScaleKind { FIM, BARTHEL_ITEM, BARTHEL_TOTAL, GENERIC }
-
-    private static final class ScaleDomain {
-        final ScaleKind kind;
-        final List<Integer> categories;
-        final String debug;
-
-        private ScaleDomain(ScaleKind kind, List<Integer> categories, String debug) {
-            this.kind = kind;
-            this.categories = categories;
-            this.debug = debug;
-        }
-
-        static ScaleDomain linear(ColRef src, int min, int max, int step, ScaleKind kind, String note) {
-            List<Integer> cats = new ArrayList<>();
-            int st = Math.max(step, 1);
-            for (int v = min; v <= max; v += st) cats.add(v);
-            String dbg = src.fileName + ":" + src.column + " " + note;
-            return new ScaleDomain(kind, cats, dbg);
-        }
-    }
-
-    // ============================================================
-    // Generic closed-domain categorical harmonizer
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildClosedDomainCategorical(String unionKey, List<ColRef> sources) {
-        Map<String, Map<String, List<SuggestedRefDTO>>> bySource = new LinkedHashMap<>();
-        Map<String, Integer> tokenGlobalFreq = new HashMap<>();
-        Set<String> uniqueTokens = new LinkedHashSet<>();
-
-        for (ColRef src : sources) {
-            String srcKey = src.fileKey() + "::" + StringUtil.safe(src.column);
-            Map<String, List<SuggestedRefDTO>> tokenToRefs = bySource.computeIfAbsent(srcKey, k -> new LinkedHashMap<>());
-
-            List<String> rawVals = StringUtil.safeList(src.rawValues);
-            int used = 0;
-            for (String rv : rawVals) {
-                if (used >= MAX_VALUES) break;
-
-                String nv = NormalizationUtil.normalizeValue(rv);
-                if (nv.isEmpty()) { used++; continue; }
-
-                uniqueTokens.add(nv);
-                tokenGlobalFreq.put(nv, tokenGlobalFreq.getOrDefault(nv, 0) + 1);
-
-                SuggestedRefDTO ref = new SuggestedRefDTO();
-                ref.setNodeId(src.nodeId);
-                ref.setFileName(src.fileName);
-                ref.setGroupColumn(src.column);
-                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
-                ref.setValue(rv);
-
-                tokenToRefs.computeIfAbsent(nv, k -> new ArrayList<>()).add(ref);
-                used++;
-            }
-        }
-
-        if (uniqueTokens.size() < MIN_DOMAIN_UNIQUE || uniqueTokens.size() > MAX_DOMAIN_UNIQUE) {
-            return Collections.emptyList();
-        }
-
-        List<String> tokens = new ArrayList<>(uniqueTokens);
-        Map<String, float[]> tokenVec = new HashMap<>();
-        for (String t : tokens) tokenVec.put(t, embedSingleValue(t));
-
-        UnionFind uf = new UnionFind(tokens.size());
-        for (int i = 0; i < tokens.size(); i++) {
-            for (int j = i + 1; j < tokens.size(); j++) {
-                String a = tokens.get(i);
-                String b = tokens.get(j);
-
-                if (isObviousAlias(a, b)) {
-                    uf.union(i, j);
-                    continue;
-                }
-
-                double sim = MappingMathUtil.cosine(tokenVec.get(a), tokenVec.get(b));
-                if (sim >= THRESH_TOKEN_ALIAS) uf.union(i, j);
-            }
-        }
-
-        Map<Integer, List<String>> compToTokens = new LinkedHashMap<>();
-        for (int i = 0; i < tokens.size(); i++) {
-            int root = uf.find(i);
-            compToTokens.computeIfAbsent(root, k -> new ArrayList<>()).add(tokens.get(i));
-        }
-
-        Map<String, List<SuggestedRefDTO>> canonToRefs = new LinkedHashMap<>();
-        Map<String, Integer> canonSupport = new HashMap<>();
-
-        for (List<String> comp : compToTokens.values()) {
-            String canon = pickCanonicalToken(comp, tokenGlobalFreq);
-
-            List<SuggestedRefDTO> refs = new ArrayList<>();
-            int support = 0;
-
-            for (Map<String, List<SuggestedRefDTO>> tokenToRefs : bySource.values()) {
-                for (String t : comp) {
-                    List<SuggestedRefDTO> r = tokenToRefs.get(t);
-                    if (r != null && !r.isEmpty()) {
-                        refs.addAll(r);
-                        support += r.size();
+    private String detectTypeFromSourcesOrSchema(List<EmbeddedColumn> sources, String schemaType) {
+        String st = StringUtil.safeTrim(schemaType).toLowerCase(Locale.ROOT);
+
+        return switch (st) {
+            case "integer" -> "integer";
+            case "number", "double", "float" -> "double";
+            case "date", "datetime" -> "date";
+            default -> {
+                boolean anyInt = false;
+                boolean anyDouble = false;
+                boolean anyDate = false;
+
+                if (sources != null) {
+                    for (EmbeddedColumn s : sources) {
+                        if (s == null || s.stats == null) continue;
+                        if (s.stats.hasIntegerMarker) anyInt = true;
+                        if (s.stats.hasDoubleMarker) anyDouble = true;
+                        if (s.stats.hasDateMarker) anyDate = true;
                     }
                 }
+                if (anyDate) yield "date";
+                if (anyDouble) yield "double";
+                if (anyInt) yield "integer";
+                yield "";
             }
+        };
+    }
 
-            if (!refs.isEmpty()) {
-                canonToRefs.put(canon, refs);
-                canonSupport.put(canon, support);
-            }
-        }
-
-        if (!joinsAcrossAtLeastTwoFiles(canonToRefs)) return Collections.emptyList();
-
-        List<Map.Entry<String, List<SuggestedRefDTO>>> entries = new ArrayList<>(canonToRefs.entrySet());
-        entries.removeIf(x -> canonSupport.getOrDefault(x.getKey(), 0) < MIN_SUPPORT_FOR_CANON);
-        if (entries.size() < 2) return Collections.emptyList();
-
-        entries.sort((a, b) -> Integer.compare(b.getValue().size(), a.getValue().size()));
-
-        List<SuggestedValueDTO> out = new ArrayList<>();
-        for (Map.Entry<String, List<SuggestedRefDTO>> x : entries) {
-            SuggestedValueDTO vd = new SuggestedValueDTO();
-            vd.setName(x.getKey());
-            vd.setTerminology("");
-            vd.setDescription("Closed-domain categorical harmonization across files (aliases merged).");
-            vd.setMapping(x.getValue());
-            out.add(vd);
-        }
+    private List<EmbeddedColumn> topCols(List<SimilarityScore<EmbeddedColumn>> cs) {
+        List<EmbeddedColumn> out = new ArrayList<>();
+        int lim = Math.min(30, cs.size());
+        for (int i = 0; i < lim; i++)
+            out.add(cs.get(i).item());
         return out;
     }
 
-    private boolean joinsAcrossAtLeastTwoFiles(Map<String, List<SuggestedRefDTO>> canonToRefs) {
-        Set<String> fileKeys = new HashSet<>();
-        for (List<SuggestedRefDTO> refs : canonToRefs.values()) {
-            for (SuggestedRefDTO r : refs) {
-                fileKeys.add(StringUtil.safe(r.getNodeId()) + "::" + StringUtil.safe(r.getFileName()));
-                if (fileKeys.size() >= 2) return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isObviousAlias(String a, String b) {
-        String x = StringUtil.safe(a).trim();
-        String y = StringUtil.safe(b).trim();
-        if (x.isEmpty() || y.isEmpty()) return false;
-
-        // single-letter vs word starting with same letter
-        if (x.length() == 1 && y.length() >= 3) return y.charAt(0) == x.charAt(0);
-        if (y.length() == 1 && x.length() >= 3) return x.charAt(0) == y.charAt(0);
-
-        // prefix abbreviation: one string is a prefix of the other (min length 3).
-        // Handles medical abbreviations like "isch" -> "ischemic", "hem" -> "hemorrhagic".
-        if (x.length() >= 3 && y.startsWith(x)) return true;
-        if (y.length() >= 3 && x.startsWith(y)) return true;
-
-        // unknown variants
-        if ((x.equals("unk") && y.startsWith("unk")) || (y.equals("unk") && x.startsWith("unk"))) return true;
-        return false;
-    }
-
-    private String pickCanonicalToken(List<String> tokens, Map<String, Integer> globalFreq) {
-        String best = null;
-        int bestScore = Integer.MIN_VALUE;
-
-        for (String t : tokens) {
-            int freq = globalFreq.getOrDefault(t, 0);
-            int len = t.length();
-
-            int score = freq * 100 + Math.min(len, 30);
-            if (len == 1) score -= 500;
-
-            if (best == null || score > bestScore) {
-                best = t;
-                bestScore = score;
-            } else if (score == bestScore && best != null) {
-                if (t.compareToIgnoreCase(best) < 0) best = t;
-            }
-        }
-
-        return best == null ? tokens.get(0) : best;
-    }
-
-    private static final class UnionFind {
-        final int[] parent;
-        final int[] rank;
-
-        UnionFind(int n) {
-            parent = new int[n];
-            rank = new int[n];
-            for (int i = 0; i < n; i++) parent[i] = i;
-        }
-
-        int find(int x) {
-            while (parent[x] != x) {
-                parent[x] = parent[parent[x]];
-                x = parent[x];
-            }
-            return x;
-        }
-
-        void union(int a, int b) {
-            int ra = find(a);
-            int rb = find(b);
-            if (ra == rb) return;
-            if (rank[ra] < rank[rb]) parent[ra] = rb;
-            else if (rank[ra] > rank[rb]) parent[rb] = ra;
-            else { parent[rb] = ra; rank[ra]++; }
-        }
-    }
-
-    // ============================================================
-    // Mapping builders
-    // ============================================================
-
-    private SuggestedMappingDTO buildMappingSkeleton(String mappingType, String fileName, List<ColRef> pickedCols) {
-        SuggestedMappingDTO mapping = new SuggestedMappingDTO();
-        mapping.setMappingType(mappingType);
-        mapping.setFileName(fileName);
-
-        mapping.setNodeId("");
-        mapping.setTerminology("");
-        mapping.setDescription("");
-
-        mapping.setColumns(extractSourceColumnNames(pickedCols));
-        return mapping;
-    }
-
-    private List<String> extractSourceColumnNames(List<ColRef> cols) {
-        List<String> out = new ArrayList<>();
-        for (ColRef c : cols) out.add(c.column);
-        return out;
-    }
-
-    // ============================================================
-    // Range value (single "numeric" or "date" bucket)
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildRangeValue(String unionName, String type, List<ColRef> sources) {
-        SuggestedValueDTO v = new SuggestedValueDTO();
-        v.setName(type);
-        v.setTerminology("");
-        v.setDescription(rangeDescriptionFromSources(type, sources));
-        v.setMapping(new ArrayList<>());
-
-        for (ColRef src : sources) {
-            SuggestedRefDTO ref = new SuggestedRefDTO();
-            ref.setNodeId(src.nodeId);
-            ref.setFileName(src.fileName);
-            ref.setGroupColumn(src.column);
-            ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
-            ref.setValue(type);
-            v.getMapping().add(ref);
-        }
-
-        return Collections.singletonList(v);
-    }
-
-    private String rangeDescriptionFromSources(String type, List<ColRef> sources) {
-        if (sources == null || sources.isEmpty()) return "";
-
-        List<String> parts = new ArrayList<>();
-        for (ColRef s : sources) {
-            Double min = s.stats.numMin;
-            Double max = s.stats.numMax;
-            if (min != null && max != null) {
-                parts.add(s.fileName + ":" + s.column + "=[" + StringUtil.stripTrailingZeros(min) + "," + StringUtil.stripTrailingZeros(max) + "]");
-            } else {
-                parts.add(s.fileName + ":" + s.column + "=[unknown]");
-            }
-        }
-        return String.join(" | ", parts);
-    }
-
-    // ============================================================
-    // Enum mapping (schema provided)
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildEnumValueMappings(SchemaFieldRef field, List<ColRef> sources) {
-        List<EnumRef> enums = new ArrayList<>();
-        for (String ev : field.enumValues) {
-            float[] vec = embedSingleValue(ev);
-            enums.add(new EnumRef(ev, vec));
-        }
-
-        Map<String, List<SuggestedRefDTO>> bucket = new LinkedHashMap<>();
-        for (EnumRef er : enums) bucket.put(er.value, new ArrayList<>());
-
-        for (ColRef src : sources) {
-            List<String> rawVals = StringUtil.safeList(src.rawValues);
-
-            int used = 0;
-            for (String rv : rawVals) {
-                if (used >= MAX_VALUES) break;
-
-                String nv = NormalizationUtil.normalizeValue(rv);
-                if (nv.isEmpty()) { used++; continue; }
-
-                float[] vvec = embedSingleValue(nv);
-
-                EnumRef best = null;
-                double bestSim = -1;
-                for (EnumRef er : enums) {
-                    double sim = MappingMathUtil.cosine(vvec, er.vec);
-                    if (sim > bestSim) { bestSim = sim; best = er; }
-                }
-
-                if (best != null && bestSim >= THRESH_ENUM_VALUE) {
-                    SuggestedRefDTO ref = new SuggestedRefDTO();
-                    ref.setNodeId(src.nodeId);
-                    ref.setFileName(src.fileName);
-                    ref.setGroupColumn(src.column);
-                    ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
-                    ref.setValue(rv);
-                    bucket.get(best.value).add(ref);
-                }
-
-                used++;
-            }
-        }
-
-        List<SuggestedValueDTO> out = new ArrayList<>();
-        for (Map.Entry<String, List<SuggestedRefDTO>> e : bucket.entrySet()) {
-            if (e.getValue().isEmpty()) continue;
-
-            SuggestedValueDTO vd = new SuggestedValueDTO();
-            vd.setName(e.getKey());
-            vd.setTerminology("");
-            vd.setDescription("");
-            vd.setMapping(e.getValue());
-            out.add(vd);
-        }
-
-        return out;
-    }
-
-    // ============================================================
-    // Categorical clustering fallback
-    // ============================================================
-
-    private List<SuggestedValueDTO> buildClusteredValueMappings(String unionName, List<ColRef> sources) {
-        List<ValueItem> items = new ArrayList<>();
-        Map<String, Integer> freq = new HashMap<>();
-
-        for (ColRef src : sources) {
-            List<String> rawVals = StringUtil.safeList(src.rawValues);
-            int used = 0;
-
-            for (String rv : rawVals) {
-                if (items.size() >= MAX_VALUES_PER_UNION) break;
-                if (used >= MAX_VALUES) break;
-
-                String nv = NormalizationUtil.normalizeValue(rv);
-                if (nv.isEmpty()) { used++; continue; }
-
-                freq.put(nv, freq.getOrDefault(nv, 0) + 1);
-
-                SuggestedRefDTO ref = new SuggestedRefDTO();
-                ref.setNodeId(src.nodeId);
-                ref.setFileName(src.fileName);
-                ref.setGroupColumn(src.column);
-                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
-                ref.setValue(rv);
-
-                items.add(new ValueItem(nv, embedSingleValue(nv), ref));
-                used++;
-            }
-        }
-
-        if (items.isEmpty()) return Collections.emptyList();
-
-        List<Cluster> clusters = new ArrayList<>();
-        for (ValueItem it : items) {
-            // First: exact normalized-value match — ensures duplicates like "L"/"l" (same
-            // normalized form "l") always land in the same cluster regardless of embedding.
-            Cluster exactMatch = null;
-            for (Cluster c : clusters) {
-                if (c.normalizedValues.contains(it.normalized)) {
-                    exactMatch = c;
-                    break;
-                }
-            }
-            if (exactMatch != null) {
-                exactMatch.add(it);
-                continue;
-            }
-
-            // Fallback: embedding-based clustering
-            Cluster best = null;
-            double bestSim = -1;
-
-            for (Cluster c : clusters) {
-                double sim = MappingMathUtil.cosine(it.vec, c.centroid);
-                if (sim > bestSim) { bestSim = sim; best = c; }
-            }
-
-            if (best != null && bestSim >= THRESH_CLUSTER) best.add(it);
-            else { Cluster c = new Cluster(); c.add(it); clusters.add(c); }
-        }
-
-        List<SuggestedValueDTO> out = new ArrayList<>();
-        for (Cluster c : clusters) {
-            if (c.refs.isEmpty()) continue;
-
-            String rep = pickRepresentative(c, freq);
-
-            SuggestedValueDTO vd = new SuggestedValueDTO();
-            vd.setName(rep);
-            vd.setTerminology("");
-            vd.setDescription("");
-            vd.setMapping(new ArrayList<>(c.refs));
-            out.add(vd);
-        }
-
-        out.sort((a, b) -> Integer.compare(
-                b.getMapping() == null ? 0 : b.getMapping().size(),
-                a.getMapping() == null ? 0 : a.getMapping().size()
-        ));
-
-        return out;
-    }
-
-    private String pickRepresentative(Cluster c, Map<String, Integer> freq) {
-        String best = null;
-        int bestFreq = -1;
-
-        for (String nv : c.normalizedValues) {
-            int f = freq.getOrDefault(nv, 0);
-            if (f > bestFreq) { best = nv; bestFreq = f; }
-            else if (f == bestFreq && best != null) {
-                if (nv.length() < best.length()) best = nv;
-            }
-        }
-        return best == null ? c.normalizedValues.iterator().next() : best;
-    }
-
-    // ============================================================
-    // Type detection (numeric merging)
-    // ============================================================
-
-    private String detectTypeFromSourcesOrSchema(List<ColRef> sources, String schemaType) {
-        String st = StringUtil.safe(schemaType).trim().toLowerCase(Locale.ROOT);
-
-        if ("integer".equals(st)) return "integer";
-        if ("number".equals(st) || "double".equals(st) || "float".equals(st)) return "double";
-        if ("date".equals(st) || "datetime".equals(st)) return "date";
-
-        boolean anyInt = false, anyDouble = false, anyDate = false;
-        for (ColRef s : sources) {
-            if (s.stats.hasIntegerMarker) anyInt = true;
-            if (s.stats.hasDoubleMarker) anyDouble = true;
-            if (s.stats.hasDateMarker) anyDate = true;
-        }
-
-        if (anyDate) return "date";
-        // FIX: if any double present, treat as double (still merge with integers as numeric)
-        if (anyDouble) return "double";
-        if (anyInt) return "integer";
-        return "";
-    }
-
-    private List<ColRef> topCols(List<ColScore> cs, int n) {
-        List<ColRef> out = new ArrayList<>();
-        int lim = Math.min(n, cs.size());
-        for (int i = 0; i < lim; i++) out.add(cs.get(i).col);
-        return out;
-    }
-
-    // ============================================================
-    // Stats parsing
-    // ============================================================
-
-    private ColStats parseStatsFromValues(List<String> rawValues) {
-        ColStats s = new ColStats();
-        if (rawValues == null) return s;
-
-        for (String rv : rawValues) {
-            String t = StringUtil.safe(rv).trim();
-            if (t.isEmpty()) continue;
-
-            String low = t.toLowerCase(Locale.ROOT);
-
-            if ("integer".equals(low)) s.hasIntegerMarker = true;
-            if ("double".equals(low)) s.hasDoubleMarker = true;
-            if ("date".equals(low)) s.hasDateMarker = true;
-
-            if (low.startsWith("min:")) {
-                Double v = tryParseDouble(low.substring("min:".length()));
-                if (v != null) s.numMin = v;
-            } else if (low.startsWith("max:")) {
-                Double v = tryParseDouble(low.substring("max:".length()));
-                if (v != null) s.numMax = v;
-            } else if (low.startsWith("earliest:")) {
-                Long ms = tryParseDateMs(low.substring("earliest:".length()));
-                if (ms != null) s.dateMinMs = ms;
-            } else if (low.startsWith("latest:")) {
-                Long ms = tryParseDateMs(low.substring("latest:".length()));
-                if (ms != null) s.dateMaxMs = ms;
-            } else if (low.startsWith("step:")) {
-                Integer step = tryParseInt(low.substring("step:".length()));
-                if (step != null && step > 0) s.stepHint = step;
-            }
-        }
-
-        return s;
-    }
-
-    private Integer tryParseInt(String s) {
-        try {
-            String x = StringUtil.safe(s).trim();
-            if (x.isEmpty()) return null;
-            return Integer.parseInt(x);
-        } catch (Exception ignore) {
-            return null;
-        }
-    }
-
-    private Double tryParseDouble(String s) {
-        try {
-            String x = StringUtil.safe(s).trim();
-            if (x.isEmpty()) return null;
-            return Double.parseDouble(x);
-        } catch (Exception ignore) {
-            return null;
-        }
-    }
-
-    private Long tryParseDateMs(String s) {
-        try {
-            String x = StringUtil.safe(s).trim();
-            if (x.isEmpty()) return null;
-            return javax.xml.bind.DatatypeConverter.parseDateTime(x).getTimeInMillis();
-        } catch (Exception ignore) {
-            try {
-                String x = StringUtil.safe(s).trim();
-                if (x.isEmpty()) return null;
-                return new Date(Date.parse(x)).getTime();
-            } catch (Exception ignore2) {
-                return null;
-            }
-        }
-    }
-
-    // ============================================================
-    // Schema parsing
-    // ============================================================
-
-    private List<SchemaFieldRef> parseSchemaFields(String schemaJson) {
-        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
-                JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schemaJson, MAX_ENUM);
-
-        if (defs.isEmpty()) return Collections.emptyList();
-
-        List<SchemaFieldRef> out = new ArrayList<>();
-        for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
-            String fieldName = d.getName();
-            String type = d.getType();
-            List<String> enumVals = d.getEnumValues();
-
-            float[] nameVec = embedName(fieldName);
-            float[] enumVec = embedEnum(enumVals, type);
-
-            float[] combined = new float[D];
-            for (int k = 0; k < D; k++) {
-                combined[k] = (float) (W_TGT_NAME * nameVec[k] + W_TGT_ENUM * enumVec[k]);
-            }
-            MappingMathUtil.l2NormalizeInPlace(combined);
-
-            out.add(new SchemaFieldRef(fieldName, type, enumVals, combined));
-        }
-        return out;
-    }
-
-    // ============================================================
-    // Source <-> Schema scoring
-    // ============================================================
-
-    private SchemaScore bestSchemaMatch(ColRef src, List<SchemaFieldRef> fields) {
-        SchemaFieldRef best = null;
+    private SimilarityScore<EmbeddedSchemaField> bestSchemaMatch(EmbeddedColumn src, List<EmbeddedSchemaField> fields) {
+        EmbeddedSchemaField best = null;
         double bestSim = -1.0;
 
-        for (SchemaFieldRef f : fields) {
+        for (EmbeddedSchemaField f : fields) {
             double sim = MappingMathUtil.cosine(src.vec, f.vec);
-            if (sim > bestSim) { bestSim = sim; best = f; }
+            if (sim > bestSim) {
+                bestSim = sim;
+                best = f;
+            }
         }
 
         if (best == null) return null;
-        return new SchemaScore(best, bestSim);
+        return new SimilarityScore<>(best, bestSim);
     }
 
-    // ============================================================
-    // Column clustering
-    // ============================================================
-
-    private List<ColCluster> clusterColumns(List<ColRef> all) {
+    private List<ColCluster> clusterColumns(List<EmbeddedColumn> all) {
         Map<String, ColCluster> byConcept = new LinkedHashMap<>();
-        for (ColRef c : all) {
-            String key = sanitizeUnionName(StringUtil.safe(c.concept).trim().toLowerCase(Locale.ROOT));
+        for (EmbeddedColumn c : all) {
+            String key = sanitizeUnionName(StringUtil.safeTrim(c.concept).toLowerCase(Locale.ROOT));
             if (key.isEmpty()) key = "__empty__";
             ColCluster cl = byConcept.get(key);
             if (cl == null) {
@@ -1330,42 +1250,48 @@ public class MappingService {
         }
 
         List<ColCluster> clusters = new ArrayList<>(byConcept.values());
-
-        // Step 2: fuzzy merge across those pre-clusters
         List<ColCluster> merged = new ArrayList<>();
+
         for (ColCluster col : clusters) {
-            // Primary: find best match by combined vector similarity
-            ColCluster best = null;
-            double bestSim = -1;
+            String colConcept = col.cols.isEmpty() ? "" : col.cols.get(0).concept;
+
+            // Track the best unconditional target (sim >= 0.80 or sim >= threshold + Jaccard)
+            ColCluster bestUnconditional = null;
+            double bestUnconditionalSim = -1;
+
+            // Track the best abbreviation target (sim >= threshold + abbreviation detection),
+            // checked against every column in each candidate cluster — not just the first.
+            ColCluster bestAbbreviation = null;
+            double bestAbbreviationSim = -1;
 
             for (ColCluster cl : merged) {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
-                if (sim > bestSim) { bestSim = sim; best = cl; }
-            }
+                double jac = conceptTokenJaccard(col, cl);
 
-            if (best != null && bestSim >= THRESH_COL_CLUSTER) {
-                for (ColRef r : col.cols) best.add(r);
-                continue;
-            }
-
-            // Fallback: find best match by pure value-vector similarity.
-            // This catches columns whose names differ but whose value domains overlap
-            // (e.g. "Type" with ["Ischemic","Hemorrhagic"] vs "Etiology" with ["Hem","Isch"]).
-            if (col.valueCentroid != null) {
-                ColCluster bestByValue = null;
-                double bestValueSim = -1;
-                for (ColCluster cl : merged) {
-                    if (cl.valueCentroid == null) continue;
-                    double vsim = MappingMathUtil.cosine(col.valueCentroid, cl.valueCentroid);
-                    if (vsim > bestValueSim) { bestValueSim = vsim; bestByValue = cl; }
+                if ((sim >= 0.80 || (sim >= mappingSettings.columnClusterThreshold() && jac >= 0.15))
+                        && sim > bestUnconditionalSim) {
+                    bestUnconditionalSim = sim;
+                    bestUnconditional = cl;
                 }
-                if (bestByValue != null && bestValueSim >= THRESH_VALUE_CLUSTER) {
-                    for (ColRef r : col.cols) bestByValue.add(r);
-                    continue;
+
+                if (sim >= mappingSettings.columnClusterThreshold() && sim > bestAbbreviationSim) {
+                    for (EmbeddedColumn clCol : cl.cols) {
+                        if (isAbbreviationPair(colConcept, clCol.concept)) {
+                            bestAbbreviationSim = sim;
+                            bestAbbreviation = cl;
+                            break;
+                        }
+                    }
                 }
             }
 
-            merged.add(col);
+            // Prefer a traditional match; fall back to an abbreviation-based match
+            ColCluster target = (bestUnconditional != null) ? bestUnconditional : bestAbbreviation;
+            if (target != null) {
+                for (EmbeddedColumn r : col.cols) target.add(r);
+            } else {
+                merged.add(col);
+            }
         }
 
         for (ColCluster c : merged) {
@@ -1375,12 +1301,117 @@ public class MappingService {
         return merged;
     }
 
-    private String pickClusterRepresentativeConcept(List<ColRef> cols) {
+    private double conceptTokenJaccard(ColCluster a, ColCluster b) {
+        Set<String> sa = conceptTokens(a.representativeConcept);
+        Set<String> sb = conceptTokens(b.representativeConcept);
+        if (sa.isEmpty() || sb.isEmpty()) return 0.0;
+
+        int inter = 0;
+        for (String x : sa) if (sb.contains(x)) inter++;
+        int union = sa.size() + sb.size() - inter;
+        if (union <= 0) return 0.0;
+        return inter / (double) union;
+    }
+
+    private Set<String> conceptTokens(String concept) {
+        String s = StringUtil.safeTrim(concept).toLowerCase(Locale.ROOT);
+        if (s.isEmpty()) return Collections.emptySet();
+        String[] parts = s.split("[^a-z0-9]+");
+        Set<String> out = new LinkedHashSet<>();
+        for (String p : parts) {
+            if (p == null) continue;
+            String t = p.trim();
+            if (t.isEmpty()) continue;
+            if (t.matches("\\d+")) continue;
+            if (t.length() <= 1) continue;
+            out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * Returns true if one concept appears to be an abbreviation or acronym of the other.
+     * Handles three cases:
+     *   1. Initialism (order-insensitive): "sbp" ↔ "blood pressure systolic" ({s,b,p} are all initials)
+     *   2. Prefix: "cr" ↔ "serum creatinine" ("cr" is a prefix of "creatinine")
+     *   3. Suffix-initialism: "egfr" ↔ "glomerular filtration rate" (suffix "gfr" has all initials)
+     * The embedding-similarity gate in the caller prevents false positives from unrelated pairs
+     * that happen to share initials.
+     */
+    private boolean isAbbreviationPair(String conceptA, String conceptB) {
+        if (conceptA == null || conceptB == null) return false;
+        return looksLikeAbbreviationOf(conceptA, conceptB)
+                || looksLikeAbbreviationOf(conceptB, conceptA);
+    }
+
+    private boolean looksLikeAbbreviationOf(String candidate, String fullConcept) {
+        String[] candidateTokens = candidate.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+        String[] fullTokensArr = fullConcept.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+
+        // Full concept must have at least 2 meaningful tokens
+        List<String> fullParts = new ArrayList<>();
+        for (String t : fullTokensArr) { if (t != null && !t.isEmpty()) fullParts.add(t); }
+        if (fullParts.size() < 2) return false;
+
+        // Build initials multiset: char → how many full-concept tokens start with that char
+        // (e.g., "Low Density Lipoprotein" → {l:2, d:1} because both L and l start two words)
+        Map<Character, Integer> initialsMultiset = new LinkedHashMap<>();
+        for (String token : fullParts) initialsMultiset.merge(token.charAt(0), 1, Integer::sum);
+
+        // Try each candidate token as a potential abbreviation (2–6 chars)
+        for (String abbrev : candidateTokens) {
+            if (abbrev == null || abbrev.isEmpty()) continue;
+            if (abbrev.length() < 2 || abbrev.length() > 6) continue;
+
+            // Build multiset of abbreviation characters
+            Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
+            for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
+
+            // Case 1: Initialism — every char in the abbreviation must appear at least as often
+            // in the initials multiset. Using multiset prevents LDL from matching HDL's initials
+            // {h,d,l} even though both share {d,l}.
+            boolean initialsMatch = true;
+            for (Map.Entry<Character, Integer> e : abbrevMultiset.entrySet()) {
+                if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
+                    initialsMatch = false;
+                    break;
+                }
+            }
+            if (initialsMatch) return true;
+
+            // Case 2: Prefix — abbreviation is a STRICT prefix of a full-concept token
+            // (token must be strictly longer to avoid "score".startsWith("score") false positives)
+            for (String token : fullParts) {
+                if (token.length() > abbrev.length() && token.startsWith(abbrev)) return true;
+            }
+
+            // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR → GlomerularFiltrationRate
+            // Only runs for abbreviations of length ≥ 4 (loop starts at 1 and needs suffix length ≥ 3,
+            // i.e., abbrev.length() - start ≥ 3 → start ≤ abbrev.length() - 3).
+            // 3-char abbreviations like "gfr" are correctly handled by Case 1 (initialism) alone.
+            for (int start = 1; start <= abbrev.length() - 3; start++) {
+                String suffix = abbrev.substring(start); // length ≥ 3 because start ≤ abbrev.length()-3
+                Map<Character, Integer> suffixMultiset = new LinkedHashMap<>();
+                for (char c : suffix.toCharArray()) suffixMultiset.merge(c, 1, Integer::sum);
+                boolean suffixMatch = true;
+                for (Map.Entry<Character, Integer> e : suffixMultiset.entrySet()) {
+                    if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
+                        suffixMatch = false;
+                        break;
+                    }
+                }
+                if (suffixMatch) return true;
+            }
+        }
+        return false;
+    }
+
+    private String pickClusterRepresentativeConcept(List<EmbeddedColumn> cols) {
         String best = null;
         int bestLen = Integer.MAX_VALUE;
 
-        for (ColRef c : cols) {
-            String name = StringUtil.safe(c.concept).trim();
+        for (EmbeddedColumn c : cols) {
+            String name = StringUtil.safeTrim(c.concept);
             if (name.isEmpty()) continue;
 
             int len = name.length();
@@ -1394,249 +1425,25 @@ public class MappingService {
         return best;
     }
 
-    // ============================================================
-    // Request-learned canonicalization (no hardcoded tokens)
-    // ============================================================
-
-    private static final class RawColName {
-        final String raw;
-        final List<String> tokens;
-
-        RawColName(String raw, List<String> tokens) {
-            this.raw = raw;
-            this.tokens = tokens;
-        }
+    private SuggestedMappingDTO buildMappingSkeleton(String mappingType, String fileName, List<EmbeddedColumn> pickedCols) {
+        SuggestedMappingDTO mapping = new SuggestedMappingDTO();
+        mapping.setMappingType(mappingType);
+        mapping.setFileName(fileName);
+        mapping.setNodeId("");
+        mapping.setTerminology("");
+        mapping.setDescription("");
+        mapping.setColumns(extractSourceColumnNames(pickedCols));
+        return mapping;
     }
 
-    private static final class LearnedNoise {
-        final Set<String> noiseTokens;
-        final Set<String> suffixNoiseTokens;
-        final Map<String, Integer> df;
-        final int nCols;
-
-        LearnedNoise(Set<String> noiseTokens, Set<String> suffixNoiseTokens, Map<String, Integer> df, int nCols) {
-            this.noiseTokens = noiseTokens;
-            this.suffixNoiseTokens = suffixNoiseTokens;
-            this.df = df;
-            this.nCols = nCols;
-        }
-    }
-
-    private static final class CanonicalName {
-        final String concept;
-        final double genericness; // higher => more generic
-        final int tokenCount;
-
-        CanonicalName(String concept, double genericness, int tokenCount) {
-            this.concept = concept;
-            this.genericness = genericness;
-            this.tokenCount = tokenCount;
-        }
-    }
-
-    private LearnedNoise learnNoiseFromRequest(List<RawColName> rawNames) {
-        Map<String, Integer> df = new HashMap<>();
-        Map<String, Integer> suffixCount = new HashMap<>();
-
-        int n = 0;
-        for (RawColName rn : rawNames) {
-            if (rn == null || rn.tokens == null || rn.tokens.isEmpty()) continue;
-            n++;
-
-            Set<String> uniq = new HashSet<>(rn.tokens);
-            for (String t : uniq) {
-                if (t == null || t.isEmpty()) continue;
-                df.put(t, df.getOrDefault(t, 0) + 1);
-            }
-
-            String last = rn.tokens.get(rn.tokens.size() - 1);
-            if (last != null && !last.isEmpty()) {
-                suffixCount.put(last, suffixCount.getOrDefault(last, 0) + 1);
-            }
-        }
-
-        Set<String> noise = new HashSet<>();
-        Set<String> suffixNoise = new HashSet<>();
-
-        for (Map.Entry<String, Integer> e : df.entrySet()) {
-            String t = e.getKey();
-            int c = e.getValue();
-            if (c >= NOISE_DF_MIN_COUNT) noise.add(t);
-            else if (n > 0 && (c / (double) n) >= NOISE_DF_FRACTION) noise.add(t);
-        }
-
-        for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
-            if (e.getValue() >= SUFFIX_NOISE_MIN_COUNT) {
-                suffixNoise.add(e.getKey());
-            }
-        }
-
-        // Protect suffix-noise candidates that are "productive": they appear as the trailing
-        // sub-token of a compound single-token word in this request (e.g. "barthel" is the
-        // suffix of "totalbarthel").  Such tokens carry real meaning and must not be stripped.
-        Set<String> singleTokenWords = new HashSet<>();
-        for (RawColName rn : rawNames) {
-            if (rn != null && rn.tokens != null && rn.tokens.size() == 1) {
-                singleTokenWords.add(rn.tokens.get(0));
-            }
-        }
-        suffixNoise.removeIf(candidate -> {
-            for (String st : singleTokenWords) {
-                if (st.length() > candidate.length() + MIN_COMPOUND_LENGTH_DIFF && st.endsWith(candidate)) return true;
-            }
-            return false;
-        });
-
-        // do not mark everything as noise if dataset is tiny
-        if (n <= 6 && noise.size() > 0) {
-            // keep only the highest-df tokens
-            List<Map.Entry<String, Integer>> entries = new ArrayList<>(df.entrySet());
-            entries.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-            Set<String> keep = new HashSet<>();
-            for (int i = 0; i < Math.min(3, entries.size()); i++) keep.add(entries.get(i).getKey());
-            noise.retainAll(keep);
-        }
-
-        return new LearnedNoise(noise, suffixNoise, df, n);
-    }
-
-    private List<String> tokenizeName(String rawColumn) {
-        String s0 = StringUtil.safe(rawColumn).trim();
-        if (s0.isEmpty()) return Collections.emptyList();
-
-        String s = NormalizationUtil.splitCamelStrong(s0);
-        s = s.toLowerCase(Locale.ROOT);
-
-        String[] parts = s.split("[^a-z0-9]+");
-        List<String> toks = new ArrayList<>();
-        for (String p : parts) {
-            if (p == null) continue;
-            String t = p.trim();
-            if (t.isEmpty()) continue;
-
-            // drop pure digits
-            if (t.matches("\\d+")) continue;
-
-            // drop embedded digits
-            String t2 = t.replaceAll("\\d+", "");
-            if (t2.isEmpty()) continue;
-
-            t2 = normalizeToken(t2);
-            if (t2.isEmpty()) continue;
-
-            toks.add(t2);
-        }
-
-        // drop leading single-letter prefix if next token is informative
-        if (toks.size() >= 2 && toks.get(0).length() == 1 && toks.get(1).length() >= 3) {
-            toks.remove(0);
-        }
-
-        return toks;
-    }
-
-    private CanonicalName canonicalConceptName(String rawColumn, LearnedNoise noise) {
-        List<String> toks = tokenizeName(rawColumn);
-        if (toks.isEmpty()) return new CanonicalName("", 1.0, 0);
-
-        List<String> kept = new ArrayList<>();
-        double genericAccum = 0.0;
-
-        for (int i = 0; i < toks.size(); i++) {
-            String t = toks.get(i);
-
-            if (noise != null) {
-                if (noise.noiseTokens.contains(t)) continue;
-
-                // suffix noise: if token is last, and it is a learned common suffix, drop it
-                if (i == toks.size() - 1 && noise.suffixNoiseTokens.contains(t)) continue;
-
-                // genericness accumulates based on DF in this request
-                int df = noise.df.getOrDefault(t, 0);
-                if (noise.nCols > 0) {
-                    double frac = df / (double) noise.nCols;
-                    genericAccum += frac;
-                }
-            }
-
-            kept.add(t);
-        }
-
-        // If we removed everything, fall back to non-noise tokens (or original tokens)
-        if (kept.isEmpty()) kept = toks;
-
-        // Compound-word split: if a single long token survives (e.g. "ageinjury",
-        // "totalbarthel"), try to split it into two known vocabulary sub-tokens.
-        // This lets all-caps compound columns ("AGEINJURY", "TOTALBARTHEL") align
-        // with their space-separated counterparts ("Age at injury", "TOTBarthel1").
-        if (kept.size() == 1 && kept.get(0).length() >= MIN_COMPOUND_WORD_LENGTH && noise != null && noise.df != null) {
-            List<String> split = trySplitCompound(kept.get(0), noise.df);
-            if (split != null) kept = split;
-        }
-
-        String concept = String.join(" ", kept).replaceAll("\\s+", " ").trim();
-        int tokenCount = kept.size();
-
-        double genericness = (tokenCount <= 0) ? 1.0 : (genericAccum / tokenCount);
-        return new CanonicalName(concept, genericness, tokenCount);
-    }
-
-    private String normalizeToken(String t) {
-        String x = StringUtil.safe(t).trim().toLowerCase(Locale.ROOT);
-        if (x.isEmpty()) return "";
-
-        // very light stemming WITHOUT breaking words like "dress" -> "dres"
-        if (x.endsWith("ing") && x.length() > 5) x = x.substring(0, x.length() - 3);
-        else if (x.endsWith("ed") && x.length() > 4) x = x.substring(0, x.length() - 2);
-        else if (x.endsWith("es") && x.length() > 4) x = x.substring(0, x.length() - 2);
-        else if (x.endsWith("s") && x.length() > 4 && !x.endsWith("ss")) x = x.substring(0, x.length() - 1);
-
-        return x;
-    }
-
-    /**
-     * Tries to split a single compound token into two known vocabulary sub-tokens.
-     * Both the left and right part must appear in the request's token vocabulary (df >= 1).
-     * Returns null if no valid split is found.
-     * Example: "ageinjury" → ["age", "injury"]  (when "age" and "injury" are known tokens)
-     *          "totalbarthel" → ["total", "barthel"] (when both appear in other columns)
-     */
-    private List<String> trySplitCompound(String token, Map<String, Integer> vocab) {
-        int len = token.length();
-        // Try every split where each part is at least MIN_SUBTOKEN_LENGTH characters
-        for (int i = MIN_SUBTOKEN_LENGTH; i <= len - MIN_SUBTOKEN_LENGTH; i++) {
-            String left  = token.substring(0, i);
-            String right = token.substring(i);
-            if (vocab.containsKey(left) && vocab.containsKey(right)) {
-                List<String> result = new ArrayList<>();
-                result.add(left);
-                result.add(right);
-                return result;
-            }
-        }
-        return null;
-    }
-
-    private boolean looksLikeInformativeCategorical(ColStats stats, List<String> rawValues) {
-        if (stats == null) return false;
-        if (stats.hasIntegerMarker || stats.hasDoubleMarker || stats.hasDateMarker) return false;
-        if (rawValues == null) return false;
-
-        int nonEmpty = 0;
-        Set<String> uniq = new HashSet<>();
-        for (String rv : rawValues) {
-            String nv = NormalizationUtil.normalizeValue(rv);
-            if (nv.isEmpty()) continue;
-            nonEmpty++;
-            uniq.add(nv);
-            if (nonEmpty >= 20) break;
-        }
-        // small unique domain => likely informative
-        return uniq.size() >= 2 && uniq.size() <= 20;
+    private List<String> extractSourceColumnNames(List<EmbeddedColumn> cols) {
+        List<String> out = new ArrayList<>();
+        for (EmbeddedColumn c : cols) out.add(c.column);
+        return out;
     }
 
     private String sanitizeUnionName(String raw) {
-        String s = StringUtil.safe(raw).trim();
+        String s = StringUtil.safeTrim(raw);
         if (s.isEmpty()) return "";
         s = s.replaceAll("\\s+", "_");
         s = s.replaceAll("[^A-Za-z0-9_]", "");
@@ -1645,7 +1452,7 @@ public class MappingService {
     }
 
     private String makeUnique(String base, Set<String> used) {
-        String b = StringUtil.safe(base).trim();
+        String b = StringUtil.safeTrim(base);
         if (b.isEmpty()) b = "field";
 
         String out = b;
@@ -1656,320 +1463,5 @@ public class MappingService {
         }
         used.add(out);
         return out;
-    }
-
-    // ============================================================
-    // Embeddings
-    // ============================================================
-
-    private float[] embedName(String name) {
-        float[] v = new float[D];
-        String s = NormalizationUtil.normalize(name);
-
-        addWordTokens(v, s, 1.6f);
-        addTokenBigrams(v, s, 0.9f);
-
-        addCharNgrams(v, s, 2, 0.45f);
-        addCharNgrams(v, s, 3, 1.05f);
-        addCharNgrams(v, s, 4, 1.00f);
-        addCharNgrams(v, s, 5, 0.80f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private float[] embedValues(List<String> values) {
-        float[] v = new float[D];
-        if (values == null) return v;
-
-        int count = 0;
-        for (String raw : values) {
-            if (count >= MAX_VALUES) break;
-            if (raw == null) continue;
-
-            String s = NormalizationUtil.normalizeValue(raw);
-            if (s.isEmpty()) { count++; continue; }
-
-            addWordTokens(v, s, 1.0f);
-            // 2-grams and 3-grams carry higher weight than 4-grams so that short
-            // abbreviations (e.g. "hem", "isch") share features with their full forms
-            // ("hemorrhagic", "ischemic") through overlapping short character sequences.
-            addCharNgrams(v, s, 2, 0.30f);
-            addCharNgrams(v, s, 3, 0.70f);
-            addCharNgrams(v, s, 4, 0.55f);
-            count++;
-        }
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private float[] embedEnum(List<String> enumVals, String typeHint) {
-        float[] v = new float[D];
-
-        if (typeHint != null && !typeHint.trim().isEmpty()) {
-            addWordTokens(v, NormalizationUtil.normalize(typeHint), 0.9f);
-        }
-
-        if (enumVals != null) {
-            int count = 0;
-            for (String raw : enumVals) {
-                if (count >= MAX_ENUM) break;
-                if (raw == null) continue;
-
-                String s = NormalizationUtil.normalizeValue(raw);
-                if (s.isEmpty()) { count++; continue; }
-
-                addWordTokens(v, s, 1.0f);
-                addCharNgrams(v, s, 4, 0.4f);
-                count++;
-            }
-        }
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private float[] embedSingleValue(String raw) {
-        float[] v = new float[D];
-        String s = NormalizationUtil.normalizeValue(raw);
-        if (s.isEmpty()) return v;
-
-        addWordTokens(v, s, 1.0f);
-        addCharNgrams(v, s, 2, 0.30f);
-        addCharNgrams(v, s, 3, 0.70f);
-        addCharNgrams(v, s, 4, 0.60f);
-        addCharNgrams(v, s, 5, 0.40f);
-
-        MappingMathUtil.l2NormalizeInPlace(v);
-        return v;
-    }
-
-    private void addWordTokens(float[] v, String s, float weight) {
-        if (s == null) return;
-
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        for (String t : parts) {
-            if (t == null) continue;
-            String x = t.trim();
-            if (x.length() < 2) continue;
-
-            int idx = (int) (NormalizationUtil.fnv1a32(x) & (D - 1));
-            v[idx] += weight;
-        }
-    }
-
-    private void addTokenBigrams(float[] v, String s, float weight) {
-        if (s == null) return;
-        String normalized = NormalizationUtil.normalize(s);
-        String[] parts = normalized.split("[^a-z0-9]+");
-
-        List<String> toks = new ArrayList<>();
-        for (String p : parts) {
-            if (p == null) continue;
-            String x = p.trim();
-            if (x.length() < 2) continue;
-            toks.add(x);
-        }
-        for (int i = 0; i + 1 < toks.size(); i++) {
-            String bg = toks.get(i) + "_" + toks.get(i + 1);
-            int idx = (int) (NormalizationUtil.fnv1a32(bg) & (D - 1));
-            v[idx] += weight;
-        }
-    }
-
-    private void addCharNgrams(float[] v, String s, int n, float weight) {
-        if (s == null) return;
-        if (s.length() < n) return;
-        for (int i = 0; i <= s.length() - n; i++) {
-            String g = s.substring(i, i + n);
-            int idx = (int) (NormalizationUtil.fnv1a32(g) & (D - 1));
-            v[idx] += weight;
-        }
-    }
-
-    // ============================================================
-    // Structs
-    // ============================================================
-
-    private static final class ColStats {
-        boolean hasIntegerMarker = false;
-        boolean hasDoubleMarker = false;
-        boolean hasDateMarker = false;
-
-        Double numMin = null;
-        Double numMax = null;
-
-        Long dateMinMs = null;
-        Long dateMaxMs = null;
-
-        Integer stepHint = null;   // e.g., 5
-    }
-
-    private static final class ColRef {
-        final String nodeId;
-        final String fileName;
-        final String column;
-        final String concept;
-        final List<String> rawValues;
-        final float[] vec;       // combined name+value embedding
-        final float[] valueVec;  // pure value embedding (may be a zero vector)
-        final ColStats stats;
-
-        ColRef(String nodeId, String fileName, String column, String concept,
-               List<String> rawValues, float[] vec, float[] valueVec, ColStats stats) {
-            this.nodeId = nodeId;
-            this.fileName = fileName;
-            this.column = column;
-            this.concept = (concept == null || concept.trim().isEmpty()) ? StringUtil.safe(column) : concept;
-            this.rawValues = rawValues;
-            this.vec = vec;
-            this.valueVec = valueVec;
-            this.stats = (stats == null) ? new ColStats() : stats;
-        }
-
-        String fileKey() { return nodeId + "::" + fileName; }
-    }
-
-    private static final class SchemaFieldRef {
-        final String name;
-        final String type;
-        final List<String> enumValues;
-        final float[] vec;
-
-        SchemaFieldRef(String name, String type, List<String> enumValues, float[] vec) {
-            this.name = name;
-            this.type = type;
-            this.enumValues = enumValues == null ? Collections.emptyList() : enumValues;
-            this.vec = vec;
-        }
-    }
-
-    private static final class SchemaScore {
-        final SchemaFieldRef field;
-        final double sim;
-
-        SchemaScore(SchemaFieldRef field, double sim) {
-            this.field = field;
-            this.sim = sim;
-        }
-    }
-
-    private static final class ColScore {
-        final ColRef col;
-        final double sim;
-
-        ColScore(ColRef col, double sim) {
-            this.col = col;
-            this.sim = sim;
-        }
-    }
-
-    private static final class EnumRef {
-        final String value;
-        final float[] vec;
-
-        EnumRef(String value, float[] vec) {
-            this.value = value;
-            this.vec = vec;
-        }
-    }
-
-    private static final class ValueItem {
-        final String normalized;
-        final float[] vec;
-        final SuggestedRefDTO ref;
-
-        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref) {
-            this.normalized = normalized;
-            this.vec = vec;
-            this.ref = ref;
-        }
-    }
-
-    private static final class Cluster {
-        final List<SuggestedRefDTO> refs = new ArrayList<>();
-        final Set<String> normalizedValues = new LinkedHashSet<>();
-        float[] centroid = null;
-        int count = 0;
-
-        void add(ValueItem it) {
-            refs.add(it.ref);
-            normalizedValues.add(it.normalized);
-
-            if (centroid == null) {
-                centroid = Arrays.copyOf(it.vec, it.vec.length);
-                count = 1;
-                return;
-            }
-
-            for (int i = 0; i < centroid.length; i++) {
-                centroid[i] = (centroid[i] * count + it.vec[i]) / (count + 1);
-            }
-            count++;
-
-            double sum = 0.0;
-            for (float x : centroid) sum += (double) x * (double) x;
-            double norm = Math.sqrt(sum);
-            if (norm > 1e-12) {
-                for (int i = 0; i < centroid.length; i++) centroid[i] = (float) (centroid[i] / norm);
-            }
-        }
-    }
-
-    private static final class ColCluster {
-        final List<ColRef> cols = new ArrayList<>();
-        float[] centroid = null;
-        float[] valueCentroid = null;
-        int count = 0;
-        int valueCount = 0;
-        String representativeConcept = "";
-
-        void add(ColRef col) {
-            cols.add(col);
-
-            // Update combined centroid
-            if (centroid == null) {
-                centroid = Arrays.copyOf(col.vec, col.vec.length);
-                count = 1;
-            } else {
-                for (int i = 0; i < centroid.length; i++) {
-                    centroid[i] = (centroid[i] * count + col.vec[i]) / (count + 1);
-                }
-                count++;
-                double sum = 0.0;
-                for (float x : centroid) sum += (double) x * (double) x;
-                double norm = Math.sqrt(sum);
-                if (norm > 1e-12) {
-                    for (int i = 0; i < centroid.length; i++) centroid[i] = (float) (centroid[i] / norm);
-                }
-            }
-
-            // Update value centroid — only from columns with a non-zero value vector so that
-            // numeric and single-char-value columns do not dilute informative value embeddings.
-            if (col.valueVec != null) {
-                double vNormSq = 0.0;
-                for (float x : col.valueVec) vNormSq += (double) x * (double) x;
-                if (vNormSq > 1e-12) {
-                    if (valueCentroid == null) {
-                        valueCentroid = Arrays.copyOf(col.valueVec, col.valueVec.length);
-                        valueCount = 1;
-                    } else {
-                        for (int i = 0; i < valueCentroid.length; i++) {
-                            valueCentroid[i] = (valueCentroid[i] * valueCount + col.valueVec[i]) / (valueCount + 1);
-                        }
-                        valueCount++;
-                        double vSum = 0.0;
-                        for (float x : valueCentroid) vSum += (double) x * (double) x;
-                        double vNorm = Math.sqrt(vSum);
-                        if (vNorm > 1e-12) {
-                            for (int i = 0; i < valueCentroid.length; i++) valueCentroid[i] = (float) (valueCentroid[i] / vNorm);
-                        }
-                    }
-                }
-            }
-        }
     }
 }
