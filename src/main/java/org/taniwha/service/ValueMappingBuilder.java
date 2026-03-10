@@ -603,17 +603,31 @@ public class ValueMappingBuilder {
             return Collections.emptyList();
         }
 
-        if (shouldSkipEmbeddingAliasing(uniqueTokens)) {
-            log.info("[VMB] closedDomain: skip (too many short tokens; MIN_LEN_FOR_EMBED_ALIAS={})",
+        boolean suppressEmbedAliasing = shouldSkipEmbeddingAliasing(uniqueTokens);
+        if (suppressEmbedAliasing) {
+            // Many tokens are shorter than MIN_LEN_FOR_EMBED_ALIAS (e.g. single-character values
+            // like "Y"/"N" or abbreviation sets like "M"/"F"). Embedding vectors for such tokens
+            // carry almost no semantic signal and would cause unrelated values to be aliased
+            // together (e.g. "Y" and "N" collapsing into one bucket).
+            // Instead of aborting, we continue with identity-only grouping: the inner loop's
+            // shouldBlockEmbeddingAlias guard already suppresses embedding comparison for any
+            // short-token pair, so each short value stays in its own component. Longer tokens
+            // in the same domain are still aliased normally via embedding similarity.
+            log.info("[VMB] closedDomain: many short tokens (MIN_LEN_FOR_EMBED_ALIAS={}); " +
+                    "embedding aliasing suppressed – proceeding with identity grouping only",
                     MIN_LEN_FOR_EMBED_ALIAS);
-            return Collections.emptyList();
         }
 
         List<String> tokens = new ArrayList<>(uniqueTokens);
 
-        // Local cache for embeddings.
+        // Local cache for embeddings – only computed for tokens long enough to produce a
+        // meaningful vector; short tokens are blocked by shouldBlockEmbeddingAlias anyway.
         Map<String, float[]> tokenVec = new HashMap<>();
-        for (String t : tokens) tokenVec.put(t, embeddingService.embedSingleValue(t));
+        for (String t : tokens) {
+            if (t.length() >= MIN_LEN_FOR_EMBED_ALIAS) {
+                tokenVec.put(t, embeddingService.embedSingleValue(t));
+            }
+        }
 
         UnionFind uf = new UnionFind(tokens.size());
         int unions = 0;
@@ -877,7 +891,36 @@ public class ValueMappingBuilder {
                 if (sim > bestSim) { bestSim = sim; best = c; }
             }
 
-            if (best != null && bestSim >= THRESH_CLUSTER) {
+            if (it.normalized.length() == 1) {
+                // Single-character values produce embedding vectors with almost no semantic
+                // information; cosine similarity between two unrelated chars (e.g. "Y" and "N")
+                // can easily exceed THRESH_CLUSTER and collapse distinct values into one bucket.
+                // Guard: for single-char values, first look for an existing cluster that already
+                // holds the identical character (identity match).  Only merge into that cluster;
+                // never merge into a cluster holding a different single character.
+                Cluster identityCluster = null;
+                for (Cluster c : clusters) {
+                    if (c.normalizedValues.contains(it.normalized)) {
+                        identityCluster = c;
+                        break;
+                    }
+                }
+                if (identityCluster != null) {
+                    identityCluster.add(it);
+                    merges++;
+                    if (log.isTraceEnabled()) {
+                        log.trace("[VMB] clustering: single-char '{}' merged into identity cluster rep='{}'",
+                                it.normalized, identityCluster.repHint());
+                    }
+                } else {
+                    Cluster c = new Cluster();
+                    c.add(it);
+                    clusters.add(c);
+                    if (log.isTraceEnabled()) {
+                        log.trace("[VMB] clustering: single-char '{}' -> new cluster", it.normalized);
+                    }
+                }
+            } else if (best != null && bestSim >= THRESH_CLUSTER) {
                 best.add(it);
                 merges++;
                 if (log.isTraceEnabled()) {
