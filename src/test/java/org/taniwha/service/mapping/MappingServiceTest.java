@@ -419,6 +419,41 @@ class MappingServiceTest {
         // These dissimilar columns should not cluster together
     }
 
+    @Test
+    @DisplayName("Should cluster generic 'Type' column with typed 'Etiology' column via value-token prefix overlap")
+    void testClusteringByValueTokenPrefixOverlap() {
+        // Use identical embeddings (cosine sim = 1.0) so the ONLY deciding factor is
+        // structural evidence. Before the fix, concept-level evidence is absent ("type" vs
+        // "etiology isch hem" share no tokens and no abbreviation pair), so the two columns
+        // would remain separate. After the fix, value-token prefix overlap provides the
+        // necessary structural evidence: "isch" is a prefix of "ischemic" and "hem" is a
+        // prefix of "hemorrhagic".
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("Type", Arrays.asList("Ischemic", "Hemorrhagic"), "fimb.csv"),
+            // "HEM" (uppercase) mirrors real-world fixture data; the normalizer lowercases all
+            // value tokens before the prefix check, so it is treated the same as "hem".
+            createElementFile("Etiology (Isch/Hem)", Arrays.asList("Hem", "HEM", "Isch"), "scuba.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(1, result.size(),
+            "Type [Ischemic, Hemorrhagic] and Etiology (Isch/Hem) [Hem, Isch] should cluster "
+            + "into one group because 'isch' is a prefix of 'ischemic' and 'hem' is a prefix "
+            + "of 'hemorrhagic'");
+        // The group key must use the meaningful concept name, not the structural "type"
+        assertTrue(result.get(0).containsKey("etiology_isch_hem"),
+            "Group key should be 'etiology_isch_hem' (the non-structural representative concept), "
+            + "not 'type'. Found keys: " + result.get(0).keySet());
+    }
+
     // ==================== Value Mapping Tests ====================
 
     @Test

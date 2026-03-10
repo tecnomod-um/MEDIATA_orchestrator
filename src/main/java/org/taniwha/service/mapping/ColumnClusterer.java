@@ -86,12 +86,20 @@ class ColumnClusterer {
                     }
                 }
 
+                // Value-token prefix check — catches columns whose concept names are too generic
+                // (e.g. "Type") but whose categorical values share a prefix relationship with
+                // values in the candidate cluster (e.g. "Isch" is a prefix of "Ischemic").
+                boolean hasValueEvidence = false;
+                if (!hasTokenOverlap && !hasAbbrevPair) {
+                    hasValueEvidence = hasValueTokenPrefixOverlap(col, cl);
+                }
+
                 // Require structural evidence to prevent pure domain-level PubMedBERT similarity
                 // from merging distinct clinical concepts like "toilet" and "bowel".
-                if (!(hasTokenOverlap || hasAbbrevPair)) continue;
+                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence)) continue;
 
-                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}",
-                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair);
+                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}",
+                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence);
 
                 if (sim >= settings.columnClusterThreshold() && sim > bestMatchSim) {
                     bestMatchSim = sim;
@@ -123,22 +131,64 @@ class ColumnClusterer {
     // ------------------------------------------------------------------
 
     /**
-     * Picks the shortest (and lexicographically earliest on a tie) non-empty concept string
-     * among the cluster members as the cluster's representative concept.
+     * Structural single-word concepts that carry no domain semantics and should be
+     * deprioritised when selecting a cluster's representative concept.
+     * Matches the explicit structural-word list in {@link ColumnNormalizer#isStructuralToken}.
+     */
+    private static final Set<String> STRUCTURAL_CONCEPT_WORDS =
+            Set.of("id", "code", "name", "value", "flag", "indicator", "status", "type");
+
+    /**
+     * Returns {@code true} when {@code concept} is a single generic structural token
+     * (e.g. {@code "type"}, {@code "value"}) that carries no domain semantics.
+     * Such concepts are deprioritised in {@link #pickClusterRepresentativeConcept}.
+     */
+    private boolean isStructuralSingleTokenConcept(String concept) {
+        Set<String> tokens = conceptTokens(concept);
+        return tokens.size() == 1 && STRUCTURAL_CONCEPT_WORDS.contains(tokens.iterator().next());
+    }
+
+    /**
+     * Picks the most informative (and shortest on a tie) non-empty concept string among
+     * the cluster members as the cluster's representative concept.
+     * <p>
+     * Generic structural single-token concepts (e.g. {@code "type"}) are skipped in the
+     * first pass and only used as a fallback when every member concept is structural.
+     * This ensures that when a column named {@code "Type"} merges with one named
+     * {@code "Etiology (Isch/Hem)"}, the representative is {@code "etiology isch hem"}
+     * rather than the uninformative {@code "type"}.
+     * </p>
      */
     String pickClusterRepresentativeConcept(List<EmbeddedColumn> cols) {
+        // First pass: prefer the shortest non-structural concept.
         String best = null;
         int bestLen = Integer.MAX_VALUE;
 
         for (EmbeddedColumn c : cols) {
             String name = StringUtil.safeTrim(c.concept);
-            if (name.isEmpty()) continue;
+            if (name.isEmpty() || isStructuralSingleTokenConcept(name)) continue;
             int len = name.length();
             if (len < bestLen) {
                 best = name;
                 bestLen = len;
             } else if (len == bestLen && best != null && name.compareToIgnoreCase(best) < 0) {
                 best = name;
+            }
+        }
+
+        // Second pass: if every concept is structural, fall back to shortest overall.
+        if (best == null) {
+            bestLen = Integer.MAX_VALUE;
+            for (EmbeddedColumn c : cols) {
+                String name = StringUtil.safeTrim(c.concept);
+                if (name.isEmpty()) continue;
+                int len = name.length();
+                if (len < bestLen) {
+                    best = name;
+                    bestLen = len;
+                } else if (len == bestLen && best != null && name.compareToIgnoreCase(best) < 0) {
+                    best = name;
+                }
             }
         }
 
@@ -262,6 +312,60 @@ class ColumnClusterer {
             }
         }
         return false;
+    }
+
+    // ------------------------------------------------------------------
+    // Value-token evidence
+    // ------------------------------------------------------------------
+
+    /**
+     * Returns {@code true} when any categorical value token from cluster {@code a} is a
+     * strict prefix of a value token from cluster {@code b}, or vice versa.
+     * <p>
+     * This catches columns whose concept names are too generic to provide structural evidence
+     * on their own (e.g. {@code "Type"} with values {@code ["Ischemic", "Hemorrhagic"]}) but
+     * whose domain values have a clear abbreviation relationship with another cluster's values
+     * (e.g. {@code "Etiology (Isch/Hem)"} with values {@code ["Hem", "Isch"]}).
+     * Both tokens must be at least 3 characters long, and one must be strictly shorter than
+     * the other (no equality match) to avoid spurious overlap from very short categorical codes.
+     * </p>
+     */
+    private boolean hasValueTokenPrefixOverlap(ColCluster a, ColCluster b) {
+        Set<String> tokA = collectCategoricalValueTokens(a);
+        Set<String> tokB = collectCategoricalValueTokens(b);
+        if (tokA.isEmpty() || tokB.isEmpty()) return false;
+        for (String ta : tokA) {
+            for (String tb : tokB) {
+                if (ta.length() < tb.length() && tb.startsWith(ta)) return true;
+                if (tb.length() < ta.length() && ta.startsWith(tb)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Collects lower-cased alphabetic tokens (length ≥ 3) from the categorical values of
+     * every column in the cluster.  Numeric descriptors ({@code integer}, {@code double},
+     * {@code float}) and range markers ({@code min:…}, {@code max:…}) are excluded so that
+     * numeric columns do not produce spurious value-token evidence.
+     */
+    private static Set<String> collectCategoricalValueTokens(ColCluster cluster) {
+        Set<String> tokens = new LinkedHashSet<>();
+        for (EmbeddedColumn col : cluster.cols) {
+            if (col.rawValues == null) continue;
+            for (String val : col.rawValues) {
+                if (val == null) continue;
+                String v = val.trim().toLowerCase(Locale.ROOT);
+                if (v.isEmpty() || v.equals("integer") || v.equals("double") || v.equals("float")
+                        || v.startsWith("min:") || v.startsWith("max:")) continue;
+                for (String p : v.split("[^a-z0-9]+")) {
+                    if (p.length() >= 3 && !p.matches("\\d+")) {
+                        tokens.add(p);
+                    }
+                }
+            }
+        }
+        return tokens;
     }
 
     // ------------------------------------------------------------------
