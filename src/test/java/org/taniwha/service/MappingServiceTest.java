@@ -386,4 +386,93 @@ public class MappingServiceTest {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Test 5: Multi-round batching — same-file timepoint columns each get
+    //         their own valid one-per-file mapping
+    // -----------------------------------------------------------------------
+
+    /**
+     * When two columns from the <em>same</em> source file are both semantically
+     * similar to a concept (e.g. two timepoints "ToiletBART1" and "ToiletBART2"
+     * from the same CSV), the engine must emit <em>two separate mappings</em> — one
+     * for each timepoint — rather than a single mapping that violates the
+     * one-per-file join constraint or a solo entry that loses the cross-file pairing.
+     *
+     * <p>Both mappings must include the anchor column from the other file
+     * ("Toileting" from fimbartheltodos) so that each is a valid cross-file join.</p>
+     */
+    @Test
+    void sameFileDuplicateConcepts_eachGetTheirOwnOnePerFileMappingWithAnchor() {
+        List<Map<String, SuggestedMappingDTO>> result = svc.suggestMappings(req(
+                // File A: one toileting column (the "anchor")
+                col("nodeA", "fimbarthel.csv", "Toileting",
+                        "integer", "min:1", "max:7"),
+                // File B: TWO toileting columns from the SAME file (different timepoints)
+                col("nodeB", "SCUBA_1.csv", "ToiletBART1",
+                        "integer", "min:0", "max:10"),
+                col("nodeB", "SCUBA_1.csv", "ToiletBART2",
+                        "integer", "min:0", "max:10")
+        ));
+
+        assertFalse(result.isEmpty(), "Expected at least one mapping");
+
+        // Both BART timepoints must appear in some mapping together with the anchor.
+        SuggestedMappingDTO tp1 = findGroupContainingBoth(
+                result, "fimbarthel.csv", "Toileting", "SCUBA_1.csv", "ToiletBART1");
+        SuggestedMappingDTO tp2 = findGroupContainingBoth(
+                result, "fimbarthel.csv", "Toileting", "SCUBA_1.csv", "ToiletBART2");
+
+        assertNotNull(tp1,
+                "Expected a mapping that joins 'Toileting' (fimbarthel.csv) with 'ToiletBART1' (SCUBA_1.csv)");
+        assertNotNull(tp2,
+                "Expected a mapping that joins 'Toileting' (fimbarthel.csv) with 'ToiletBART2' (SCUBA_1.csv)");
+
+        // The two timepoint mappings must be distinct objects (two separate entries).
+        assertNotSame(tp1, tp2,
+                "ToiletBART1 and ToiletBART2 must each have their own separate mapping entry");
+
+        // Neither mapping may contain BOTH BART columns simultaneously
+        // (that would violate the one-per-file constraint).
+        assertNull(findGroupContainingBoth(
+                        result, "SCUBA_1.csv", "ToiletBART1", "SCUBA_1.csv", "ToiletBART2"),
+                "ToiletBART1 and ToiletBART2 must NOT appear in the same mapping "
+                        + "(they are from the same source file)");
+    }
+
+    /**
+     * Regression: the full fixture must produce exactly TWO mappings that each pair
+     * "Toileting" (fimbartheltodos) with a BART timepoint — one for ToiletBART1,
+     * one for ToiletBART2.
+     */
+    @Test
+    void fixtureScenario_toiletingPairedWithBothTimepoints() throws Exception {
+        java.io.InputStream in = getClass().getClassLoader()
+                .getResourceAsStream("mapping/fixture-request.json");
+        assertNotNull(in, "fixture-request.json test resource not found");
+
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        byte[] data;
+        try (java.io.InputStream stream = in) {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int r;
+            while ((r = stream.read(buf)) != -1) baos.write(buf, 0, r);
+            data = baos.toByteArray();
+        }
+
+        MappingSuggestRequestDTO req = mapper.readValue(data, MappingSuggestRequestDTO.class);
+        List<Map<String, SuggestedMappingDTO>> result = svc.suggestMappings(req);
+
+        SuggestedMappingDTO tp1 = findGroupContainingBoth(
+                result, "fimbartheltodos_elements.csv", "Toileting",
+                "SCUBA_1_elements.csv", "ToiletBART1");
+        SuggestedMappingDTO tp2 = findGroupContainingBoth(
+                result, "fimbartheltodos_elements.csv", "Toileting",
+                "SCUBA_1_elements.csv", "ToiletBART2");
+
+        assertNotNull(tp1, "Fixture: 'Toileting' must be paired with 'ToiletBART1'");
+        assertNotNull(tp2, "Fixture: 'Toileting' must be paired with 'ToiletBART2'");
+        assertNotSame(tp1, tp2, "The two toilet timepoint mappings must be distinct entries");
+    }
 }
