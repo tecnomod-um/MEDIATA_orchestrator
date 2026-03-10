@@ -456,6 +456,61 @@ class MappingServiceTest {
             + "not 'type'. Found keys: " + result.get(0).keySet());
     }
 
+    @Test
+    @DisplayName("TOTAL MOTOR (FIM subscale) should NOT cluster with TOT BARTHEL (Barthel index)")
+    void testTotalMotorShouldNotMergeWithTotBarthel() {
+        // Both are "total" rehabilitation scores, so PubMedBERT embeddings are close.
+        // The bug was that "tot" (from "tot barthel") is a prefix of "total" (from "total motor"),
+        // so the abbreviation check fired — ignoring that "barthel" has no match in "motor".
+        // After the fix, the multi-token prefix guard requires ALL other tokens to also match.
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("TOTAL MOTOR", Arrays.asList("integer", "min:13", "max:91"), "fimb.csv"),
+            createElementFile("TOTBarthel", Arrays.asList("integer", "min:0", "max:100"), "scuba.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+            "TOTAL MOTOR (FIM subscale) and TOT BARTHEL (Barthel index) are different scales "
+            + "and must remain separate clusters");
+    }
+
+    @Test
+    @DisplayName("LOS (days) should NOT cluster with TSI to admission (days)")
+    void testLosDaysShouldNotMergeWithTsiAdmissionDays() {
+        // "LOS (days)" measures hospital length-of-stay (typically 2-56 days) while
+        // "TSI to admission (days)" measures time since spinal injury to rehab admission
+        // (typically 200-7000 days).  Before the fix, they merged because "days" gave a
+        // Jaccard overlap of 0.2 (≥ the 0.15 threshold).  After the fix "days" is a
+        // Jaccard stop-token, so no structural evidence exists and they stay separate.
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+            createElementFile("LOS (days)", Arrays.asList("integer", "min:2", "max:56"), "scuba1.csv"),
+            createElementFile("TSI to admission (days)",
+                    Arrays.asList("integer", "min:203", "max:7726"), "scuba2.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+            "LOS (days) and TSI to admission (days) are completely different duration measures "
+            + "and must remain separate clusters (sharing only the unit token 'days' is not "
+            + "sufficient structural evidence)");
+    }
+
     // ==================== Value Mapping Tests ====================
 
     @Test
