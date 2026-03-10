@@ -1,0 +1,74 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "assess001",
+      "fileName": "stroke_registry.csv",
+      "column": "NIHSS Score",
+      "values": ["integer", "min:0", "max:42"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "assess002",
+      "fileName": "neuro_assessment.csv",
+      "column": "NIH Stroke Scale",
+      "values": ["integer", "min:0", "max:42"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "assess003",
+      "fileName": "stroke_registry.csv",
+      "column": "Modified Rankin Scale",
+      "values": ["integer", "min:0", "max:6"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "assess004",
+      "fileName": "neuro_assessment.csv",
+      "column": "mRS",
+      "values": ["integer", "min:0", "max:6"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "assess005",
+      "fileName": "stroke_registry.csv",
+      "column": "Glasgow Coma Scale",
+      "values": ["integer", "min:3", "max:15"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "assess006",
+      "fileName": "neuro_assessment.csv",
+      "column": "GCS",
+      "values": ["integer", "min:3", "max:15"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "assess007",
+      "fileName": "cardiology_unit.csv",
+      "column": "Ejection Fraction",
+      "values": ["integer", "min:15", "max:75"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "assess008",
+      "fileName": "echo_reports.csv",
+      "column": "EF (%)",
+      "values": ["integer", "min:18", "max:72"],
+      "color": "#f38181"
+    },
+    {
+      "nodeId": "assess009",
+      "fileName": "pain_assessment.csv",
+      "column": "Pain Score",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "assess010",
+      "fileName": "nursing_notes.csv",
+      "column": "Pain Level (0-10)",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#f38181"
+    }
+  ]
+}

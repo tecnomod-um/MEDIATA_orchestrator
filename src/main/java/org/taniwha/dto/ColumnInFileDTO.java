@@ -7,7 +7,7 @@ import java.util.List;
 
 @Getter
 @Setter
-public class ElementFileDTO {
+public class ColumnInFileDTO {
     private String nodeId;
     private String fileName;
     private String column;
