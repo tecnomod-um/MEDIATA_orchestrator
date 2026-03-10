@@ -73,7 +73,7 @@ class ColumnClusterer {
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
 
                 double jac = conceptTokenJaccard(col, cl);
-                boolean hasTokenOverlap = (jac >= 0.15);
+                boolean hasTokenOverlap = jac >= 0.15;
 
                 // Abbreviation check — only when token overlap is absent (avoids redundant work).
                 boolean hasAbbrevPair = false;

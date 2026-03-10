@@ -26,11 +26,9 @@ class MappingAssembler {
     private static final Logger logger = LoggerFactory.getLogger(MappingAssembler.class);
 
     private final ValueMappingBuilder valueMappingBuilder;
-    private final MappingServiceSettings settings;
 
     MappingAssembler(ValueMappingBuilder valueMappingBuilder, MappingServiceSettings settings) {
         this.valueMappingBuilder = valueMappingBuilder;
-        this.settings = settings;
     }
 
     // ------------------------------------------------------------------
@@ -64,7 +62,7 @@ class MappingAssembler {
                 valueMappingBuilder.buildValuesForConcept(unionKey, detectedType, schemaFieldOrNull, picked);
 
         if (values == null || values.isEmpty()) {
-            values = fallbackValuesForPicked(unionKey, detectedType, picked);
+            values = fallbackValuesForPicked(detectedType, picked);
         }
 
         group.setValues(values);
@@ -183,7 +181,7 @@ class MappingAssembler {
     }
 
     private List<SuggestedValueDTO> fallbackValuesForPicked(
-            String unionKey, String detectedType, List<EmbeddedColumn> picked
+            String detectedType, List<EmbeddedColumn> picked
     ) {
         String dt = StringUtil.safeTrim(detectedType).toLowerCase(Locale.ROOT);
         if (dt.isEmpty()) {

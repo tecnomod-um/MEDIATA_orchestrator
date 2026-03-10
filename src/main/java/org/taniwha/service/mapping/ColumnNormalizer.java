@@ -43,7 +43,7 @@ class ColumnNormalizer {
         Map<String, Integer> suffixCount = new HashMap<>();
 
         int n = 0;
-        for (String rawColumnName : (rawColumnNames == null ? List.<String>of() : rawColumnNames)) {
+        for (String rawColumnName : rawColumnNames == null ? List.<String>of() : rawColumnNames) {
             String name = StringUtil.safeTrim(rawColumnName);
             if (name.isEmpty()) continue;
             List<String> tokens = tokenizeName(name);
