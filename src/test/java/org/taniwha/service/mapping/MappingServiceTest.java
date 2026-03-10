@@ -420,14 +420,17 @@ class MappingServiceTest {
     }
 
     @Test
-    @DisplayName("Should cluster generic 'Type' column with typed 'Etiology' column via value-token prefix overlap")
-    void testClusteringByValueTokenPrefixOverlap() {
-        // Use identical embeddings (cosine sim = 1.0) so the ONLY deciding factor is
-        // structural evidence. Before the fix, concept-level evidence is absent ("type" vs
+    @DisplayName("Should cluster generic 'Type' column with typed 'Etiology' column via value character-ngram similarity")
+    void testClusteringByValueEmbeddingSimilarity() {
+        // Use identical combined embeddings (cosine sim = 1.0) so the ONLY deciding factor is
+        // structural evidence.  Before the fix, concept-level evidence is absent ("type" vs
         // "etiology isch hem" share no tokens and no abbreviation pair), so the two columns
-        // would remain separate. After the fix, value-token prefix overlap provides the
-        // necessary structural evidence: "isch" is a prefix of "ischemic" and "hem" is a
-        // prefix of "hemorrhagic".
+        // would remain separate.
+        //
+        // After the fix, char-n-gram value similarity provides the necessary structural evidence:
+        // "ischemic" contains the 3-gram "hem" (positions 3-5) and shares "isc"/"sch" with
+        // "isch"; "hemorrhagic" starts with "hem".  ValueVectorUtil.build() runs with its real
+        // implementation (it is a pure, dependency-free utility — no mock needed).
         float[] sharedVec = new float[384];
         sharedVec[0] = 1.0f;
         lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
@@ -436,8 +439,7 @@ class MappingServiceTest {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
         req.setElementFiles(Arrays.asList(
             createElementFile("Type", Arrays.asList("Ischemic", "Hemorrhagic"), "fimb.csv"),
-            // "HEM" (uppercase) mirrors real-world fixture data; the normalizer lowercases all
-            // value tokens before the prefix check, so it is treated the same as "hem".
+            // "HEM" (uppercase) mirrors real-world fixture data; normalizeValue lowercases it.
             createElementFile("Etiology (Isch/Hem)", Arrays.asList("Hem", "HEM", "Isch"), "scuba.csv")
         ));
 
@@ -446,8 +448,8 @@ class MappingServiceTest {
         assertNotNull(result, "Result should not be null");
         assertEquals(1, result.size(),
             "Type [Ischemic, Hemorrhagic] and Etiology (Isch/Hem) [Hem, Isch] should cluster "
-            + "into one group because 'isch' is a prefix of 'ischemic' and 'hem' is a prefix "
-            + "of 'hemorrhagic'");
+            + "into one group because their char-n-gram value vectors share features "
+            + "('hem' appears in both 'ischemic' and 'hemorrhagic', 'isc'/'sch' appear in both)");
         // The group key must use the meaningful concept name, not the structural "type"
         assertTrue(result.get(0).containsKey("etiology_isch_hem"),
             "Group key should be 'etiology_isch_hem' (the non-structural representative concept), "
