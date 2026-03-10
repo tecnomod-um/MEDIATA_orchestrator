@@ -170,6 +170,7 @@ public class MappingService {
         if (colsBySchema.isEmpty()) return Collections.emptyList();
 
         Set<String> usedUnionKeys = new HashSet<>();
+        Set<String> usedColKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
 
         for (SchemaFieldRef field : schemaFields) {
@@ -206,10 +207,15 @@ public class MappingService {
                 Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
                 one.put(unionKey, mapping);
                 out.add(one);
+                for (ColRef p : picked) usedColKeys.add(colKey(p));
 
                 emitted++;
             }
         }
+
+        // Ensure every input column appears in at least one mapping, even if it could
+        // not be matched to any schema field or was excluded by the one-per-file rule.
+        out.addAll(buildSoloMappingsForUnusedColumns(all, usedColKeys, usedUnionKeys));
 
         return out;
     }
@@ -238,6 +244,7 @@ public class MappingService {
         if (clusters.size() > MAX_SCHEMALESS_TARGETS) clusters = clusters.subList(0, MAX_SCHEMALESS_TARGETS);
 
         Set<String> usedUnionKeys = new HashSet<>();
+        Set<String> usedColKeys = new HashSet<>();
         List<Map<String, SuggestedMappingDTO>> out = new ArrayList<>();
 
         for (ColCluster cl : clusters) {
@@ -270,9 +277,76 @@ public class MappingService {
             Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
             one.put(unionKey, mapping);
             out.add(one);
+            for (ColRef p : picked) usedColKeys.add(colKey(p));
         }
 
+        // Ensure every input column appears in at least one mapping, even if it was
+        // excluded by the one-per-file rule or the MAX_SCHEMALESS_TARGETS cluster cap.
+        out.addAll(buildSoloMappingsForUnusedColumns(all, usedColKeys, usedUnionKeys));
+
         return out;
+    }
+
+    /**
+     * For every column in {@code all} whose identity (fileKey + column name) is not yet
+     * in {@code usedColKeys}, emits a standalone single-column mapping.  This guarantees
+     * that every input column appears in the result at least once, even when it was
+     * excluded by the one-per-file constraint or by the cluster-count cap.
+     */
+    private List<Map<String, SuggestedMappingDTO>> buildSoloMappingsForUnusedColumns(
+            List<ColRef> all, Set<String> usedColKeys, Set<String> usedUnionKeys) {
+
+        List<Map<String, SuggestedMappingDTO>> solos = new ArrayList<>();
+
+        for (ColRef c : all) {
+            String colKey = colKey(c);
+            if (usedColKeys.contains(colKey)) continue;
+
+            // Derive a union key from the column's canonical concept (fall back to raw column name).
+            String concept = sanitizeUnionName(StringUtil.safe(c.concept).trim());
+            if (concept.isEmpty()) concept = sanitizeUnionName(StringUtil.safe(c.column).trim());
+            if (concept.isEmpty()) {
+                // No valid identifier can be generated for this column; mark it as processed
+                // so the loop does not attempt it again.  No union key is allocated because
+                // none is needed (the mapping will not be emitted).
+                usedColKeys.add(colKey);
+                continue;
+            }
+
+            String unionKey = makeUnique(concept, usedUnionKeys);
+            String detectedType = detectTypeFromSourcesOrSchema(Collections.singletonList(c), "");
+
+            SuggestedMappingDTO mapping = buildMappingSkeleton(
+                    "standard", "suggested_mapping", Collections.singletonList(c));
+
+            SuggestedGroupDTO group = new SuggestedGroupDTO();
+            group.setColumn(unionKey);
+
+            List<SuggestedValueDTO> values = buildValuesForConcept(
+                    unionKey, detectedType, null, Collections.singletonList(c));
+            if (values.isEmpty()) {
+                // No usable value representation for this column. Release the union key so
+                // subsequent columns with the same concept name can still claim it.
+                usedUnionKeys.remove(unionKey);
+                usedColKeys.add(colKey);
+                continue;
+            }
+
+            group.setValues(values);
+            mapping.setGroups(Collections.singletonList(group));
+
+            Map<String, SuggestedMappingDTO> one = new LinkedHashMap<>();
+            one.put(unionKey, mapping);
+            solos.add(one);
+            usedColKeys.add(colKey);
+        }
+
+        return solos;
+    }
+
+    /** Returns a stable identity key for a column reference used to track placement. */
+    private static String colKey(ColRef c) {
+        return c.fileKey() + "::" + c.column;
     }
 
     // ============================================================
