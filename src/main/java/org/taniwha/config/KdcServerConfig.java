@@ -41,6 +41,7 @@ public class KdcServerConfig {
     private String workDirPath;
 
     @Bean
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
     public CustomKdcServer kdcServer() throws KrbException, IOException {
 
         // Force IPv4 early (Docker + Java + localhost commonly causes IPv6 first)
@@ -173,6 +174,7 @@ public class KdcServerConfig {
         }
     }
 
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
     private void createKrb5Conf() throws IOException {
         File krb5ConfDir = new File(workDirPath);
         if (!krb5ConfDir.exists() && !krb5ConfDir.mkdirs()) {

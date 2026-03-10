@@ -163,7 +163,7 @@ class MappingEnrichmentHelper {
 
             if (cb != null) {
                 int pct = Math.max(5, Math.min(30, 5 + (int) Math.floor(
-                        (inferBatchNo / (double) Math.max(1, totalInferBatches)) * 25.0)));
+                        inferBatchNo / (double) Math.max(1, totalInferBatches) * 25.0)));
                 cb.report(pct, "Inferring terminology… (" + inferBatchNo + "/" + totalInferBatches + ")");
             }
         }
@@ -277,7 +277,7 @@ class MappingEnrichmentHelper {
             if (cb == null) return;
             if (totalColsToDescribe == 0) { cb.report(100, "Done."); return; }
             int pct = Math.max(65, Math.min(99,
-                    65 + (int) Math.floor((doneCols / (double) totalColsToDescribe) * 35.0)));
+                    65 + (int) Math.floor(doneCols / (double) totalColsToDescribe * 35.0)));
             cb.report(pct, "Generating descriptions… (" + doneCols + "/" + totalColsToDescribe + ")");
         };
 
