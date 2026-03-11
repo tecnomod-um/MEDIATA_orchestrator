@@ -18,7 +18,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from main import app
+from main import app, _extract_label
 
 client = TestClient(app)
 
@@ -32,6 +32,35 @@ def _describe(columns: list) -> dict:
     resp = client.post("/describe_batch", json={"columns": columns})
     assert resp.status_code == 200, f"Unexpected status {resp.status_code}: {resp.text}"
     return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# _extract_label unit tests
+# ---------------------------------------------------------------------------
+
+class TestExtractLabel:
+    def test_new_format_returns_label(self):
+        """'label | code' → just the label."""
+        assert _extract_label("Diabetes mellitus | 73211009") == "Diabetes mellitus"
+
+    def test_new_format_multi_word_label(self):
+        assert _extract_label("Ability to use toilet | 284548004") == "Ability to use toilet"
+
+    def test_legacy_format_returns_right_side(self):
+        """'code|label' → label on the right."""
+        assert _extract_label("73211009|Diabetes mellitus") == "Diabetes mellitus"
+
+    def test_plain_text_returned_as_is(self):
+        assert _extract_label("Hypertension") == "Hypertension"
+
+    def test_empty_returns_empty(self):
+        assert _extract_label("") == ""
+
+    def test_none_returns_empty(self):
+        assert _extract_label(None) == ""
+
+    def test_whitespace_only_returns_empty(self):
+        assert _extract_label("   ") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +106,6 @@ class TestDescribeBatchStructure:
         vals = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
         assert "Yes" in vals
         assert "No" in vals
-        # descriptions must be non-empty
         assert vals["Yes"]
         assert vals["No"]
 
@@ -107,39 +135,55 @@ class TestSentenceFormatting:
 
 
 # ---------------------------------------------------------------------------
-# Terminology label → description
+# Terminology label in "label | code" format (SNOMED output from Java)
 # ---------------------------------------------------------------------------
 
-class TestTerminologyLabelUsed:
-    def test_terminology_label_used_for_col_desc(self):
-        """When a SNOMED label is provided it becomes the column description."""
+class TestTerminologyLabelExtraction:
+    def test_snomed_format_label_used_for_col_desc(self):
+        """When a 'label | code' SNOMED string is provided, only the label is used."""
+        data = _describe([{
+            "col_key": "diag_code",
+            "terminology_label": "Hypertensive disorder | 38341003",
+            "values": [],
+        }])
+        desc = data["columns"][0]["col_desc"]
+        # Must contain 'Hypertensive disorder' and NOT the raw SNOMED code
+        assert "38341003" not in desc, (
+            f"SNOMED code must not appear in col_desc, got: {desc!r}"
+        )
+        assert "Hypertensive" in desc, (
+            f"Expected label in col_desc, got: {desc!r}"
+        )
+
+    def test_snomed_format_label_used_for_value_desc(self):
+        """Value terminology_label in 'label | code' format → label only in description."""
+        data = _describe([{
+            "col_key": "gender",
+            "values": [
+                {"v": "1", "terminology_label": "Male (finding) | 248153007"},
+                {"v": "2", "terminology_label": "Female (finding) | 248152002"},
+            ],
+        }])
+        vals = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
+        assert "248153007" not in vals["1"], (
+            f"SNOMED code must not appear in value desc, got: {vals['1']!r}"
+        )
+        assert "Male" in vals["1"] or "male" in vals["1"].lower(), (
+            f"Expected 'Male' in value desc, got: {vals['1']!r}"
+        )
+        assert "Female" in vals["2"] or "female" in vals["2"].lower(), (
+            f"Expected 'Female' in value desc, got: {vals['2']!r}"
+        )
+
+    def test_plain_terminology_label_used_directly(self):
+        """Plain text (no pipe) in terminology_label is used directly."""
         data = _describe([{
             "col_key": "diag_code",
             "terminology_label": "Hypertensive disorder",
             "values": [],
         }])
         desc = data["columns"][0]["col_desc"]
-        # The SNOMED label should be the basis, capitalised and with a period
-        assert "Hypertensive disorder" in desc or desc.startswith("Hypertensive"), (
-            f"Expected terminology label in col_desc, got: {desc!r}"
-        )
-
-    def test_terminology_label_used_for_value_desc(self):
-        """When a SNOMED label is provided for a value it becomes its description."""
-        data = _describe([{
-            "col_key": "gender",
-            "values": [
-                {"v": "1", "terminology_label": "Male (finding)"},
-                {"v": "2", "terminology_label": "Female (finding)"},
-            ],
-        }])
-        vals = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
-        assert "Male (finding)" in vals["1"] or vals["1"].startswith("Male"), (
-            f"Expected 'Male (finding)' in description, got: {vals['1']!r}"
-        )
-        assert "Female (finding)" in vals["2"] or vals["2"].startswith("Female"), (
-            f"Expected 'Female (finding)' in description, got: {vals['2']!r}"
-        )
+        assert "Hypertensive" in desc, f"Expected label in col_desc, got: {desc!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +194,6 @@ class TestFallbackNormalisation:
     def test_camel_case_column_normalised(self):
         data = _describe([{"col_key": "bloodPressure", "values": []}])
         desc = data["columns"][0]["col_desc"].lower()
-        # After splitting camelCase and normalising we expect both words
         assert "blood" in desc and "pressure" in desc, (
             f"Expected 'blood pressure' in normalised desc, got: {desc!r}"
         )
@@ -186,7 +229,6 @@ class TestNumericValues:
         }])
         descs = [vd["d"] for vd in data["columns"][0]["values"]]
         assert all(d for d in descs), "Each numeric value should have a non-empty description"
-        # lowest / highest anchors for generic columns
         assert descs[0].lower().startswith("lowest"), (
             f"Expected 'lowest value' for first, got: {descs[0]!r}"
         )
@@ -195,10 +237,10 @@ class TestNumericValues:
         )
 
     def test_adl_column_barthel_anchors(self):
-        """Toilet/Barthel column with 3 numeric values gets dependent/needs help/independent."""
+        """Toilet column (via SNOMED label) with 3 numeric values: dependent/help/independent."""
         data = _describe([{
-            "col_key": "toileting",
-            "terminology_label": "toilet",
+            "col_key": "Toilet",
+            "terminology_label": "Ability to use toilet | 284548004",
             "values": [{"v": "0"}, {"v": "5"}, {"v": "10"}],
         }])
         descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}

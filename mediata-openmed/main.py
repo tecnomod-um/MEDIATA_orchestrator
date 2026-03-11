@@ -160,6 +160,33 @@ def _normalise(text: str) -> str:
     return s.strip().lower()
 
 
+def _extract_label(terminology: str) -> str:
+    """Extract a human-readable label from a terminology string.
+
+    Handles three formats produced by the Snowstorm lookup pipeline:
+    - New:    ``"Diabetes mellitus | 73211009"``  → ``"Diabetes mellitus"``
+    - Legacy: ``"73211009|Diabetes mellitus"``     → ``"Diabetes mellitus"``
+    - Plain:  ``"Hypertension"``                   → ``"Hypertension"``
+    - Empty / None                                 → ``""``
+    """
+    t = (terminology or "").strip()
+    if not t:
+        return ""
+    # New format: "label | code"
+    sep = t.rfind(" | ")
+    if sep > 0:
+        label = t[:sep].strip()
+        if label:
+            return label
+    # Legacy format: "code|label"
+    bar = t.find("|")
+    if 0 < bar < len(t) - 1:
+        right = t[bar + 1:].strip()
+        if right:
+            return right
+    return t
+
+
 # ---------------------------------------------------------------------------
 # Generic-column detection
 # ---------------------------------------------------------------------------
@@ -487,8 +514,8 @@ async def describe_batch(request: DescribeBatchRequest):
         if not col_key:
             continue
 
-        # Column description: SNOMED label > normalised col_key
-        term_label = (col.terminology_label or "").strip()
+        # Column description: extract plain label from SNOMED string, then normalise col_key
+        term_label = _extract_label(col.terminology_label or "")
         col_desc_raw = term_label if term_label else _normalise(col_key)
         col_desc = _sentence(col_desc_raw, col_key)
 
@@ -505,7 +532,7 @@ async def describe_batch(request: DescribeBatchRequest):
             if not v:
                 continue
 
-            val_term = (val_info.terminology_label or "").strip()
+            val_term = _extract_label(val_info.terminology_label or "")
             if val_term:
                 # Use SNOMED label directly
                 d = _sentence(val_term, v)
