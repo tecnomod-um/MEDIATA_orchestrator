@@ -73,10 +73,10 @@ public class MappingServiceReportTest {
                 .baseUrl("http://localhost:11434")
                 .build();
             
-            // Create default options for openmed (specialised medical model)
+            // Create default options for meditron (EPFL's open medical LLM — the OpenMed model)
             org.springframework.ai.ollama.api.OllamaChatOptions options = 
                 org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                    .model("openmed")
+                    .model("meditron")
                     .temperature(0.7)
                     .build();
             
@@ -299,19 +299,19 @@ public class MappingServiceReportTest {
                 return;
             }
             
-            // Pull openmed model if needed
-            System.out.println("Ensuring openmed model is available...");
+            // Pull meditron model if needed (EPFL's open medical LLM)
+            System.out.println("Ensuring meditron model is available...");
             ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "openmed"
+                "docker", "exec", "ollama-test", "ollama", "pull", "meditron"
             );
             pullModel.inheritIO();
             Process pullProcess = pullModel.start();
             int pullExitCode = pullProcess.waitFor();
             
             if (pullExitCode == 0) {
-                System.out.println("✓ openmed model ready");
+                System.out.println("✓ meditron model ready");
             } else {
-                System.out.println("WARNING: Failed to pull openmed model");
+                System.out.println("WARNING: Failed to pull meditron model");
             }
             
             System.out.println("=== Ollama Setup Complete ===\n");
