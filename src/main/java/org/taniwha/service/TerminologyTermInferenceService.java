@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,9 @@ public class TerminologyTermInferenceService {
 
     @Value("${terminology.infer.maxRetries:2}")
     private int maxRetries;
+
+    @Value("${terminology.infer.model:openmed}")
+    private String inferenceModel;
 
     public record InferredTerm(String colKey, String colSearchTerm, Map<String, String> valueSearchTerms) {}
 
@@ -113,7 +117,10 @@ public class TerminologyTermInferenceService {
 
         for (int attempt = 1; attempt <= Math.max(1, maxRetries); attempt++) {
             try {
-                String raw = llm.generate(prompt);
+                OllamaChatOptions openmedOptions = OllamaChatOptions.builder()
+                        .model(inferenceModel)
+                        .build();
+                String raw = llm.generate(prompt, openmedOptions);
                 InferredBatch parsed = parse(raw);
                 if (parsed == null || parsed.columns == null || parsed.columns.isEmpty()) {
                     logger.warn("[TermInfer] empty/invalid JSON (attempt {}/{})", attempt, maxRetries);

@@ -73,10 +73,10 @@ public class MappingServiceReportTest {
                 .baseUrl("http://localhost:11434")
                 .build();
             
-            // Create default options for llama2
+            // Create default options for openmed (specialised medical model)
             org.springframework.ai.ollama.api.OllamaChatOptions options = 
                 org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                    .model("llama2")
+                    .model("openmed")
                     .temperature(0.7)
                     .build();
             
@@ -299,19 +299,19 @@ public class MappingServiceReportTest {
                 return;
             }
             
-            // Pull llama2 model if needed
-            System.out.println("Ensuring llama2 model is available...");
+            // Pull openmed model if needed
+            System.out.println("Ensuring openmed model is available...");
             ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "llama2"
+                "docker", "exec", "ollama-test", "ollama", "pull", "openmed"
             );
             pullModel.inheritIO();
             Process pullProcess = pullModel.start();
             int pullExitCode = pullProcess.waitFor();
             
             if (pullExitCode == 0) {
-                System.out.println("✓ llama2 model ready");
+                System.out.println("✓ openmed model ready");
             } else {
-                System.out.println("WARNING: Failed to pull llama2 model");
+                System.out.println("WARNING: Failed to pull openmed model");
             }
             
             System.out.println("=== Ollama Setup Complete ===\n");
@@ -424,6 +424,9 @@ public class MappingServiceReportTest {
         
         // CRITICAL: Validate value mappings are correct
         validateValueMappings(result);
+
+        // CRITICAL: Validate terminology is correctly populated by OpenMed + Snowstorm
+        validateTerminology(result);
     }
 
     private MappingSuggestRequestDTO loadRequestFixture() throws IOException {
@@ -648,6 +651,41 @@ public class MappingServiceReportTest {
     // -----------------------
     // Java 8 compatibility
     // -----------------------
+
+    /**
+     * Validates that terminology is correctly populated.
+     * <ul>
+     *   <li>When Snowstorm returns a SNOMED match the first result is used as-is.</li>
+     *   <li>When Snowstorm returns nothing the OpenMed-inferred search term itself is
+     *       stored — so terminology must never be a synthetic {@code CONCEPT_XXXXXXXXX} hash.</li>
+     *   <li>At least half of all mapping entries must carry a non-empty terminology value.</li>
+     * </ul>
+     */
+    private void validateTerminology(List<Map<String, SuggestedMappingDTO>> result) {
+        System.out.println("\n=== Terminology Validation (OpenMed + Snowstorm) ===");
+
+        long totalMappings = result.stream().flatMap(m -> m.values().stream()).count();
+        long withTerminology = result.stream()
+                .flatMap(m -> m.values().stream())
+                .filter(dto -> dto.getTerminology() != null && !dto.getTerminology().isEmpty())
+                .count();
+        long syntheticHashCount = result.stream()
+                .flatMap(m -> m.values().stream())
+                .filter(dto -> dto.getTerminology() != null && dto.getTerminology().startsWith("CONCEPT_"))
+                .count();
+
+        System.out.println("Total mapping entries: " + totalMappings);
+        System.out.println("Entries with terminology: " + withTerminology);
+        System.out.println("Entries with synthetic CONCEPT_ hash: " + syntheticHashCount);
+        System.out.println("====================================================\n");
+
+        assertTrue(withTerminology >= totalMappings / 2,
+                "At least half of all mappings should carry a terminology value (got "
+                        + withTerminology + "/" + totalMappings + ")");
+        assertEquals(0, syntheticHashCount,
+                "No mappings should use synthetic CONCEPT_ hash codes; "
+                        + "terminology must come from Snowstorm SNOMED or the OpenMed-inferred term");
+    }
 
     private static byte[] readAllBytesCompat(Path p) throws IOException {
         InputStream in = null;

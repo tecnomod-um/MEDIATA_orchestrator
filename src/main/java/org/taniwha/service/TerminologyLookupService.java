@@ -214,7 +214,11 @@ public class TerminologyLookupService {
         String code = firstCodeFromSuggestions(suggestions);
         if (!code.isEmpty()) return code;
         if (!fallbackEnabled) return "";
-        return generateFallbackTerminologyCode(t, context);
+        // Snowstorm returned nothing: trust the OpenMed-inferred search term directly.
+        // Since the terminology inference uses a specialised medical model (OpenMed), its
+        // output is reliable enough to stand in for a SNOMED code when no match is found.
+        // 't' is the OpenMed-inferred search term extracted from the lookup key by splitValueKey().
+        return t;
     }
 
     private String firstCodeFromSuggestions(List<OntologyTermDTO> suggestions) {

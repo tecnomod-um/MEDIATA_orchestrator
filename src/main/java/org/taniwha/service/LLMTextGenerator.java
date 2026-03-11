@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,11 +34,22 @@ public class LLMTextGenerator {
     }
 
     public String generate(String promptText) {
+        return generate(promptText, null);
+    }
+
+    /**
+     * Generates text using the LLM with an optional per-request {@link ChatOptions} override.
+     * Pass, for example, {@code OllamaChatOptions.builder().model("openmed").build()} to
+     * route this specific call to a different model without changing the default.
+     */
+    public String generate(String promptText, ChatOptions options) {
         if (!llmEnabled) return "";
 
         try {
             UserMessage userMessage = new UserMessage(promptText);
-            Prompt prompt = new Prompt(userMessage);
+            Prompt prompt = (options != null)
+                    ? new Prompt(userMessage, options)
+                    : new Prompt(userMessage);
 
             ChatResponse response = chatModel.call(prompt);
 
