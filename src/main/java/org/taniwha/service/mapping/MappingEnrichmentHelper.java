@@ -10,7 +10,6 @@ import org.taniwha.model.ColumnRecord;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.StringUtil;
 
@@ -32,20 +31,17 @@ class MappingEnrichmentHelper {
     private static final Logger logger = LoggerFactory.getLogger(MappingEnrichmentHelper.class);
 
     private final OpenMedTerminologyService openMedTerminologyService;
-    private final TerminologyTermInferenceService terminologyInferenceService;
     private final TerminologyLookupService terminologyLookupService;
     private final DescriptionService descriptionGenerator;
     private final MappingServiceSettings settings;
 
     MappingEnrichmentHelper(
             OpenMedTerminologyService openMedTerminologyService,
-            TerminologyTermInferenceService terminologyInferenceService,
             TerminologyLookupService terminologyLookupService,
             DescriptionService descriptionGenerator,
             MappingServiceSettings settings
     ) {
         this.openMedTerminologyService = openMedTerminologyService;
-        this.terminologyInferenceService = terminologyInferenceService;
         this.terminologyLookupService = terminologyLookupService;
         this.descriptionGenerator = descriptionGenerator;
         this.settings = settings;
@@ -96,10 +92,10 @@ class MappingEnrichmentHelper {
 
         List<ColumnRecord> colInputs = getColumnInputs(allMappings);
 
-        // Use OpenMed batch size when available, otherwise fall back to the old LLM service size.
+        // Use OpenMed batch size when available, fall back to default.
         int inferBatchSize = openMedTerminologyService != null
                 ? openMedTerminologyService.batchSize()
-                : (terminologyInferenceService == null ? 5 : terminologyInferenceService.batchSize());
+                : 5;
         if (inferBatchSize <= 0) inferBatchSize = 5;
 
         Map<String, String> colLookupKeyByCol = new LinkedHashMap<>();
@@ -111,7 +107,7 @@ class MappingEnrichmentHelper {
         int inferBatchNo = 0;
 
         // ------------------------------------------------------------------
-        // 1) Terminology inference (batched) – OpenMed primary, LLM fallback
+        // 1) Terminology inference (batched) – OpenMed
         // ------------------------------------------------------------------
         for (int i = 0; i < colInputs.size(); i += inferBatchSize) {
             int end = Math.min(colInputs.size(), i + inferBatchSize);
@@ -124,21 +120,11 @@ class MappingEnrichmentHelper {
                 cb.report(pct, "Inferring terminology… (batch " + inferBatchNo + "/" + totalInferBatches + ")");
             }
 
-            // Try OpenMed first; fall back to old LLM service when OpenMed returns nothing.
-            List<?> inferred = List.of();
+            List<OpenMedTerminologyService.InferredTerm> inferred = List.of();
             if (openMedTerminologyService != null) {
-                List<OpenMedTerminologyService.InferredTerm> openMedResult =
-                        openMedTerminologyService.inferBatch(batch);
-                if (!openMedResult.isEmpty()) {
-                    inferred = openMedResult;
-                    logger.info("[TermInfer/OpenMed] batch {}/{} -> inferred {}",
-                            inferBatchNo, Math.max(1, totalInferBatches), openMedResult.size());
-                }
-            }
-            if (inferred.isEmpty() && terminologyInferenceService != null) {
-                inferred = terminologyInferenceService.inferBatch(batch);
+                inferred = openMedTerminologyService.inferBatch(batch);
                 if (!inferred.isEmpty()) {
-                    logger.info("[TermInfer/LLM] batch {}/{} -> inferred {}",
+                    logger.info("[TermInfer/OpenMed] batch {}/{} -> inferred {}",
                             inferBatchNo, Math.max(1, totalInferBatches), inferred.size());
                 }
             }
@@ -160,22 +146,11 @@ class MappingEnrichmentHelper {
                 continue;
             }
 
-            for (Object rawTerm : inferred) {
-                if (rawTerm == null) continue;
-                String colKey, colSearchTerm;
-                Map<String, String> vmap;
-
-                if (rawTerm instanceof OpenMedTerminologyService.InferredTerm it) {
-                    colKey       = StringUtil.safeTrim(it.colKey());
-                    colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
-                    vmap         = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
-                } else if (rawTerm instanceof TerminologyTermInferenceService.InferredTerm it) {
-                    colKey       = StringUtil.safeTrim(it.colKey());
-                    colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
-                    vmap         = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
-                } else {
-                    continue;
-                }
+            for (OpenMedTerminologyService.InferredTerm it : inferred) {
+                if (it == null) continue;
+                String colKey      = StringUtil.safeTrim(it.colKey());
+                String colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                Map<String, String> vmap = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
 
                 if (colKey.isEmpty()) continue;
                 if (colSearchTerm.isEmpty()) colSearchTerm = colKey;

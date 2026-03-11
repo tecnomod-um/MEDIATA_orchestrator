@@ -18,7 +18,6 @@ import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
 import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.JsonSchemaParsingUtil;
@@ -59,7 +58,6 @@ public class MappingService {
 
     public MappingService(EmbeddingService embeddingService,
                           TerminologyLookupService terminologyLookupService,
-                          TerminologyTermInferenceService terminologyInferenceService,
                           OpenMedTerminologyService openMedTerminologyService,
                           DescriptionService descriptionGenerator,
                           ValueMappingBuilder valueMappingBuilder,
@@ -74,7 +72,7 @@ public class MappingService {
         this.columnPicker      = new ColumnPicker(mappingSettings);
         this.mappingAssembler  = new MappingAssembler(valueMappingBuilder, mappingSettings);
         this.enrichmentHelper  = new MappingEnrichmentHelper(
-                openMedTerminologyService, terminologyInferenceService,
+                openMedTerminologyService,
                 terminologyLookupService, descriptionGenerator, mappingSettings);
 
         logger.info("[MappingService] Initialized.");
