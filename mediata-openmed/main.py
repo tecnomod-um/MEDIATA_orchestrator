@@ -116,6 +116,38 @@ class BatchResponse(BaseModel):
     columns: List[ColumnTerms]
 
 
+# --- Description schemas ---
+
+class ValueDescInput(BaseModel):
+    v: str
+    terminology_label: Optional[str] = None
+
+
+class ColumnDescInput(BaseModel):
+    col_key: str
+    terminology_label: Optional[str] = None
+    values: List[ValueDescInput] = []
+
+
+class DescribeBatchRequest(BaseModel):
+    columns: List[ColumnDescInput]
+
+
+class ValueDesc(BaseModel):
+    v: str
+    d: str
+
+
+class ColumnDesc(BaseModel):
+    col_key: str
+    col_desc: str
+    values: List[ValueDesc] = []
+
+
+class DescribeBatchResponse(BaseModel):
+    columns: List[ColumnDesc]
+
+
 # ---------------------------------------------------------------------------
 # Inference helpers
 # ---------------------------------------------------------------------------
@@ -376,3 +408,125 @@ async def infer_batch(request: BatchRequest):
     elapsed = time.time() - t0
     logger.info("[OpenMed] Inferred %d column(s) in %.2fs", len(results), elapsed)
     return BatchResponse(columns=results)
+
+
+# ---------------------------------------------------------------------------
+# Description helpers
+# ---------------------------------------------------------------------------
+
+# ADL / functional scale keywords that commonly use 0-5-10 / 0-1 ordinal anchors.
+_ADL_KEYWORDS = {
+    "toilet", "toileting", "bathing", "dressing", "feeding", "transfer",
+    "mobility", "stairs", "continence", "grooming", "hygiene", "walking",
+    "barthel", "fim", "katz", "adl", "functional",
+}
+
+# Common ordinal scale anchors keyed by (value, total_levels).
+_ORDINAL_ANCHORS: Dict[int, List[str]] = {
+    2: ["absent", "present"],
+    3: ["dependent", "needs help", "independent"],
+    4: ["total assistance", "moderate assistance", "minimal assistance", "independent"],
+    5: ["total dependence", "maximum assistance", "moderate assistance",
+        "minimal assistance", "independent"],
+}
+
+
+def _is_adl_column(col_desc: str) -> bool:
+    """Return True when the column description suggests an ADL / functional scale."""
+    text = col_desc.lower()
+    return any(kw in text for kw in _ADL_KEYWORDS)
+
+
+def _sentence(text: str, fallback: str = "field") -> str:
+    """Capitalise and ensure the text ends with a full stop."""
+    s = (text or "").strip() or fallback.strip() or "field"
+    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
+        s = s[1:-1].strip()
+    s = s[:1].upper() + s[1:] if s else s
+    if s and not s[-1] in ".!?":
+        s += "."
+    return s
+
+
+def _describe_numeric_value(v: str, col_desc: str, idx: int, total: int) -> str:
+    """Return an ordinal anchor description for a numeric value."""
+    if _is_adl_column(col_desc) and total in _ORDINAL_ANCHORS:
+        anchors = _ORDINAL_ANCHORS[total]
+        return anchors[idx] if idx < len(anchors) else v
+    # Generic: low / medium / high
+    if total <= 1:
+        return v
+    if idx == 0:
+        return "lowest value"
+    if idx == total - 1:
+        return "highest value"
+    return "intermediate value"
+
+
+@app.post("/describe_batch", response_model=DescribeBatchResponse)
+async def describe_batch(request: DescribeBatchRequest):
+    """Generate plain-language descriptions for column headers and their values.
+
+    For each ``ColumnDescInput``:
+    - ``col_desc``: use the SNOMED terminology label when available; otherwise
+      normalise the column key.
+    - ``values[i].d``: use the value's SNOMED terminology label when available;
+      for numeric values apply ordinal anchors (Barthel/FIM style for ADL columns);
+      for text values apply NER or text normalisation.
+
+    No generative LLM is needed – descriptions are derived from SNOMED labels,
+    ordinal rules, and biomedical NER.
+    """
+    pipe = _load_model_once()
+    t0 = time.time()
+    logger.info("[OpenMed] /describe_batch – %d columns", len(request.columns))
+
+    results: List[ColumnDesc] = []
+    for col in request.columns:
+        col_key = (col.col_key or "").strip()
+        if not col_key:
+            continue
+
+        # Column description: SNOMED label > normalised col_key
+        term_label = (col.terminology_label or "").strip()
+        col_desc_raw = term_label if term_label else _normalise(col_key)
+        col_desc = _sentence(col_desc_raw, col_key)
+
+        # Value descriptions
+        values = col.values or []
+        # Identify numeric values in order so we can assign ordinal anchors
+        numeric_vals = [vi for vi in values if re.match(r"^-?\d+(\.\d+)?$", (vi.v or "").strip())]
+        n_numeric = len(numeric_vals)
+        numeric_idx: Dict[str, int] = {vi.v.strip(): i for i, vi in enumerate(numeric_vals)}
+
+        value_descs: List[ValueDesc] = []
+        for val_info in values:
+            v = (val_info.v or "").strip()
+            if not v:
+                continue
+
+            val_term = (val_info.terminology_label or "").strip()
+            if val_term:
+                # Use SNOMED label directly
+                d = _sentence(val_term, v)
+            elif re.match(r"^-?\d+(\.\d+)?$", v):
+                # Numeric ordinal
+                idx = numeric_idx.get(v, 0)
+                raw_d = _describe_numeric_value(v, col_desc_raw, idx, n_numeric)
+                d = _sentence(raw_d, v)
+            else:
+                # Text value: NER-assisted or normalised
+                inferred = _infer_term(v, pipe)
+                d = _sentence(inferred or _normalise(v), v)
+
+            value_descs.append(ValueDesc(v=v, d=d))
+
+        results.append(ColumnDesc(
+            col_key=col_key,
+            col_desc=col_desc,
+            values=value_descs,
+        ))
+
+    elapsed = time.time() - t0
+    logger.info("[OpenMed] Described %d column(s) in %.2fs", len(results), elapsed)
+    return DescribeBatchResponse(columns=results)

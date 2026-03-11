@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ public class DescriptionService {
 
     private final LLMTextGenerator llm;
     private final ExecutorService llmExecutor;
+    private final OpenMedDescriptionService openMedDescriptionService;
     private final ObjectMapper om = new ObjectMapper();
     private final ConcurrentMap<String, EnrichmentResult> cache = new ConcurrentHashMap<>();
 
@@ -47,9 +49,34 @@ public class DescriptionService {
     private int maxRetries;
 
     public DescriptionService(LLMTextGenerator llm,
-                              @Qualifier("llmExecutor") ExecutorService llmExecutor) {
+                              @Qualifier("llmExecutor") ExecutorService llmExecutor,
+                              ObjectProvider<OpenMedDescriptionService> openMedDescProvider) {
         this.llm = llm;
         this.llmExecutor = llmExecutor;
+        this.openMedDescriptionService = openMedDescProvider.getIfAvailable();
+    }
+
+    /**
+     * Test-friendly constructor – pass {@code null} for {@code openMedDescriptionService}
+     * to use LLM-only mode.
+     */
+    public DescriptionService(LLMTextGenerator llm,
+                              ExecutorService llmExecutor) {
+        this.llm = llm;
+        this.llmExecutor = llmExecutor;
+        this.openMedDescriptionService = null;
+    }
+
+    /**
+     * Full constructor used in tests that supply a specific
+     * {@link OpenMedDescriptionService} instance.
+     */
+    public DescriptionService(LLMTextGenerator llm,
+                              ExecutorService llmExecutor,
+                              OpenMedDescriptionService openMedDescriptionService) {
+        this.llm = llm;
+        this.llmExecutor = llmExecutor;
+        this.openMedDescriptionService = openMedDescriptionService;
     }
 
     public record ValueSpec(String v, String min, String max) {}
@@ -92,7 +119,32 @@ public class DescriptionService {
     private Map<String, EnrichmentResult> generateEnrichmentBatchInternal(List<ColumnEnrichmentInput> inputs) {
         if (inputs == null || inputs.isEmpty()) return Collections.emptyMap();
 
-        // If LLM is disabled, return minimal safe defaults (no LLM calls).
+        // --- Try OpenMed description service first (preferred) ---
+        if (openMedDescriptionService != null) {
+            try {
+                Map<String, EnrichmentResult> openMedResult =
+                        openMedDescriptionService.describeColumns(inputs);
+                if (openMedResult != null && !openMedResult.isEmpty()) {
+                    logger.info("[DescriptionService] OpenMed provided {} description(s); caching and returning",
+                            openMedResult.size());
+                    // Cache each result and fill missing columns with fallback
+                    Map<String, EnrichmentResult> out = new LinkedHashMap<>(openMedResult);
+                    for (ColumnEnrichmentInput in : inputs) {
+                        String ck = safe(in == null ? null : in.colKey).trim();
+                        if (!ck.isEmpty()) {
+                            out.putIfAbsent(ck, new EnrichmentResult(cleanSentence(ck, ck), Map.of()));
+                        }
+                    }
+                    return out;
+                }
+                logger.info("[DescriptionService] OpenMed returned empty result; falling back to LLM");
+            } catch (Exception e) {
+                logger.warn("[DescriptionService] OpenMed description failed ({}); falling back to LLM",
+                        e.toString());
+            }
+        }
+
+        // If LLM is also disabled, return minimal safe defaults.
         if (llm == null || !llm.isEnabled()) {
             return fallbackResults(inputs);
         }
@@ -251,7 +303,7 @@ public class DescriptionService {
             String terminologyLabel = "";
             String terminology = safe(in.terminology).trim();
             if (!isBlank(terminology) && !terminology.startsWith("CONCEPT_")) {
-                terminologyLabel = extractLabelFromCodePipeLabel(terminology);
+                terminologyLabel = extractLabelFromTerminology(terminology);
             }
 
             List<Map<String, Object>> vals = new ArrayList<>();
@@ -410,13 +462,21 @@ public class DescriptionService {
         return safe(colKey).trim() + "|" + safe(terminology).trim() + "|" + h;
     }
 
-    // Expect "code|label" but tolerate plain code/label.
-    private String extractLabelFromCodePipeLabel(String terminology) {
+    // Expect "label | code" (new format) but tolerate legacy "code|label" and plain label/code.
+    private static String extractLabelFromTerminology(String terminology) {
         String t = safe(terminology).trim();
         if (t.isEmpty()) return "";
+        // New format: "label | code"  (e.g. "Diabetes mellitus | 73211009")
+        int sep = t.lastIndexOf(" | ");
+        if (sep > 0) {
+            String label = t.substring(0, sep).trim();
+            if (!label.isEmpty()) return label;
+        }
+        // Legacy format: "code|label"
         int bar = t.indexOf('|');
         if (bar >= 0 && bar < t.length() - 1) {
-            return t.substring(bar + 1).trim();
+            String right = t.substring(bar + 1).trim();
+            if (!right.isEmpty()) return right;
         }
         return t;
     }
