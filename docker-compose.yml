@@ -81,6 +81,27 @@ services:
       retries: 5
       start_period: 60s
 
+  # Optional: OpenMed NER service for medical terminology inference (enabled by profile "openmed")
+  openmed-service:
+    profiles: ["openmed"]
+    build:
+      context: .
+      dockerfile: Dockerfile.openmed-service
+    container_name: mediata-openmed-service
+    restart: unless-stopped
+    environment:
+      - OPENMED_MODEL=${OPENMED_MODEL:-OpenMed/OpenMed-NER-DiseaseDetect-TinyMed-135M}
+    ports:
+      - "${OPENMED_HOST_PORT:-8002}:8002"
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # Optional: RDF Builder (enabled by profile "rdf")
   rdf-builder:
     profiles: ["rdf"]

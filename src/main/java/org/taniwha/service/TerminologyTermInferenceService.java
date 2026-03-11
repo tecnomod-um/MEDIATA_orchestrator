@@ -1,31 +1,38 @@
 package org.taniwha.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.ollama.api.OllamaChatOptions;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.taniwha.model.ColumnRecord;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
 
+/**
+ * Infers SNOMED-searchable search terms for columns and their values using the
+ * standalone <strong>OpenMed</strong> NER service.
+ *
+ * <p>OpenMed is a specialised Python library backed by HuggingFace biomedical
+ * NER models ({@code OpenMed/OpenMed-NER-*}).  The companion service
+ * ({@code openmed-service/main.py}) exposes a single
+ * {@code POST /infer-terms} endpoint that accepts a batch of column names +
+ * sampled values and returns the best medical entity text for each — which is
+ * then used as a Snowstorm search term.</p>
+ *
+ * <p>If the OpenMed service is disabled or unreachable this class returns an
+ * empty list and logs the failure explicitly.  It does <em>not</em> fall back
+ * to the generic LLM.</p>
+ */
 @Service
 public class TerminologyTermInferenceService {
 
     private static final Logger logger = LoggerFactory.getLogger(TerminologyTermInferenceService.class);
 
-    private final LLMTextGenerator llm;
-    private final ExecutorService llmExecutor;
-    private final ObjectMapper om = new ObjectMapper();
+    private final OpenMedInferenceService openMedService;
 
     @Value("${terminology.infer.enabled:true}")
     private boolean enabled;
@@ -33,243 +40,117 @@ public class TerminologyTermInferenceService {
     @Value("${terminology.infer.batchSize:5}")
     private int batchSize;
 
-    @Value("${terminology.infer.maxValuesPerColumn:10}")
-    private int maxValuesPerColumn;
-
-    @Value("${terminology.infer.maxChars:12000}")
-    private int maxChars;
-
-    @Value("${terminology.infer.maxRetries:2}")
-    private int maxRetries;
-
-    @Value("${terminology.infer.model:openmed}")
-    private String inferenceModel;
-
+    /**
+     * DTO returned by {@link #infer(List)}.
+     */
     public record InferredTerm(String colKey, String colSearchTerm, Map<String, String> valueSearchTerms) {}
 
-    // TerminologyTermInferenceService.java — add/replace these TWO helper functions
-    private static String summarizeInferred(List<InferredTerm> inferred,
-                                            int maxCols,
-                                            int maxValsPerCol,
-                                            int maxLen) {
-        if (inferred == null || inferred.isEmpty()) return "[]";
-        StringBuilder sb = new StringBuilder(512);
-        sb.append("[");
-        int cols = 0;
-
-        for (InferredTerm it : inferred) {
-            if (it == null) continue;
-            if (cols++ >= Math.max(1, maxCols)) break;
-
-            String ck = shortStr(it.colKey(), maxLen);
-            String ct = shortStr(it.colSearchTerm(), maxLen);
-
-            sb.append("{colKey=").append(ck)
-                    .append(", colSearchTerm=").append(ct);
-
-            Map<String, String> vm = (it.valueSearchTerms() == null) ? Map.of() : it.valueSearchTerms();
-            if (!vm.isEmpty()) {
-                sb.append(", values=[");
-                int v = 0;
-                for (Map.Entry<String, String> e : vm.entrySet()) {
-                    if (v++ >= Math.max(1, maxValsPerCol)) break;
-                    sb.append("{raw=").append(shortStr(e.getKey(), maxLen))
-                            .append(", term=").append(shortStr(e.getValue(), maxLen))
-                            .append("},");
-                }
-                if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
-                sb.append("]");
-            }
-
-            sb.append("},");
+    public TerminologyTermInferenceService(ObjectProvider<OpenMedInferenceService> openMedProvider) {
+        this.openMedService = openMedProvider.getIfAvailable();
+        if (this.openMedService == null) {
+            logger.warn("[TermInfer] OpenMedInferenceService bean not available - "
+                    + "terminology inference will be skipped.");
         }
-
-        if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
-        if (inferred.size() > cols) sb.append(", …");
-        sb.append("]");
-        return sb.toString();
-    }
-
-    private static String shortStr(String s, int maxLen) {
-        String x = safe(s).trim().replaceAll("\\s+", " ");
-        if (x.length() <= Math.max(1, maxLen)) return x;
-        return x.substring(0, Math.max(1, maxLen)) + "...";
-    }
-
-    public TerminologyTermInferenceService(LLMTextGenerator llm,
-                                           @Qualifier("llmExecutor") ExecutorService llmExecutor) {
-        this.llm = llm;
-        this.llmExecutor = llmExecutor;
     }
 
     public int batchSize() {
         return Math.max(1, batchSize);
     }
 
-    // TerminologyTermInferenceService.java — replace this whole function
+    /**
+     * Infers medical search terms for a batch of columns via the OpenMed service.
+     *
+     * <p>If the service is unavailable, an empty list is returned and the reason
+     * is logged at ERROR level — the pipeline will then fall back to using the
+     * raw column key as its Snowstorm search term.</p>
+     */
     public List<InferredTerm> infer(List<ColumnRecord> columns) {
-        if (!enabled || llm == null || !llm.isEnabled() || columns == null || columns.isEmpty()) {
+        if (!enabled) {
+            logger.debug("[TermInfer] Terminology inference disabled.");
+            return List.of();
+        }
+        if (openMedService == null || !openMedService.isEnabled()) {
+            logger.warn("[TermInfer] OpenMed service is disabled - terminology inference skipped.");
+            return List.of();
+        }
+        if (columns == null || columns.isEmpty()) {
             return List.of();
         }
 
-        String prompt = buildPrompt(columns);
-        if (prompt.length() > maxChars) prompt = prompt.substring(0, maxChars);
-
-        for (int attempt = 1; attempt <= Math.max(1, maxRetries); attempt++) {
-            try {
-                OllamaChatOptions openmedOptions = OllamaChatOptions.builder()
-                        .model(inferenceModel)
-                        .build();
-                String raw = llm.generate(prompt, openmedOptions);
-                InferredBatch parsed = parse(raw);
-                if (parsed == null || parsed.columns == null || parsed.columns.isEmpty()) {
-                    logger.warn("[TermInfer] empty/invalid JSON (attempt {}/{})", attempt, maxRetries);
-                    continue;
-                }
-
-                List<InferredTerm> out = new ArrayList<>();
-                for (InferredColumn c : parsed.columns) {
-                    if (c == null) continue;
-                    String colKey = safe(c.colKey).trim();
-                    if (colKey.isEmpty()) continue;
-
-                    String colTerm = safe(c.colSearchTerm).trim();
-                    Map<String, String> vmap = new LinkedHashMap<>();
-                    if (c.values != null) {
-                        for (InferredValue v : c.values) {
-                            if (v == null) continue;
-                            String rv = safe(v.raw).trim();
-                            String st = safe(v.searchTerm).trim();
-                            if (rv.isEmpty() || st.isEmpty()) continue;
-                            vmap.put(rv, st);
-                        }
-                    }
-
-                    out.add(new InferredTerm(colKey, colTerm, vmap));
-                }
-
-                logger.info("[TermInfer] inferred terms for {} columns", out.size());
-                if (logger.isInfoEnabled()) {
-                    logger.info("[TermInfer] {}", summarizeInferred(out, 5, 3, 80));
-                }
-                return out;
-
-            } catch (Exception e) {
-                logger.warn("[TermInfer] failed (attempt {}/{}): {}", attempt, maxRetries, e.toString());
-            }
+        if (!openMedService.isAvailable()) {
+            logger.error("[TermInfer] OpenMed service is not available at the configured URL. "
+                    + "Terminology inference will be skipped for this batch. "
+                    + "Start the service with:  uvicorn main:app  (see openmed-service/main.py)");
+            return List.of();
         }
 
-        return List.of();
+        List<OpenMedInferenceService.InferredTermResult> results =
+                openMedService.inferBatch(columns);
+
+        List<InferredTerm> out = new ArrayList<>();
+        for (OpenMedInferenceService.InferredTermResult r : results) {
+            if (r == null) continue;
+            String colKey = safe(r.colKey()).trim();
+            if (colKey.isEmpty()) continue;
+            String colSearchTerm = safe(r.colSearchTerm()).trim();
+            if (colSearchTerm.isEmpty()) colSearchTerm = colKey;
+
+            Map<String, String> vmap = r.valueSearchTerms() != null
+                    ? new LinkedHashMap<>(r.valueSearchTerms())
+                    : new LinkedHashMap<>();
+            out.add(new InferredTerm(colKey, colSearchTerm, vmap));
+        }
+
+        logger.info("[TermInfer] inferred terms for {} columns via OpenMed", out.size());
+        if (logger.isInfoEnabled()) {
+            logger.info("[TermInfer] {}", summarize(out, 5, 3, 80));
+        }
+        return out;
     }
 
+    /** Convenience alias kept for callers that already use {@code inferBatch}. */
     public List<InferredTerm> inferBatch(List<ColumnRecord> batch) {
         return infer(batch);
     }
 
-    private String buildPrompt(List<ColumnRecord> cols) {
-        List<Map<String, Object>> payload = new ArrayList<>();
-        for (ColumnRecord c : cols) {
-            if (c == null) continue;
-            String colKey = safe(c.colKey()).trim();
-            if (colKey.isEmpty()) continue;
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
 
-            List<String> vals = new ArrayList<>();
-            if (c.values() != null) {
-                Set<String> seen = new LinkedHashSet<>();
-                for (String v : c.values()) {
-                    if (vals.size() >= Math.max(1, maxValuesPerColumn)) break;
-                    String sv = safe(v).trim();
-                    if (sv.isEmpty()) continue;
-                    if (!seen.add(sv)) continue;
-                    vals.add(sv);
+    private static String summarize(List<InferredTerm> inferred, int maxCols,
+                                    int maxValsPerCol, int maxLen) {
+        if (inferred == null || inferred.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("[");
+        int cols = 0;
+        for (InferredTerm it : inferred) {
+            if (it == null) continue;
+            if (cols++ >= Math.max(1, maxCols)) break;
+            sb.append("{colKey=").append(shortStr(it.colKey(), maxLen))
+              .append(", colSearchTerm=").append(shortStr(it.colSearchTerm(), maxLen));
+            Map<String, String> vm = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+            if (!vm.isEmpty()) {
+                sb.append(", values=[");
+                int v = 0;
+                for (Map.Entry<String, String> e : vm.entrySet()) {
+                    if (v++ >= Math.max(1, maxValsPerCol)) break;
+                    sb.append("{raw=").append(shortStr(e.getKey(), maxLen))
+                      .append(", term=").append(shortStr(e.getValue(), maxLen)).append("},");
                 }
+                if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
+                sb.append("]");
             }
-
-            Map<String, Object> o = new LinkedHashMap<>();
-            o.put("colKey", colKey);
-            o.put("values", vals);
-            payload.add(o);
+            sb.append("},");
         }
-
-        String json;
-        try {
-            json = om.writeValueAsString(payload);
-        } catch (Exception e) {
-            json = "[]";
-        }
-
-        return ""
-                + "Return ONLY minified JSON. No markdown. No extra keys.\n"
-                + "You are given columns and all possible values each can have. For each column:\n"
-                + "- Propose a SNOMED-searchable phrase for the COLUMN meaning (colSearchTerm).\n"
-                + "- For each of it related values, propose a SNOMED-searchable phrase (searchTerm).\n"
-                + "Output schema:\n"
-                + "{\"columns\":[{\"colKey\":\"...\",\"colSearchTerm\":\"...\",\"values\":[{\"raw\":\"...\",\"searchTerm\":\"...\"}]}]}\n"
-                + "Input:\n"
-                + json;
+        if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
+        if (inferred.size() > cols) sb.append(", ...");
+        sb.append("]");
+        return sb.toString();
     }
 
-    private InferredBatch parse(String raw) {
-        String s = safe(raw).trim();
-        int start = s.indexOf('{');
-        int end = s.lastIndexOf('}');
-        if (start < 0 || end < 0 || end <= start) return null;
-        s = s.substring(start, end + 1).trim();
-
-        try {
-            Map<String, Object> m = om.readValue(s, new TypeReference<>() {});
-            Object cols = m.get("columns");
-            if (!(cols instanceof List<?> list)) return null;
-
-            List<InferredColumn> out = new ArrayList<>();
-            for (Object o : list) {
-                if (!(o instanceof Map<?, ?> mm)) continue;
-
-                InferredColumn ic = new InferredColumn();
-                ic.colKey = toStr(mm.get("colKey"));
-                ic.colSearchTerm = toStr(mm.get("colSearchTerm"));
-
-                Object vals = mm.get("values");
-                if (vals instanceof List<?> vl) {
-                    ic.values = new ArrayList<>();
-                    for (Object vv : vl) {
-                        if (!(vv instanceof Map<?, ?> vm)) continue;
-                        InferredValue iv = new InferredValue();
-                        iv.raw = toStr(vm.get("raw"));
-                        iv.searchTerm = toStr(vm.get("searchTerm"));
-                        ic.values.add(iv);
-                    }
-                }
-
-                out.add(ic);
-            }
-
-            InferredBatch b = new InferredBatch();
-            b.columns = out;
-            return b;
-
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static final class InferredBatch {
-        List<InferredColumn> columns;
-    }
-
-    private static final class InferredColumn {
-        String colKey;
-        String colSearchTerm;
-        List<InferredValue> values;
-    }
-
-    private static final class InferredValue {
-        String raw;
-        String searchTerm;
-    }
-
-    private static String toStr(Object o) {
-        return o == null ? "" : String.valueOf(o);
+    private static String shortStr(String s, int maxLen) {
+        String x = safe(s).trim().replaceAll("\\s+", " ");
+        return x.length() <= Math.max(1, maxLen) ? x : x.substring(0, Math.max(1, maxLen)) + "...";
     }
 
     private static String safe(String s) {

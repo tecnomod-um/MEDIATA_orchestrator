@@ -20,6 +20,7 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.OpenMedInferenceService;
 import org.taniwha.service.TerminologyLookupService;
 import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
@@ -56,9 +57,6 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
-        // automatically starts Ollama and Spring AI autoconfigures ChatModel
-        // This test mimics that behavior by expecting Ollama to be running
 
         @Bean(destroyMethod = "shutdown")
         public java.util.concurrent.ExecutorService llmExecutor() {
@@ -122,12 +120,79 @@ public class MappingServiceReportTest {
             return new TerminologyLookupService(rdfService, embeddingsClient, exec);
         }
 
+        /**
+         * Mock OpenMedInferenceService that returns realistic SNOMED-searchable terms
+         * for well-known ADL/clinical column names — simulating what the real
+         * OpenMed NER service would extract from these medical texts.
+         */
+        @Bean
+        public OpenMedInferenceService openMedInferenceService() {
+            OpenMedInferenceService mock = Mockito.mock(OpenMedInferenceService.class);
+            Mockito.when(mock.isEnabled()).thenReturn(true);
+            Mockito.when(mock.isAvailable()).thenReturn(true);
+
+            Mockito.when(mock.inferBatch(Mockito.anyList()))
+                .thenAnswer(invocation -> {
+                    List<org.taniwha.model.ColumnRecord> cols = invocation.getArgument(0);
+                    List<OpenMedInferenceService.InferredTermResult> results = new ArrayList<>();
+
+                    for (org.taniwha.model.ColumnRecord col : cols) {
+                        if (col == null) continue;
+                        String key = (col.colKey() == null ? "" : col.colKey()).toLowerCase();
+
+                        // Map column name to the most specific SNOMED-searchable phrase
+                        String colTerm = mapColTerm(key);
+
+                        // Map each sampled value to its clinical search term
+                        Map<String, String> vmap = new java.util.LinkedHashMap<>();
+                        if (col.values() != null) {
+                            for (String v : col.values()) {
+                                String vl = (v == null ? "" : v).toLowerCase().trim();
+                                vmap.put(v, mapValTerm(key, vl));
+                            }
+                        }
+                        results.add(new OpenMedInferenceService.InferredTermResult(col.colKey(), colTerm, vmap));
+                    }
+                    return results;
+                });
+
+            return mock;
+        }
+
+        private static String mapColTerm(String key) {
+            if (key.contains("bath"))     return "Bathing ability";
+            if (key.contains("dress"))    return "Dressing ability";
+            if (key.contains("feed") || key.contains("eat")) return "Feeding ability";
+            if (key.contains("groom"))    return "Personal grooming";
+            if (key.contains("stair"))    return "Stair climbing";
+            if (key.contains("toilet"))   return "Toileting";
+            if (key.contains("bowel"))    return "Bowel continence";
+            if (key.contains("bladder"))  return "Bladder continence";
+            if (key.contains("transfer")) return "Transfer ability";
+            if (key.contains("mobil") || key.contains("walk")) return "Mobility";
+            if (key.contains("nihss"))    return "NIH stroke scale";
+            if (key.contains("barthel"))  return "Barthel index";
+            if (key.contains("fim"))      return "Functional independence measure";
+            if (key.contains("sex") || key.contains("gender")) return "Gender";
+            if (key.contains("age"))      return "Chronological age";
+            if (key.contains("diabet"))   return "Diabetes mellitus";
+            if (key.contains("fac"))      return "Functional ambulation classification";
+            return key; // fall back to the raw key
+        }
+
+        private static String mapValTerm(String colKey, String val) {
+            if (val.equals("0") || val.equals("dependent"))    return "Dependent";
+            if (val.equals("5") || val.equals("partial"))      return "Partially dependent";
+            if (val.equals("10") || val.equals("independent")) return "Independent";
+            if (val.equals("male") || val.equals("m"))         return "Male";
+            if (val.equals("female") || val.equals("f"))       return "Female";
+            return val;
+        }
+
         @Bean
         public TerminologyTermInferenceService terminologyTermInferenceService(
-                LLMTextGenerator llmTextGenerator,
-                @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
-                java.util.concurrent.ExecutorService llmExecutor) {
-            return new TerminologyTermInferenceService(llmTextGenerator, llmExecutor);
+                ObjectProvider<OpenMedInferenceService> openMedProvider) {
+            return new TerminologyTermInferenceService(openMedProvider);
         }
 
         @Bean
@@ -235,96 +300,31 @@ public class MappingServiceReportTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
+    /**
+     * Terminology inference in this test is handled by a mock {@link OpenMedInferenceService}
+     * that returns realistic SNOMED-searchable phrases (simulating what the real OpenMed NER
+     * service would extract).  No external process needs to be started.
+     *
+     * <p>In production, start the OpenMed service before running this test:
+     * <pre>
+     *   cd openmed-service
+     *   uvicorn main:app --host 0.0.0.0 --port 8002
+     * </pre>
+     * then set {@code openmed.service.enabled=true} and {@code openmed.service.url=http://localhost:8002}.
+     * </p>
+     */
     @org.junit.jupiter.api.BeforeAll
-    static void startOllama() throws Exception {
-        // Start Ollama the same way as deployment (OllamaLauncherConfig)
-        System.out.println("\n=== Starting Ollama for Test ===");
-        
-        try {
-            // Check if Docker is available
-            ProcessBuilder dockerCheck = new ProcessBuilder("docker", "version");
-            Process process = dockerCheck.start();
-            int exitCode = process.waitFor();
-            
-            if (exitCode != 0) {
-                System.out.println("Docker not available. Ollama will not be auto-launched.");
-                System.out.println("Please start Ollama manually: ollama serve");
-                return;
-            }
-            
-            System.out.println("Docker is available. Starting Ollama container...");
-            
-            // Start Ollama container
-            ProcessBuilder startOllama = new ProcessBuilder(
-                "docker", "run", "-d",
-                "--name", "ollama-test",
-                "-p", "11434:11434",
-                "-v", "ollama-models:/root/.ollama",
-                "ollama/ollama:latest"
-            );
-            Process startProcess = startOllama.start();
-            int startExitCode = startProcess.waitFor();
-            
-            if (startExitCode != 0) {
-                // Container might already exist, try to start it
-                System.out.println("Container might already exist, trying to start existing container...");
-                ProcessBuilder startExisting = new ProcessBuilder("docker", "start", "ollama-test");
-                startExisting.start().waitFor();
-            }
-            
-            // Wait for Ollama to be ready
-            System.out.println("Waiting for Ollama to be ready...");
-            int maxWait = 60;
-            boolean ready = false;
-            for (int i = 0; i < maxWait; i++) {
-                try {
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) 
-                        new java.net.URL("http://localhost:11434/").openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(1000);
-                    conn.setReadTimeout(1000);
-                    if (conn.getResponseCode() == 200) {
-                        ready = true;
-                        System.out.println("✓ Ollama is ready at http://localhost:11434/");
-                        break;
-                    }
-                } catch (Exception e) {
-                    // Not ready yet
-                }
-                Thread.sleep(1000);
-            }
-            
-            if (!ready) {
-                System.out.println("WARNING: Ollama did not become ready within 60 seconds");
-                return;
-            }
-            
-            // Pull meditron model if needed (EPFL's open medical LLM)
-            System.out.println("Ensuring meditron model is available...");
-            ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "meditron"
-            );
-            pullModel.inheritIO();
-            Process pullProcess = pullModel.start();
-            int pullExitCode = pullProcess.waitFor();
-            
-            if (pullExitCode == 0) {
-                System.out.println("✓ meditron model ready");
-            } else {
-                System.out.println("WARNING: Failed to pull meditron model");
-            }
-            
-            System.out.println("=== Ollama Setup Complete ===\n");
-            
-        } catch (Exception e) {
-            System.err.println("Error starting Ollama: " + e.getMessage());
-            e.printStackTrace();
-        }
+    static void printSetupInfo() {
+        System.out.println("\n=== MappingServiceReportTest – OpenMed Integration ===");
+        System.out.println("Terminology inference: mocked OpenMedInferenceService (realistic NER terms)");
+        System.out.println("Snowstorm lookup:      mocked RDFService (realistic SNOMED codes)");
+        System.out.println("Description LLM:       Ollama (optional, skipped if not running)");
+        System.out.println("======================================================\n");
     }
 
     @Autowired
     private MappingService mappingService;
-    
+
     @Autowired(required = false)
     private LLMTextGenerator llmTextGenerator;
 
@@ -334,20 +334,21 @@ public class MappingServiceReportTest {
 
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
-        // Display LLM configuration status
-        System.out.println("\n=== LLM Configuration ===");
-        System.out.println("LLM Text Generator: " + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
-        System.out.println("==========================\n");
-        
-        // Quality checks - validate LLM is performing well
+        // Display OpenMed + LLM configuration status
+        System.out.println("\n=== Service Configuration ===");
+        System.out.println("LLM Text Generator (descriptions): "
+                + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
+        System.out.println("Terminology inference: OpenMed NER (mocked with realistic terms)");
+        System.out.println("=============================\n");
+
         assertNotNull(result, "Result should not be null");
-        
+
         // Log actual results for inspection
         Set<String> foundMappings = result.stream()
             .flatMap(map -> map.keySet().stream())
             .collect(Collectors.toSet());
-        
-        System.out.println("\n=== LLM Embedding Results ===");
+
+        System.out.println("\n=== Mapping Results ===");
         System.out.println("Total mappings found: " + result.size());
         System.out.println("Mapping keys: " + foundMappings);
         
@@ -409,11 +410,11 @@ public class MappingServiceReportTest {
         assertTrue(Files.exists(jsonOut), "JSON report should exist: " + jsonOut);
         assertTrue(Files.exists(mdOut), "Markdown report should exist: " + mdOut);
         
-        System.out.println("\n=== LLM Embedding Quality Report ===");
+        System.out.println("\n=== OpenMed + Snowstorm Quality Report ===");
         System.out.println("Total mapping suggestions: " + result.size());
         System.out.println("Key categories identified: " + matchCount + "/" + expectedCategories.size());
         System.out.println("Report saved to: " + mdOut);
-        System.out.println("====================================\n");
+        System.out.println("==========================================\n");
         
         // Quality checks - validate embedding model is producing useful pairings
         assertNotNull(result, "Result should not be null");
