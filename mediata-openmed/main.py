@@ -66,7 +66,7 @@ def _load_model_once():
         _pipeline = hf_pipeline(
             "ner",
             model=MODEL_NAME,
-            aggregation_strategy="simple",
+            aggregation_strategy="first",   # "first" merges BPE sub-tokens into whole words
             device=-1,          # CPU only – avoids GPU dependency in tests
         )
         logger.info("[OpenMed] Model loaded in %.1fs", time.time() - t0)
