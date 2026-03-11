@@ -226,7 +226,7 @@ public class TerminologyLookupService {
                     if (code.isEmpty()) return null;
                     String label = s.getLabel();
                     label = (label == null) ? "" : label.trim();
-                    return label.isEmpty() ? code : (code + "|" + label);
+                    return label.isEmpty() ? code : (label + " | " + code);
                 })
                 .filter(Objects::nonNull)
                 .findFirst()

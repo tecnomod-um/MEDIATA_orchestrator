@@ -31,7 +31,7 @@ import static org.mockito.Mockito.*;
  *       a mapping DTO is populated by {@code TerminologyLookupService} (owned by
  *       {@code MappingEnrichmentHelper}) after {@code inferBatch} returns.</li>
  *   <li>{@link OpenMedTerminologyService#resolveWithSnowstorm} returns a valid SNOMED
- *       code+label (e.g. {@code "73211009|Diabetes mellitus"}) when Snowstorm finds a
+ *       label+code (e.g. {@code "Diabetes mellitus | 73211009"}) when Snowstorm finds a
  *       match, or {@code ""} when it does not.  The raw OpenMed search phrase is
  *       <em>never</em> returned as a terminology value.</li>
  *   <li>{@link OpenMedTerminologyService#isValidTerm} rejects numeric-only, single-char,
@@ -127,7 +127,7 @@ class OpenMedTerminologyServiceTest {
 
         String result = service.resolveWithSnowstorm("diabetes", "diabetes column");
 
-        assertThat(result).isEqualTo("73211009|Diabetes mellitus");
+        assertThat(result).isEqualTo("Diabetes mellitus | 73211009");
         logger.info("[OpenMedTest] Snowstorm code returned: '{}'", result);
     }
 
@@ -203,7 +203,7 @@ class OpenMedTerminologyServiceTest {
 
         String result = service.resolveWithSnowstorm("40", "diagnosis");
 
-        assertThat(result).isEqualTo("439401001|Diagnosis");
+        assertThat(result).isEqualTo("Diagnosis | 439401001");
         verify(rdfService).getSNOMEDTermSuggestions("diagnosis");
         logger.info("[OpenMedTest] fallback text resolved to SNOMED: '{}'", result);
     }
@@ -218,7 +218,7 @@ class OpenMedTerminologyServiceTest {
 
         String result = service.resolveWithSnowstorm("hypertension", "blood pressure");
 
-        assertThat(result).isEqualTo("38341003|Hypertension");
+        assertThat(result).isEqualTo("Hypertension | 38341003");
         logger.info("[OpenMedTest] first-of-multiple Snowstorm result: '{}'", result);
     }
 
@@ -291,8 +291,8 @@ class OpenMedTerminologyServiceTest {
                     .as("colSearchTerm for col='%s' must not be a bare integer", t.colKey())
                     .doesNotMatch("^\\d+$");
             assertThat(colTerm)
-                    .as("colSearchTerm for col='%s' must not be a SNOMED code+label", t.colKey())
-                    .doesNotMatch("^\\d{6,}\\|.+");
+                    .as("colSearchTerm for col='%s' must not be a SNOMED label+code", t.colKey())
+                    .doesNotMatch("^.+ \\| \\d{6,}$");
 
             // The returned phrase must pass isValidTerm (it was validated before returning).
             assertThat(service.isValidTerm(colTerm))
@@ -309,8 +309,8 @@ class OpenMedTerminologyServiceTest {
                             .as("value term for '%s' must not be a bare integer", e.getKey())
                             .doesNotMatch("^\\d+$");
                     assertThat(valTerm)
-                            .as("value term for '%s' must not be a SNOMED code+label", e.getKey())
-                            .doesNotMatch("^\\d{6,}\\|.+");
+                            .as("value term for '%s' must not be a SNOMED label+code", e.getKey())
+                            .doesNotMatch("^.+ \\| \\d{6,}$");
                     assertThat(service.isValidTerm(valTerm))
                             .as("value term '%s' must pass isValidTerm", valTerm)
                             .isTrue();
@@ -338,8 +338,7 @@ class OpenMedTerminologyServiceTest {
 
         String result = service.resolveWithSnowstorm("hypertension", "blood pressure column");
 
-        assertThat(result).isEqualTo("38341003|Hypertension");
-        assertThat(result).matches("^\\d{6,}\\|.+");   // must be proper SNOMED format
+        assertThat(result).isEqualTo("Hypertension | 38341003");
         logger.info("[OpenMedTest] SNOMED code for recognised term: '{}'", result);
     }
 
