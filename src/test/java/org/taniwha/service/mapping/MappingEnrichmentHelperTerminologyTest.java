@@ -54,9 +54,10 @@ class MappingEnrichmentHelperTerminologyTest {
     private static final Logger logger =
             LoggerFactory.getLogger(MappingEnrichmentHelperTerminologyTest.class);
 
-    /** Pattern that exactly matches what Snowstorm returns: a numeric concept-ID
-     *  (≥ 6 digits) optionally followed by {@code "|label"}. */
-    private static final Pattern SNOMED_FORMAT = Pattern.compile("^\\d{6,}(\\|.+)?$");
+    /** Pattern that matches the Snowstorm output format after the format change.
+     *  Preferred: {@code "label | code"} (e.g. {@code "Diabetes mellitus | 73211009"}).
+     *  Also accepts bare numeric code (no label) for robustness. */
+    private static final Pattern SNOMED_FORMAT = Pattern.compile("^(.+ \\| )?\\d{6,}$");
 
     @Mock OpenMedTerminologyService openMedTerminologyService;
     @Mock TerminologyTermInferenceService terminologyTermInferenceService;
@@ -116,27 +117,27 @@ class MappingEnrichmentHelperTerminologyTest {
     // ====================================================================
 
     @Test
-    @DisplayName("CORRECT OUTPUT: valid SNOMED code+label is stored in the mapping DTO")
+    @DisplayName("CORRECT OUTPUT: valid SNOMED label+code is stored in the mapping DTO")
     void columnTerminology_validSnomedCodeWithLabel_storedAsIs() {
         // OpenMed suggests "diabetes mellitus" as search term for the "Diagnosis" column.
         when(openMedTerminologyService.inferBatch(any()))
                 .thenReturn(List.of(new InferredTerm("Diagnosis", "diabetes mellitus", Map.of())));
-        // Snowstorm returns a proper SNOMED concept for that search term.
+        // Snowstorm returns a proper SNOMED concept in the new "label | code" format.
         // The lookup key the helper builds is "Diagnosis|diabetes mellitus".
         when(terminologyLookupService.batchLookupTerminology(any()))
-                .thenReturn(Map.of("Diagnosis|diabetes mellitus", "73211009|Diabetes mellitus"));
+                .thenReturn(Map.of("Diagnosis|diabetes mellitus", "Diabetes mellitus | 73211009"));
 
         SuggestedMappingDTO mapping = new SuggestedMappingDTO();
         helper.populateTerminologyAndDescriptionsBatch(
                 List.of(mappingOf("Diagnosis", mapping)), null);
 
         assertThat(mapping.getTerminology())
-                .as("Valid SNOMED code+label must be stored as-is")
-                .isEqualTo("73211009|Diabetes mellitus");
+                .as("Valid SNOMED label+code must be stored as-is")
+                .isEqualTo("Diabetes mellitus | 73211009");
         assertThat(mapping.getTerminology())
-                .as("Terminology must match SNOMED format ^\\d{6,}\\|.+$")
+                .as("Terminology must match SNOMED format ^(.+ \\| )?\\d{6,}$")
                 .matches(SNOMED_FORMAT.pattern());
-        logger.info("[TermTest] column SNOMED+label: '{}'", mapping.getTerminology());
+        logger.info("[TermTest] column SNOMED label+code: '{}'", mapping.getTerminology());
     }
 
     @Test
@@ -228,7 +229,7 @@ class MappingEnrichmentHelperTerminologyTest {
     // ====================================================================
 
     @Test
-    @DisplayName("CORRECT OUTPUT: valid SNOMED code+label stored in the value DTO")
+    @DisplayName("CORRECT OUTPUT: valid SNOMED label+code stored in the value DTO")
     void valueTerminology_validSnomedCodeWithLabel_storedAsIs() {
         // OpenMed: column "Diagnosis", value "Hypertension" → search term "hypertension"
         when(openMedTerminologyService.inferBatch(any()))
@@ -237,8 +238,8 @@ class MappingEnrichmentHelperTerminologyTest {
         // Snowstorm lookup key for the value is "Diagnosis|hypertension"
         when(terminologyLookupService.batchLookupTerminology(any()))
                 .thenReturn(Map.of(
-                        "Diagnosis|diabetes mellitus", "73211009|Diabetes mellitus",
-                        "Diagnosis|hypertension",      "38341003|Hypertension"));
+                        "Diagnosis|diabetes mellitus", "Diabetes mellitus | 73211009",
+                        "Diagnosis|hypertension",      "Hypertension | 38341003"));
 
         SuggestedMappingDTO mapping = mappingWithValues("Hypertension");
         helper.populateTerminologyAndDescriptionsBatch(
@@ -246,10 +247,10 @@ class MappingEnrichmentHelperTerminologyTest {
 
         SuggestedValueDTO hyper = mapping.getGroups().get(0).getValues().get(0);
         assertThat(hyper.getTerminology())
-                .as("Value terminology must be the Snowstorm SNOMED code+label")
-                .isEqualTo("38341003|Hypertension");
+                .as("Value terminology must be the Snowstorm SNOMED label+code")
+                .isEqualTo("Hypertension | 38341003");
         assertThat(hyper.getTerminology()).matches(SNOMED_FORMAT.pattern());
-        logger.info("[TermTest] value SNOMED+label: '{}'", hyper.getTerminology());
+        logger.info("[TermTest] value SNOMED label+code: '{}'", hyper.getTerminology());
     }
 
     @Test
@@ -260,7 +261,7 @@ class MappingEnrichmentHelperTerminologyTest {
                         Map.of("RareSyndrome", "rare syndrome"))));
         when(terminologyLookupService.batchLookupTerminology(any()))
                 .thenReturn(Map.of(
-                        "Diagnosis|diabetes mellitus", "73211009|Diabetes mellitus",
+                        "Diagnosis|diabetes mellitus", "Diabetes mellitus | 73211009",
                         "Diagnosis|rare syndrome",     "CONCEPT_999000001"));
 
         SuggestedMappingDTO mapping = mappingWithValues("RareSyndrome");
@@ -283,7 +284,7 @@ class MappingEnrichmentHelperTerminologyTest {
                         Map.of("Stroke", "stroke"))));
         when(terminologyLookupService.batchLookupTerminology(any()))
                 .thenReturn(Map.of(
-                        "Diagnosis|diabetes mellitus", "73211009|Diabetes mellitus",
+                        "Diagnosis|diabetes mellitus", "Diabetes mellitus | 73211009",
                         "Diagnosis|stroke",            "stroke"));    // raw phrase echoed back
 
         SuggestedMappingDTO mapping = mappingWithValues("Stroke");
@@ -315,11 +316,11 @@ class MappingEnrichmentHelperTerminologyTest {
                 ));
         when(terminologyLookupService.batchLookupTerminology(any()))
                 .thenReturn(Map.of(
-                        "Diagnosis|diabetes mellitus",  "73211009|Diabetes mellitus", // ✓ valid
-                        "Diagnosis|hypertension",        "38341003|Hypertension",      // ✓ valid
-                        "Diagnosis|stroke",              "CONCEPT_000230690",          // ✗ synthetic
-                        "PatientAge|patient age",        "397669002|Age",              // ✓ valid
-                        "MedicalScore|medical score",    "medical score"               // ✗ raw phrase
+                        "Diagnosis|diabetes mellitus",  "Diabetes mellitus | 73211009", // ✓ valid
+                        "Diagnosis|hypertension",        "Hypertension | 38341003",      // ✓ valid
+                        "Diagnosis|stroke",              "CONCEPT_000230690",            // ✗ synthetic
+                        "PatientAge|patient age",        "Age | 397669002",              // ✓ valid
+                        "MedicalScore|medical score",    "medical score"                 // ✗ raw phrase
                 ));
 
         SuggestedMappingDTO diagMapping  = mappingWithValues("Hypertension", "Stroke");
@@ -337,11 +338,11 @@ class MappingEnrichmentHelperTerminologyTest {
         // ── column terminology ────────────────────────────────────────────
         assertThat(diagMapping.getTerminology())
                 .as("Diagnosis: valid SNOMED must be stored")
-                .isEqualTo("73211009|Diabetes mellitus");
+                .isEqualTo("Diabetes mellitus | 73211009");
 
         assertThat(ageMapping.getTerminology())
                 .as("PatientAge: valid SNOMED must be stored")
-                .isEqualTo("397669002|Age");
+                .isEqualTo("Age | 397669002");
 
         assertThat(scoreMapping.getTerminology())
                 .as("MedicalScore: raw phrase must be filtered to empty")
@@ -354,7 +355,7 @@ class MappingEnrichmentHelperTerminologyTest {
 
         assertThat(hyper.getTerminology())
                 .as("Hypertension value: valid SNOMED must be stored")
-                .isEqualTo("38341003|Hypertension");
+                .isEqualTo("Hypertension | 38341003");
 
         assertThat(stroke.getTerminology())
                 .as("Stroke value: CONCEPT_ must be filtered to empty")
@@ -409,29 +410,29 @@ class MappingEnrichmentHelperTerminologyTest {
         when(openMedTerminologyService.inferBatch(any()))
                 .thenReturn(List.of(new InferredTerm("Age", "age", Map.of())));
         when(terminologyLookupService.batchLookupTerminology(any()))
-                .thenReturn(Map.of("Age|age", "123456|Some concept"));
+                .thenReturn(Map.of("Age|age", "Some concept | 123456"));
 
         SuggestedMappingDTO mapping = new SuggestedMappingDTO();
         helper.populateTerminologyAndDescriptionsBatch(
                 List.of(mappingOf("Age", mapping)), null);
 
-        assertThat(mapping.getTerminology()).isEqualTo("123456|Some concept");
+        assertThat(mapping.getTerminology()).isEqualTo("Some concept | 123456");
         logger.info("[TermTest] 6-digit code passes → '{}'", mapping.getTerminology());
     }
 
     @Test
-    @DisplayName("FORMAT: typical 8-digit SNOMED code+label is accepted")
+    @DisplayName("FORMAT: typical 8-digit SNOMED label+code is accepted")
     void formatGate_eightDigitCode_passes() {
         when(openMedTerminologyService.inferBatch(any()))
                 .thenReturn(List.of(new InferredTerm("Stroke", "stroke", Map.of())));
         when(terminologyLookupService.batchLookupTerminology(any()))
-                .thenReturn(Map.of("Stroke|stroke", "230690007|Stroke"));
+                .thenReturn(Map.of("Stroke|stroke", "Stroke | 230690007"));
 
         SuggestedMappingDTO mapping = new SuggestedMappingDTO();
         helper.populateTerminologyAndDescriptionsBatch(
                 List.of(mappingOf("Stroke", mapping)), null);
 
-        assertThat(mapping.getTerminology()).isEqualTo("230690007|Stroke");
+        assertThat(mapping.getTerminology()).isEqualTo("Stroke | 230690007");
         assertThat(mapping.getTerminology()).matches(SNOMED_FORMAT.pattern());
         logger.info("[TermTest] 8-digit code passes → '{}'", mapping.getTerminology());
     }

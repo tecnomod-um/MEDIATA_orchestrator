@@ -527,16 +527,16 @@ class MappingEnrichmentHelper {
      * accepting <em>only</em> valid SNOMED codes.
      *
      * <p>A value is accepted when it matches the Snowstorm output format:
-     * {@code "numericConceptId"} or {@code "numericConceptId|label"}
-     * (e.g. {@code "73211009|Diabetes mellitus"}).  Synthetic hash codes
-     * ({@code CONCEPT_XXXXXXXXX}), raw search phrases, and empty strings are all
-     * rejected and {@code ""} is returned, guaranteeing that the
-     * {@code terminology} field of every mapping DTO is either a genuine SNOMED
+     * {@code "label | numericConceptId"} (e.g. {@code "Diabetes mellitus | 73211009"})
+     * or the bare numeric-only form {@code "numericConceptId"}.
+     * Synthetic hash codes ({@code CONCEPT_XXXXXXXXX}), raw search phrases, and
+     * empty strings are all rejected and {@code ""} is returned, guaranteeing that
+     * the {@code terminology} field of every mapping DTO is either a genuine SNOMED
      * code or empty.</p>
      *
      * @param lookupKey the composite key in {@code "colKey|searchTerm"} format
      * @param results   the Snowstorm results map keyed by lookupKey
-     * @return a SNOMED code+label string, or {@code ""}
+     * @return a SNOMED label+code string, or {@code ""}
      */
     private static String resolveTerminology(
             String lookupKey,
@@ -547,14 +547,21 @@ class MappingEnrichmentHelper {
     }
 
     /**
-     * Returns {@code true} when {@code value} is in the Snowstorm SNOMED format,
-     * i.e. starts with at least 6 consecutive digits (the SNOMED CT concept ID),
-     * optionally followed by {@code "|label"}.
+     * Returns {@code true} when {@code value} is in the Snowstorm SNOMED format.
+     *
+     * <p>Accepted formats:
+     * <ul>
+     *   <li>{@code "label | numericConceptId"} – e.g. {@code "Diabetes mellitus | 73211009"}</li>
+     *   <li>{@code "numericConceptId"} – bare code without a label (uncommon but valid)</li>
+     * </ul>
+     * SNOMED CT concept IDs are at minimum 6 digits; typical codes are 7–18 digits.
      */
     private static boolean isSnowstormCode(String value) {
         if (value == null || value.isBlank()) return false;
-        // SNOMED CT concept IDs are at minimum 6 digits; typical codes are 7–18 digits.
-        return value.trim().matches("^\\d{6,}(\\|.+)?$");
+        String v = value.trim();
+        // New preferred format: "label | code"  (e.g. "Diabetes mellitus | 73211009")
+        // Also accept bare numeric code for robustness.
+        return v.matches("^.+ \\| \\d{6,}$") || v.matches("^\\d{6,}$");
     }
 
     // ------------------------------------------------------------------

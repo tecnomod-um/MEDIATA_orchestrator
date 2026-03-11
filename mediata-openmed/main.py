@@ -128,6 +128,49 @@ def _normalise(text: str) -> str:
     return s.strip().lower()
 
 
+# ---------------------------------------------------------------------------
+# Generic-column detection
+# ---------------------------------------------------------------------------
+
+_GENERIC_COL_RE = re.compile(
+    r"^(col(?:umn)?|var(?:iable)?|field|attr(?:ribute)?|v|x|f)[\s_\-]?\d+$",
+    re.IGNORECASE,
+)
+
+
+def _is_generic_column_name(name: str) -> bool:
+    """Return True when *name* is a generic placeholder such as column_1 or var_2."""
+    return bool(_GENERIC_COL_RE.match(name.strip()))
+
+
+def _infer_col_from_values(col_key: str, values: List[str], pipe) -> str:
+    """Infer a meaningful column search term when the column name is generic.
+
+    Tries NER on the first few non-numeric, non-trivial values.  If NER produces
+    a term that is clearly better than text normalisation, use it.  Otherwise
+    falls back to normalising the column key itself.
+    """
+    candidates = [
+        v.strip()
+        for v in (values or [])
+        if v and v.strip() and not re.match(r"^-?\d+(\.\d+)?$", v.strip())
+        and len(v.strip()) >= 3
+    ][:3]
+    for candidate in candidates:
+        norm = _normalise(candidate)
+        term = _infer_term(candidate, pipe)
+        alpha = sum(1 for c in term if c.isalpha())
+        if alpha >= 2 and term != norm:
+            logger.debug(
+                "[OpenMed] Generic col '%s' inferred from value '%s' → '%s'",
+                col_key,
+                candidate,
+                term,
+            )
+            return term
+    return _normalise(col_key)
+
+
 def _infer_term(text: str, pipe) -> str:
     """Return the best medical search term for *text*.
 
@@ -189,6 +232,75 @@ def _infer_term(text: str, pipe) -> str:
     return normalised
 
 
+def _infer_value_term(value: str, col_search_term: str, pipe) -> str:
+    """Infer the best search term for a column *value*, using column context when needed.
+
+    Rules (in priority order):
+
+    1. **Numeric or very-short values** (< 3 non-space characters): combine with the
+       column search term so Snowstorm can find scale-specific concepts.
+       e.g.  col='Toilet', value='0'   →  'toilet 0'
+             col='BarthelIndex', value='5' →  'barthel index 5'
+
+    2. **Fallback mode** (NER model not loaded): return the normalised value directly.
+       Long medical terms like "hypertension" are self-identifying in Snowstorm and
+       must not be contaminated with column context when NER is unavailable.
+
+    3. **Model mode – multi-word values** where NER gives the same result as normalisation
+       (i.e. the value is not a recognised medical entity): enrich with column context.
+       e.g.  col='Education', value='High school' (NER: no entity) →  'high school education'
+
+    4. **All other values**: use the NER result as-is.
+
+    The result is always a plain-text search phrase, never a SNOMED code.
+    """
+    v = (value or "").strip()
+    if not v:
+        return v
+
+    col_ctx = (col_search_term or "").strip().lower()
+
+    # Rule 1 – numeric or very short: always prepend column context
+    is_numeric = bool(re.match(r"^-?\d+(\.\d+)?$", v))
+    is_very_short = len(v.replace(" ", "")) < 3
+    if is_numeric or is_very_short:
+        if col_ctx:
+            result = f"{col_ctx} {v}"
+            logger.debug(
+                "[OpenMed] Short/numeric value '%s' enriched with col context → '%s'",
+                v,
+                result,
+            )
+            return result
+        return _normalise(v)
+
+    # Rule 2 – fallback mode: return plain normalised form; do not add column context.
+    # Medical terms are self-identifying in Snowstorm; contaminating them with the
+    # column name would produce multi-word phrases that rarely match any concept
+    # (e.g. "hypertension diagnosis" instead of "hypertension").
+    if pipe is None or pipe == "fallback":
+        return _normalise(v)
+
+    # Rule 3/4 – model IS loaded: run NER, enrich only when NER gives no improvement
+    normalised = _normalise(v)
+    term = _infer_term(v, pipe)
+
+    # Enrich with column context only for phrases of 3+ words where NER couldn't find
+    # a specific entity.  Two-word medical terms ("diabetes mellitus", "myocardial
+    # infarction", "high school") are self-identifying in Snowstorm; contaminating
+    # them with the column name hurts recall.
+    if term == normalised and col_ctx and len(v.split()) >= 3:
+        enriched = f"{normalised} {col_ctx}"
+        logger.debug(
+            "[OpenMed] Multi-word value '%s' enriched with col context → '%s'",
+            v,
+            enriched,
+        )
+        return enriched
+
+    return term or normalised
+
+
 # ---------------------------------------------------------------------------
 # Application lifecycle
 # ---------------------------------------------------------------------------
@@ -239,13 +351,19 @@ async def infer_batch(request: BatchRequest):
             logger.warning("[OpenMed] Skipping column with empty col_key")
             continue
 
-        col_term = _infer_term(col_key, pipe) or col_key
+        # For generic placeholder names (column_1, var_2, …) try to infer from values.
+        if _is_generic_column_name(col_key):
+            col_term = _infer_col_from_values(col_key, col.values, pipe) or col_key
+        else:
+            col_term = _infer_term(col_key, pipe) or col_key
 
         value_terms: Dict[str, str] = {}
         for raw_val in col.values:
             v = (raw_val or "").strip()
             if v:
-                value_terms[v] = _infer_term(v, pipe) or v
+                # Always pass the column search term so numeric / short values
+                # receive meaningful context (e.g. "toilet 0", "barthel index 5").
+                value_terms[v] = _infer_value_term(v, col_term, pipe) or v
 
         results.append(
             ColumnTerms(

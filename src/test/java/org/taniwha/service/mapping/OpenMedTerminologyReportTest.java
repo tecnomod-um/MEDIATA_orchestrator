@@ -235,7 +235,7 @@ public class OpenMedTerminologyReportTest {
     private static final Logger logger =
             LoggerFactory.getLogger(OpenMedTerminologyReportTest.class);
 
-    private static final Pattern SNOMED_FORMAT = Pattern.compile("^\\d{6,}(\\|.+)?$");
+    private static final Pattern SNOMED_FORMAT = Pattern.compile("^(.+ \\| )?\\d{6,}$");
     private static final ObjectMapper MAPPER   = new ObjectMapper();
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
@@ -369,21 +369,34 @@ public class OpenMedTerminologyReportTest {
     private static void seedSnowstormConcepts() {
         Map<String, String> termsToBuild = new LinkedHashMap<>();
         // key = lowercase search phrase OpenMed produces, value = FSN label for Snowstorm
-        termsToBuild.put("hypertension",          "Hypertension");
-        termsToBuild.put("stroke",                 "Stroke");
-        termsToBuild.put("diabetes mellitus",      "Diabetes mellitus");
-        termsToBuild.put("myocardial infarction",  "Myocardial infarction");
-        termsToBuild.put("aspirin",                "Aspirin");
-        termsToBuild.put("metformin",              "Metformin");
-        termsToBuild.put("warfarin",               "Warfarin");
-        termsToBuild.put("lisinopril",             "Lisinopril");
-        termsToBuild.put("male",                   "Male");
-        termsToBuild.put("female",                 "Female");
-        termsToBuild.put("rehabilitation",         "Rehabilitation");
-        termsToBuild.put("deceased",               "Deceased");
-        termsToBuild.put("home",                   "Home");
-        termsToBuild.put("diagnosis",              "Diagnosis");
-        termsToBuild.put("discharge status",       "Discharge status");
+        // Standard medical terms
+        termsToBuild.put("hypertension",               "Hypertension");
+        termsToBuild.put("stroke",                      "Stroke");
+        termsToBuild.put("diabetes mellitus",           "Diabetes mellitus");
+        termsToBuild.put("myocardial infarction",       "Myocardial infarction");
+        termsToBuild.put("aspirin",                     "Aspirin");
+        termsToBuild.put("metformin",                   "Metformin");
+        termsToBuild.put("warfarin",                    "Warfarin");
+        termsToBuild.put("lisinopril",                  "Lisinopril");
+        termsToBuild.put("male",                        "Male");
+        termsToBuild.put("female",                      "Female");
+        termsToBuild.put("rehabilitation",              "Rehabilitation");
+        termsToBuild.put("deceased",                    "Deceased");
+        termsToBuild.put("home",                        "Home");
+        termsToBuild.put("diagnosis",                   "Diagnosis");
+        termsToBuild.put("discharge status",            "Discharge status");
+        // Barthel-scale numeric context terms – produced by the Python service as
+        // "col_search_term value" (e.g. "toilet 0", "toilet 5", "toilet 10")
+        termsToBuild.put("toilet 0",                    "Toilet 0 (dependent)");
+        termsToBuild.put("toilet 5",                    "Toilet 5 (needs help)");
+        termsToBuild.put("toilet 10",                   "Toilet 10 (independent)");
+        termsToBuild.put("barthel index 0",             "Barthel index 0");
+        termsToBuild.put("barthel index 5",             "Barthel index 5");
+        termsToBuild.put("barthel index 10",            "Barthel index 10");
+        // Education level context terms – produced as "high school education", etc.
+        termsToBuild.put("high school education",       "High school education");
+        termsToBuild.put("primary school education",    "Primary school education");
+        termsToBuild.put("university education",        "University education");
 
         System.out.println("  Seeding Snowstorm with medical concepts…");
         for (Map.Entry<String, String> entry : termsToBuild.entrySet()) {
@@ -597,6 +610,7 @@ public class OpenMedTerminologyReportTest {
 
     private static List<ColumnRecord> testColumns() {
         return List.of(
+            // Medical diagnosis column with named values
             new ColumnRecord("Diagnosis",
                     List.of("Hypertension", "Diabetes Mellitus", "Stroke", "Myocardial infarction")),
             new ColumnRecord("PatientGender",
@@ -605,12 +619,17 @@ public class OpenMedTerminologyReportTest {
                     List.of("120", "140", "160")),
             new ColumnRecord("NIHSSScore",
                     List.of("0", "5", "10", "15", "25")),
-            new ColumnRecord("BarthelIndex",
-                    List.of("0", "5", "10", "15", "20")),
+            // Barthel ADL scale: numeric values (0/5/10) that must not be omitted
+            // – the Python service uses column context to generate "toilet 0", "toilet 5", etc.
+            new ColumnRecord("Toilet",
+                    List.of("0", "5", "10")),
             new ColumnRecord("MedicationType",
                     List.of("Aspirin", "Metformin", "Warfarin", "Lisinopril")),
             new ColumnRecord("DischargeStatus",
-                    List.of("Home", "Rehabilitation", "Long-term care", "Deceased"))
+                    List.of("Home", "Rehabilitation", "Long-term care", "Deceased")),
+            // Education column: "High school" is a short/common phrase that must get terminology
+            new ColumnRecord("Education",
+                    List.of("Primary school", "High school", "University"))
         );
     }
 
@@ -761,9 +780,44 @@ public class OpenMedTerminologyReportTest {
                         "Terminology for '" + valueName + "' must NOT be empty when Snowstorm is "
                         + "running – concept was seeded and OpenMed should produce a valid search term.");
                 assertTrue(SNOMED_FORMAT.matcher(terminology).matches(),
-                        "Terminology for '" + valueName + "' must be valid SNOMED format, got: "
-                        + terminology);
+                        "Terminology for '" + valueName + "' must be valid SNOMED format " +
+                        "(label | code), got: '" + terminology + "'");
                 System.out.printf("  ✓ %-25s → '%s'%n", valueName, terminology);
+            }
+
+            // Numeric values in the Toilet column must now be present (not filtered out)
+            // because the Python service generates contextual phrases like "toilet 0"
+            OpenMedTerminologyService.InferredTerm toiletTerm = inferred.stream()
+                    .filter(t -> "Toilet".equalsIgnoreCase(t.colKey()))
+                    .findFirst().orElse(null);
+            if (toiletTerm != null && toiletTerm.valueSearchTerms() != null) {
+                for (String numVal : List.of("0", "5", "10")) {
+                    String searchPhrase = toiletTerm.valueSearchTerms().get(numVal);
+                    assertNotNull(searchPhrase,
+                            "Toilet value '" + numVal + "' must produce a search term "
+                            + "(numeric values must NOT be omitted when column context is available)");
+                    assertFalse(searchPhrase.isBlank(),
+                            "Toilet value '" + numVal + "' search term must not be blank");
+                    assertTrue(searchPhrase.toLowerCase().contains("toilet"),
+                            "Toilet value '" + numVal + "' search term must contain 'toilet', got: '"
+                            + searchPhrase + "'");
+                    System.out.printf("  ✓ Toilet %-3s → search='%s'%n", numVal, searchPhrase);
+                }
+            } else {
+                System.out.println("  ⚠ Toilet column not found in inferred terms – numeric assertion skipped");
+            }
+
+            // Education values must produce non-empty search phrases
+            OpenMedTerminologyService.InferredTerm eduTerm = inferred.stream()
+                    .filter(t -> "Education".equalsIgnoreCase(t.colKey()))
+                    .findFirst().orElse(null);
+            if (eduTerm != null && eduTerm.valueSearchTerms() != null) {
+                String hsPhrase = eduTerm.valueSearchTerms().get("High school");
+                if (hsPhrase != null) {
+                    assertFalse(hsPhrase.isBlank(),
+                            "'High school' search term must not be blank");
+                    System.out.printf("  ✓ Education 'High school' → search='%s'%n", hsPhrase);
+                }
             }
         }
 
@@ -801,7 +855,7 @@ public class OpenMedTerminologyReportTest {
             violations.add("[" + location + "] synthetic fallback must be filtered: " + terminology);
         else if (!SNOMED_FORMAT.matcher(terminology).matches())
             violations.add("[" + location + "] '" + searchTerm + "' → '" + terminology
-                    + "' does not match SNOMED format");
+                    + "' does not match SNOMED format (expected 'label | code' or bare code)");
         return terminology;
     }
 
@@ -833,7 +887,7 @@ public class OpenMedTerminologyReportTest {
                 }
             }
             if (phrase == null) {
-                System.out.printf("  [VAL] %-20s → (filtered by isValidTerm)%n", exp.valueName());
+                System.out.printf("  [VAL] %-20s → (not in inferred terms)%n", exp.valueName());
                 continue;
             }
             assertFalse(phrase.isBlank(), "phrase must not be blank for '" + exp.valueName() + "'");
@@ -845,15 +899,39 @@ public class OpenMedTerminologyReportTest {
             System.out.printf("  [VAL] %-20s → '%s' ✓%n", exp.valueName(), phrase);
         }
 
-        List<String> numericVals = List.of("40", "120", "0", "5", "10", "15");
+        // Verify that numeric values in 'Toilet' column produce contextual search terms
+        // (not just the raw number), and that those terms pass isValidTerm()
         for (OpenMedTerminologyService.InferredTerm t : inferred) {
+            if (!"Toilet".equalsIgnoreCase(t.colKey())) continue;
             if (t.valueSearchTerms() == null) continue;
-            for (String nv : numericVals) {
+            for (String nv : List.of("0", "5", "10")) {
                 String term = t.valueSearchTerms().get(nv);
-                if (term != null)
-                    assertFalse(openMedTerminologyService.isValidTerm(term),
-                            "col='" + t.colKey() + "' val='" + nv
-                                    + "': numeric must not produce valid search term, got: '" + term + "'");
+                if (term != null) {
+                    assertTrue(openMedTerminologyService.isValidTerm(term),
+                            "col='Toilet' val='" + nv
+                                    + "': numeric value WITH column context must be a valid search term, got: '"
+                                    + term + "'");
+                    assertTrue(term.toLowerCase().contains("toilet"),
+                            "col='Toilet' val='" + nv + "': contextual term must contain 'toilet', got: '"
+                                    + term + "'");
+                    System.out.printf("  [NUM] Toilet %-3s → '%s' ✓%n", nv, term);
+                }
+            }
+        }
+
+        // BloodPressureSystolic numeric values should also have contextual terms
+        for (OpenMedTerminologyService.InferredTerm t : inferred) {
+            if (!"BloodPressureSystolic".equalsIgnoreCase(t.colKey())) continue;
+            if (t.valueSearchTerms() == null) continue;
+            for (String nv : List.of("120", "140", "160")) {
+                String term = t.valueSearchTerms().get(nv);
+                if (term != null) {
+                    assertTrue(openMedTerminologyService.isValidTerm(term),
+                            "col='BloodPressureSystolic' val='" + nv
+                                    + "': numeric value WITH column context must be a valid search term, got: '"
+                                    + term + "'");
+                    System.out.printf("  [NUM] BloodPressureSystolic %-3s → '%s' ✓%n", nv, term);
+                }
             }
         }
         System.out.println("  ✓ All model-output quality assertions passed");
