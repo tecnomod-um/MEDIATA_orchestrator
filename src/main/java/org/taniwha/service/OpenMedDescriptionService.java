@@ -93,7 +93,12 @@ public class OpenMedDescriptionService {
                         if (v.isEmpty()) continue;
                         Map<String, Object> vm = new LinkedHashMap<>();
                         vm.put("v", v);
-                        // value-level terminology label not yet available at description time
+                        // Pass numeric range context so the Python service can generate
+                        // scale-appropriate ordinal descriptions (e.g. Barthel 0-100).
+                        String min = safe(vs.min()).trim();
+                        String max = safe(vs.max()).trim();
+                        if (!min.isEmpty()) vm.put("min", min);
+                        if (!max.isEmpty()) vm.put("max", max);
                         vals.add(vm);
                     }
                 }
