@@ -3,7 +3,6 @@ package org.taniwha.service.mapping;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -13,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -20,16 +20,13 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.OpenMedDescriptionService;
+import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.EmbeddingsClient;
-import org.taniwha.service.LLMTextGenerator;
 import org.taniwha.service.RDFService;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.ai.ollama.api.OllamaApi;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -56,48 +53,12 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
-        // automatically starts Ollama and Spring AI autoconfigures ChatModel
-        // This test mimics that behavior by expecting Ollama to be running
 
         @Bean(destroyMethod = "shutdown")
         public java.util.concurrent.ExecutorService llmExecutor() {
             return java.util.concurrent.Executors.newFixedThreadPool(8);
         }
 
-        @Bean
-        public ChatModel ollamaChatModel() {
-            // Create OllamaApi to connect to localhost Ollama
-            // (In deployment, OllamaLauncherConfig ensures Ollama is running)
-            OllamaApi api = OllamaApi.builder()
-                .baseUrl("http://localhost:11434")
-                .build();
-            
-            // Create default options for llama2
-            org.springframework.ai.ollama.api.OllamaChatOptions options = 
-                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                    .model("llama2")
-                    .temperature(0.7)
-                    .build();
-            
-            // Create empty ToolCallingManager (required)
-            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
-                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
-                
-            // Create ModelManagementOptions (required)
-            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
-                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
-            
-            // Create with required parameters (Spring AI 1.1.2)
-            return new OllamaChatModel(
-                api,
-                options,
-                toolCallingManager,
-                io.micrometer.observation.ObservationRegistry.NOOP,
-                modelManagementOptions
-            );
-        }
-        
         // EmbeddingModel is intentionally NOT declared here so that Spring AI
         // auto-configuration picks up the production PubMedBERT model from
         // application.properties (spring.ai.embedding.transformer.onnx.model-uri).
@@ -123,11 +84,22 @@ public class MappingServiceReportTest {
         }
 
         @Bean
-        public TerminologyTermInferenceService terminologyTermInferenceService(
-                LLMTextGenerator llmTextGenerator,
-                @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
+        public OpenMedDescriptionService openMedDescriptionService(
+                @Value("${openmed.service.url:http://localhost:8002}") String url,
+                @Value("${openmed.enabled:false}") boolean enabled,
+                @Value("${openmed.timeout.ms:10000}") int timeoutMs) {
+            OpenMedDescriptionService svc = new OpenMedDescriptionService();
+            ReflectionTestUtils.setField(svc, "openmedUrl", url);
+            ReflectionTestUtils.setField(svc, "enabled",    enabled);
+            ReflectionTestUtils.setField(svc, "timeoutMs",  timeoutMs);
+            return svc;
+        }
+
+        @Bean
+        public DescriptionService descriptionGenerator(
+                OpenMedDescriptionService openMedDescriptionService,
                 java.util.concurrent.ExecutorService llmExecutor) {
-            return new TerminologyTermInferenceService(llmTextGenerator, llmExecutor);
+            return new DescriptionService(openMedDescriptionService, llmExecutor);
         }
 
         @Bean
@@ -146,14 +118,13 @@ public class MappingServiceReportTest {
         public MappingService mappingService(
                 EmbeddingService embeddingService,
                 TerminologyLookupService terminologyLookupService,
-                TerminologyTermInferenceService terminologyTermInferenceService,
                 org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                 org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
-                    terminologyTermInferenceService, openMedTerminologyService, descriptionGenerator,
+                    openMedTerminologyService, descriptionGenerator,
                     valueMappingBuilder, objectMapper, mappingSettings);
         }
 
@@ -166,14 +137,13 @@ public class MappingServiceReportTest {
         public RDFService rdfService() {
             // Mock RDFService to return realistic SNOMED codes
             RDFService mock = Mockito.mock(RDFService.class);
-            
+
             // Return realistic SNOMED suggestions based on term
             Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.anyString()))
                 .thenAnswer(invocation -> {
                     String term = invocation.getArgument(0);
                     String lower = term.toLowerCase();
-                    
-                    // Return realistic SNOMED codes based on term
+
                     if (lower.contains("bath")) {
                         return Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
                     } else if (lower.contains("toilet")) {
@@ -217,122 +187,19 @@ public class MappingServiceReportTest {
                     } else if (term.equals("5")) {
                         return Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
                     } else {
-                        // Generic fallback
                         return Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
                     }
                 });
-            
-            return mock;
-        }
-        
-        @Bean
-        public LLMTextGenerator llmTextGenerator(ObjectProvider<ChatModel> chatModelProvider,
-                                                 @Value("${llm.enabled:true}") boolean llmEnabled) {
-            return new LLMTextGenerator(chatModelProvider, llmEnabled);
-        }
 
-        @Bean
-        public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
-                                                       java.util.concurrent.ExecutorService llmExecutor) {
-            return new DescriptionService(llmTextGenerator, llmExecutor);
+            return mock;
         }
     }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    @org.junit.jupiter.api.BeforeAll
-    static void startOllama() throws Exception {
-        // Start Ollama the same way as deployment (OllamaLauncherConfig)
-        System.out.println("\n=== Starting Ollama for Test ===");
-        
-        try {
-            // Check if Docker is available
-            ProcessBuilder dockerCheck = new ProcessBuilder("docker", "version");
-            Process process = dockerCheck.start();
-            int exitCode = process.waitFor();
-            
-            if (exitCode != 0) {
-                System.out.println("Docker not available. Ollama will not be auto-launched.");
-                System.out.println("Please start Ollama manually: ollama serve");
-                return;
-            }
-            
-            System.out.println("Docker is available. Starting Ollama container...");
-            
-            // Start Ollama container
-            ProcessBuilder startOllama = new ProcessBuilder(
-                "docker", "run", "-d",
-                "--name", "ollama-test",
-                "-p", "11434:11434",
-                "-v", "ollama-models:/root/.ollama",
-                "ollama/ollama:latest"
-            );
-            Process startProcess = startOllama.start();
-            int startExitCode = startProcess.waitFor();
-            
-            if (startExitCode != 0) {
-                // Container might already exist, try to start it
-                System.out.println("Container might already exist, trying to start existing container...");
-                ProcessBuilder startExisting = new ProcessBuilder("docker", "start", "ollama-test");
-                startExisting.start().waitFor();
-            }
-            
-            // Wait for Ollama to be ready
-            System.out.println("Waiting for Ollama to be ready...");
-            int maxWait = 60;
-            boolean ready = false;
-            for (int i = 0; i < maxWait; i++) {
-                try {
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) 
-                        new java.net.URL("http://localhost:11434/").openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(1000);
-                    conn.setReadTimeout(1000);
-                    if (conn.getResponseCode() == 200) {
-                        ready = true;
-                        System.out.println("✓ Ollama is ready at http://localhost:11434/");
-                        break;
-                    }
-                } catch (Exception e) {
-                    // Not ready yet
-                }
-                Thread.sleep(1000);
-            }
-            
-            if (!ready) {
-                System.out.println("WARNING: Ollama did not become ready within 60 seconds");
-                return;
-            }
-            
-            // Pull llama2 model if needed
-            System.out.println("Ensuring llama2 model is available...");
-            ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "llama2"
-            );
-            pullModel.inheritIO();
-            Process pullProcess = pullModel.start();
-            int pullExitCode = pullProcess.waitFor();
-            
-            if (pullExitCode == 0) {
-                System.out.println("✓ llama2 model ready");
-            } else {
-                System.out.println("WARNING: Failed to pull llama2 model");
-            }
-            
-            System.out.println("=== Ollama Setup Complete ===\n");
-            
-        } catch (Exception e) {
-            System.err.println("Error starting Ollama: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
     @Autowired
     private MappingService mappingService;
-    
-    @Autowired(required = false)
-    private LLMTextGenerator llmTextGenerator;
 
     @Test
     void generates_mapping_report_from_fixture() throws Exception {
@@ -340,12 +207,6 @@ public class MappingServiceReportTest {
 
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
-        // Display LLM configuration status
-        System.out.println("\n=== LLM Configuration ===");
-        System.out.println("LLM Text Generator: " + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
-        System.out.println("==========================\n");
-        
-        // Quality checks - validate LLM is performing well
         assertNotNull(result, "Result should not be null");
         
         // Log actual results for inspection
@@ -353,7 +214,7 @@ public class MappingServiceReportTest {
             .flatMap(map -> map.keySet().stream())
             .collect(Collectors.toSet());
         
-        System.out.println("\n=== LLM Embedding Results ===");
+        System.out.println("\n=== Embedding Results ===");
         System.out.println("Total mappings found: " + result.size());
         System.out.println("Mapping keys: " + foundMappings);
         
@@ -415,7 +276,7 @@ public class MappingServiceReportTest {
         assertTrue(Files.exists(jsonOut), "JSON report should exist: " + jsonOut);
         assertTrue(Files.exists(mdOut), "Markdown report should exist: " + mdOut);
         
-        System.out.println("\n=== LLM Embedding Quality Report ===");
+        System.out.println("\n=== Mapping Quality Report ===");
         System.out.println("Total mapping suggestions: " + result.size());
         System.out.println("Key categories identified: " + matchCount + "/" + expectedCategories.size());
         System.out.println("Report saved to: " + mdOut);

@@ -16,7 +16,6 @@ import org.taniwha.service.DescriptionService;
 import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.OpenMedTerminologyService.InferredTerm;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -60,7 +59,6 @@ class MappingEnrichmentHelperTerminologyTest {
     private static final Pattern SNOMED_FORMAT = Pattern.compile("^(.+ \\| )?\\d{6,}$");
 
     @Mock OpenMedTerminologyService openMedTerminologyService;
-    @Mock TerminologyTermInferenceService terminologyTermInferenceService;
     @Mock TerminologyLookupService terminologyLookupService;
     @Mock DescriptionService descriptionService;
 
@@ -71,7 +69,7 @@ class MappingEnrichmentHelperTerminologyTest {
         MappingServiceSettings settings = new MappingServiceSettings(
                 100, 20, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6);
         helper = new MappingEnrichmentHelper(
-                openMedTerminologyService, terminologyTermInferenceService,
+                openMedTerminologyService,
                 terminologyLookupService, descriptionService, settings);
 
         // Safe defaults – individual tests override what they need.

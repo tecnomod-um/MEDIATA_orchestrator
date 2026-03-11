@@ -10,9 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -86,7 +83,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
         "snowstorm.enabled=true",
         "snowstorm.launcher.enabled=false",
         "terminology.fallback.enabled=false",
-        "llm.enabled=false",
         "spring.datasource.enabled=false",
         "spring.data.mongodb.auto-index-creation=false",
         "spring.main.allow-bean-definition-overriding=true"
@@ -168,37 +164,22 @@ public class OpenMedTerminologyReportTest {
         }
 
         @Bean
-        public ChatModel ollamaChatModel() {
-            OllamaApi api = OllamaApi.builder().baseUrl("http://localhost:11434").build();
-            org.springframework.ai.ollama.api.OllamaChatOptions options =
-                    org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                            .model("llama2").temperature(0.7).build();
-            org.springframework.ai.model.tool.ToolCallingManager tcm =
-                    org.springframework.ai.model.tool.ToolCallingManager.builder().build();
-            org.springframework.ai.ollama.management.ModelManagementOptions mmo =
-                    org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
-            return new OllamaChatModel(api, options, tcm,
-                    io.micrometer.observation.ObservationRegistry.NOOP, mmo);
-        }
-
-        @Bean
-        public LLMTextGenerator llmTextGenerator(
-                ObjectProvider<ChatModel> chatModelProvider,
-                @Value("${llm.enabled:false}") boolean llmEnabled) {
-            return new LLMTextGenerator(chatModelProvider, llmEnabled);
+        public OpenMedDescriptionService openMedDescriptionService(
+                @Value("${openmed.service.url:http://localhost:8002}") String url,
+                @Value("${openmed.enabled:true}") boolean enabled,
+                @Value("${openmed.timeout.ms:30000}") int timeoutMs) {
+            OpenMedDescriptionService svc = new OpenMedDescriptionService();
+            ReflectionTestUtils.setField(svc, "openmedUrl", url);
+            ReflectionTestUtils.setField(svc, "enabled",    enabled);
+            ReflectionTestUtils.setField(svc, "timeoutMs",  timeoutMs);
+            return svc;
         }
 
         @Bean
         public DescriptionService descriptionGenerator(
-                LLMTextGenerator llmTextGenerator, ExecutorService llmExecutor) {
-            return new DescriptionService(llmTextGenerator, llmExecutor);
-        }
-
-        @Bean
-        public TerminologyTermInferenceService terminologyTermInferenceService(
-                LLMTextGenerator llmTextGenerator,
-                @Qualifier("llmExecutor") ExecutorService llmExecutor) {
-            return new TerminologyTermInferenceService(llmTextGenerator, llmExecutor);
+                OpenMedDescriptionService openMedDescriptionService,
+                @Qualifier("llmExecutor") ExecutorService descExecutor) {
+            return new DescriptionService(openMedDescriptionService, descExecutor);
         }
 
         @Bean
@@ -216,14 +197,13 @@ public class OpenMedTerminologyReportTest {
         public MappingService mappingService(
                 EmbeddingService embeddingService,
                 TerminologyLookupService terminologyLookupService,
-                TerminologyTermInferenceService terminologyTermInferenceService,
                 OpenMedTerminologyService openMedTerminologyService,
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 ObjectMapper objectMapper,
                 MappingConfig.MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
-                    terminologyTermInferenceService, openMedTerminologyService,
+                    openMedTerminologyService,
                     descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
         }
     }
@@ -643,6 +623,9 @@ public class OpenMedTerminologyReportTest {
     @org.springframework.beans.factory.annotation.Autowired
     private TerminologyLookupService terminologyLookupService;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.taniwha.service.OpenMedDescriptionService openMedDescriptionService;
+
     // -----------------------------------------------------------------------
     // Test
     // -----------------------------------------------------------------------
@@ -830,6 +813,141 @@ public class OpenMedTerminologyReportTest {
     }
 
     // -----------------------------------------------------------------------
+    // Description generation test (OpenMed /describe_batch)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Calls the real OpenMed {@code /describe_batch} endpoint with a representative
+     * set of clinical columns and asserts that the output is well-formed and medically
+     * meaningful.
+     *
+     * <p>This test is skipped (not failed) when the OpenMed service is not reachable.</p>
+     */
+    @Test
+    @DisplayName("OpenMed /describe_batch – descriptions must be non-empty, sentence-cased, and medically meaningful")
+    void openmed_description_output_is_valid() throws Exception {
+        assumeTrue(openMedAvailable,
+                "Skipping: OpenMed service not reachable at " + OPENMED_HEALTH_URL);
+
+        // Build representative inputs mirroring what MappingEnrichmentHelper feeds in.
+        // terminology field uses the "label | code" format produced by Snowstorm lookup.
+        List<org.taniwha.service.DescriptionService.ColumnEnrichmentInput> inputs = List.of(
+            new org.taniwha.service.DescriptionService.ColumnEnrichmentInput(
+                "Diagnosis",
+                "Diagnosis | 46317288002",
+                List.of(
+                    new org.taniwha.service.DescriptionService.ValueSpec("Hypertension",       null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("Diabetes Mellitus",  null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("Stroke",             null, null)
+                )
+            ),
+            new org.taniwha.service.DescriptionService.ColumnEnrichmentInput(
+                "Toilet",
+                "Ability to use toilet | 284548004",
+                List.of(
+                    new org.taniwha.service.DescriptionService.ValueSpec("0",  null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("5",  null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("10", null, null)
+                )
+            ),
+            new org.taniwha.service.DescriptionService.ColumnEnrichmentInput(
+                "PatientGender",
+                "Gender | 263495000",
+                List.of(
+                    new org.taniwha.service.DescriptionService.ValueSpec("Male",   null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("Female", null, null)
+                )
+            ),
+            new org.taniwha.service.DescriptionService.ColumnEnrichmentInput(
+                "NIHSSScore",
+                "NIH stroke scale | 450741004",
+                List.of(
+                    new org.taniwha.service.DescriptionService.ValueSpec("0",  null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("10", null, null),
+                    new org.taniwha.service.DescriptionService.ValueSpec("25", null, null)
+                )
+            )
+        );
+
+        System.out.println("\n=== OpenMed /describe_batch – live output ===");
+        long t0 = System.currentTimeMillis();
+        Map<String, org.taniwha.service.DescriptionService.EnrichmentResult> results =
+                openMedDescriptionService.describeColumns(inputs);
+        long elapsedMs = System.currentTimeMillis() - t0;
+        System.out.printf("  %d column(s) described in %d ms%n", results.size(), elapsedMs);
+
+        // ── Structural assertions ─────────────────────────────────────────────
+        assertNotNull(results, "/describe_batch must return a non-null map");
+        assertFalse(results.isEmpty(),
+                "OpenMed /describe_batch returned an empty map – service may not be functional");
+
+        List<String> violations = new ArrayList<>();
+
+        for (org.taniwha.service.DescriptionService.ColumnEnrichmentInput in : inputs) {
+            String colKey = in.colKey();
+            org.taniwha.service.DescriptionService.EnrichmentResult r = results.get(colKey);
+            if (r == null) {
+                violations.add("Missing result for column '" + colKey + "'");
+                continue;
+            }
+
+            // col_desc: non-empty, starts uppercase, ends with '.'
+            String colDesc = r.colDesc();
+            if (colDesc == null || colDesc.isBlank()) {
+                violations.add("col_desc is blank for '" + colKey + "'");
+            } else {
+                if (!Character.isUpperCase(colDesc.charAt(0)))
+                    violations.add("col_desc for '" + colKey + "' does not start with uppercase: '" + colDesc + "'");
+                if (!colDesc.endsWith(".") && !colDesc.endsWith("!") && !colDesc.endsWith("?"))
+                    violations.add("col_desc for '" + colKey + "' does not end with a sentence terminator: '" + colDesc + "'");
+            }
+            System.out.printf("  col='%-20s  col_desc='%s'%n", colKey + "'", colDesc);
+
+            // value descriptions: present for every value supplied
+            Map<String, String> valDescs = r.valueDescByValue();
+            for (org.taniwha.service.DescriptionService.ValueSpec vs : in.values()) {
+                String v = vs.v();
+                String d = valDescs == null ? null : valDescs.get(v);
+                if (d == null || d.isBlank()) {
+                    violations.add("value desc is blank for col='" + colKey + "' val='" + v + "'");
+                } else {
+                    System.out.printf("      val=%-12s  desc='%s'%n", "'" + v + "'", d);
+                    if (!d.endsWith(".") && !d.endsWith("!") && !d.endsWith("?"))
+                        violations.add("value desc for col='" + colKey + "' val='" + v
+                                + "' does not end with sentence terminator: '" + d + "'");
+                }
+            }
+        }
+
+        // ── Semantic / medical assertions ─────────────────────────────────────
+        // Toilet column with SNOMED label should produce ADL-style ordinal anchors
+        org.taniwha.service.DescriptionService.EnrichmentResult toiletResult = results.get("Toilet");
+        if (toiletResult != null && toiletResult.valueDescByValue() != null) {
+            Map<String, String> vd = toiletResult.valueDescByValue();
+            String d0  = vd.getOrDefault("0",  "").toLowerCase();
+            String d10 = vd.getOrDefault("10", "").toLowerCase();
+            if (!d0.isEmpty() && !d0.contains("dependent") && !d0.contains("lowest") && !d0.contains("absent"))
+                violations.add("Toilet value '0' should indicate dependency/low, got: '" + vd.get("0") + "'");
+            if (!d10.isEmpty() && !d10.contains("independent") && !d10.contains("highest") && !d10.contains("present"))
+                violations.add("Toilet value '10' should indicate independence/high, got: '" + vd.get("10") + "'");
+        }
+
+        // ── Write report ───────────────────────────────────────────────────────
+        Path outDir = Paths.get("target", "openmed-report");
+        Files.createDirectories(outDir);
+        String stamp = LocalDateTime.now().format(TS_FMT);
+        Path mdOut = outDir.resolve("description-report-" + stamp + ".md");
+        writeDescriptionReport(mdOut, inputs, results, elapsedMs);
+        System.out.println("\n  Report: " + mdOut);
+
+        // ── Final verdict ─────────────────────────────────────────────────────
+        violations.forEach(v -> System.out.println("  ✗ " + v));
+        assertTrue(violations.isEmpty(),
+                "OpenMed /describe_batch output has violations:\n" + String.join("\n", violations));
+        System.out.printf("%n  ✓ All %d columns have valid descriptions%n", results.size());
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -998,8 +1116,43 @@ public class OpenMedTerminologyReportTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Infrastructure utilities
+    private static void writeDescriptionReport(
+            Path out,
+            List<org.taniwha.service.DescriptionService.ColumnEnrichmentInput> inputs,
+            Map<String, org.taniwha.service.DescriptionService.EnrichmentResult> results,
+            long elapsedMs) throws IOException {
+        StringBuilder sb = new StringBuilder()
+                .append("# OpenMed Description Report\n\n| | |\n|---|---|\n")
+                .append("| Generated | ").append(LocalDateTime.now()).append(" |\n")
+                .append("| Columns | ").append(results.size()).append(" |\n")
+                .append("| Elapsed | ").append(elapsedMs).append(" ms |\n\n")
+                .append("## Column descriptions\n\n")
+                .append("| Column | Terminology input | col_desc |\n|--------|-------------------|----------|\n");
+        for (org.taniwha.service.DescriptionService.ColumnEnrichmentInput in : inputs) {
+            org.taniwha.service.DescriptionService.EnrichmentResult r = results.get(in.colKey());
+            sb.append("| `").append(in.colKey()).append("` | `")
+              .append(in.terminology() == null ? "" : in.terminology()).append("` | ")
+              .append(r == null ? "—" : r.colDesc()).append(" |\n");
+        }
+        sb.append("\n## Value descriptions\n\n");
+        for (org.taniwha.service.DescriptionService.ColumnEnrichmentInput in : inputs) {
+            org.taniwha.service.DescriptionService.EnrichmentResult r = results.get(in.colKey());
+            if (r == null || r.valueDescByValue() == null || r.valueDescByValue().isEmpty()) continue;
+            sb.append("### `").append(in.colKey()).append("`\n\n")
+              .append("| Value | Description |\n|-------|-------------|\n");
+            for (org.taniwha.service.DescriptionService.ValueSpec vs : in.values()) {
+                String d = r.valueDescByValue().getOrDefault(vs.v(), "—");
+                sb.append("| `").append(vs.v()).append("` | ").append(d).append(" |\n");
+            }
+            sb.append("\n");
+        }
+        try (OutputStream os = Files.newOutputStream(out,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            os.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+
     // -----------------------------------------------------------------------
 
     private static String httpGet(String url, int timeoutMs) throws Exception {

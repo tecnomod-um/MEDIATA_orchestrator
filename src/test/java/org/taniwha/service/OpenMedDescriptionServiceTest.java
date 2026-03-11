@@ -4,7 +4,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +14,6 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link OpenMedDescriptionService}.
@@ -25,8 +23,6 @@ import static org.mockito.Mockito.when;
 class OpenMedDescriptionServiceTest {
 
     private static final Logger logger = LoggerFactory.getLogger(OpenMedDescriptionServiceTest.class);
-
-    @Mock LLMTextGenerator llmTextGenerator;
 
     private OpenMedDescriptionService service;
 
@@ -39,7 +35,7 @@ class OpenMedDescriptionServiceTest {
     }
 
     // ====================================================================
-    // extractLabel – new "label | code" format
+    // extractLabel
     // ====================================================================
 
     @Test
@@ -106,7 +102,6 @@ class OpenMedDescriptionServiceTest {
     @Test
     @DisplayName("DescriptionService uses OpenMed when it returns results")
     void descriptionService_usesOpenMed_whenAvailable() {
-        // LLM check is not reached when OpenMed returns results - no stub needed
         OpenMedDescriptionService openMedMock = new OpenMedDescriptionService() {
             @Override
             public Map<String, DescriptionService.EnrichmentResult> describeColumns(
@@ -119,7 +114,7 @@ class OpenMedDescriptionServiceTest {
         };
 
         DescriptionService descSvc = new DescriptionService(
-                llmTextGenerator, Executors.newSingleThreadExecutor(), openMedMock);
+                openMedMock, Executors.newSingleThreadExecutor());
 
         DescriptionService.ColumnEnrichmentInput input =
                 new DescriptionService.ColumnEnrichmentInput(
@@ -138,10 +133,8 @@ class OpenMedDescriptionServiceTest {
     }
 
     @Test
-    @DisplayName("DescriptionService falls back when OpenMed returns empty")
+    @DisplayName("DescriptionService falls back to text-normalisation when OpenMed returns empty")
     void descriptionService_fallsBackWhenOpenMedEmpty() {
-        when(llmTextGenerator.isEnabled()).thenReturn(false);
-
         OpenMedDescriptionService emptyOpenMed = new OpenMedDescriptionService() {
             @Override
             public Map<String, DescriptionService.EnrichmentResult> describeColumns(
@@ -151,7 +144,7 @@ class OpenMedDescriptionServiceTest {
         };
 
         DescriptionService descSvc = new DescriptionService(
-                llmTextGenerator, Executors.newSingleThreadExecutor(), emptyOpenMed);
+                emptyOpenMed, Executors.newSingleThreadExecutor());
 
         DescriptionService.ColumnEnrichmentInput input =
                 new DescriptionService.ColumnEnrichmentInput("Diagnosis", "", List.of());
@@ -165,4 +158,3 @@ class OpenMedDescriptionServiceTest {
                 result.get("Diagnosis").colDesc());
     }
 }
-
