@@ -232,7 +232,7 @@ public class OpenMedTerminologyService {
      * @param term candidate search phrase
      * @return {@code true} if the term is worth querying in Snowstorm
      */
-    boolean isValidTerm(String term) {
+    public boolean isValidTerm(String term) {
         if (term == null || term.isBlank()) return false;
         String t = term.trim();
         if (t.length() < 2) {
@@ -274,6 +274,7 @@ public class OpenMedTerminologyService {
 
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofMillis(timeoutMs))
+                    .version(HttpClient.Version.HTTP_1_1)   // uvicorn speaks HTTP/1.1
                     .build();
 
             HttpRequest request = HttpRequest.newBuilder()
