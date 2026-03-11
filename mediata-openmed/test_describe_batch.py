@@ -4,19 +4,30 @@ Runs against the actual FastAPI app (via httpx.AsyncClient / TestClient) so
 the full routing, Pydantic validation and description-logic is exercised –
 no mocking of the endpoint internals.
 
-The NER model is intentionally NOT loaded during tests (the startup event
-fires, but the HuggingFace download is skipped in CI because the model
-isn't present).  The fallback text-normalisation path is therefore used,
-which is deterministic and fast.
+Both the NER and description models are forced to "fallback" mode so that
+tests are deterministic and fast regardless of whether the model weights are
+cached locally.  The fallback path uses text normalisation on the prompt
+phrase built by the description helpers, which produces predictable output
+("score 0 of 10 measuring ability to use toilet.", etc.).
+
+The actual generative model output (Qwen2.5-0.5B-Instruct) is verified by
+the Java integration test (MappingServiceReportTest) which runs against a
+live OpenMed server with both models loaded.
 """
 
 import pytest
 from fastapi.testclient import TestClient
 
-# Import the app after setting an env-var so the model load is skipped
 import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
+
+# Force both pipelines to fallback BEFORE the TestClient fires the startup
+# event – this prevents slow model downloads/loads in unit tests and keeps
+# the test suite deterministic.
+import main as _main_module
+_main_module._pipeline = "fallback"
+_main_module._describe_pipeline = "fallback"
 
 from main import app, _extract_label
 
@@ -412,3 +423,6 @@ def test_health_endpoint():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
+    # Both model keys must be present in the new dual-model response
+    assert "ner_model" in body
+    assert "describe_model" in body
