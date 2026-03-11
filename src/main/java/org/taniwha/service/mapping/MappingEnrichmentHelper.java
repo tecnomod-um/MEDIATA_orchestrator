@@ -450,14 +450,43 @@ class MappingEnrichmentHelper {
         if (mapping == null || mapping.getGroups() == null) return out;
 
         Set<String> seen = new HashSet<>();
+        List<DescriptionService.ValueSpec> raw = new ArrayList<>();
         for (SuggestedGroupDTO group : mapping.getGroups()) {
             if (group == null || group.getValues() == null) continue;
             for (SuggestedValueDTO value : group.getValues()) {
                 if (value == null) continue;
                 String name = StringUtil.safeTrim(value.getName());
                 if (name.isEmpty() || !seen.add(name)) continue;
-                out.add(new DescriptionService.ValueSpec(name, extractMinFromValue(value), extractMaxFromValue(value)));
-                if (out.size() >= 10) return out;
+                raw.add(new DescriptionService.ValueSpec(name, extractMinFromValue(value), extractMaxFromValue(value)));
+                if (raw.size() >= 10) break;
+            }
+            if (raw.size() >= 10) break;
+        }
+
+        // Compute the scale min and max from the numeric value names so that Python's
+        // /describe_batch can anchor ordinal descriptions correctly (e.g. "completely
+        // dependent" at 0 and "fully independent" at 10 for a Barthel 0-10 item).
+        double scaleMin = Double.POSITIVE_INFINITY;
+        double scaleMax = Double.NEGATIVE_INFINITY;
+        for (DescriptionService.ValueSpec vs : raw) {
+            try {
+                double d = Double.parseDouble(vs.v());
+                if (d < scaleMin) scaleMin = d;
+                if (d > scaleMax) scaleMax = d;
+            } catch (NumberFormatException ignored) {}
+        }
+        boolean hasNumericScale = scaleMin < scaleMax;
+        String scaleMinStr = hasNumericScale ? String.valueOf((long) scaleMin) : null;
+        String scaleMaxStr = hasNumericScale ? String.valueOf((long) scaleMax) : null;
+
+        for (DescriptionService.ValueSpec vs : raw) {
+            try {
+                Double.parseDouble(vs.v());
+                // Numeric value: use the scale min/max for full context
+                out.add(new DescriptionService.ValueSpec(vs.v(), scaleMinStr, scaleMaxStr));
+            } catch (NumberFormatException e) {
+                // Non-numeric value: keep the interval bounds as-is (may be null)
+                out.add(vs);
             }
         }
         return out;

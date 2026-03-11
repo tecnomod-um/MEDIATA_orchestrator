@@ -251,19 +251,68 @@ class TestNumericValues:
             f"Expected 'independent' for value 10, got: {descs['10']!r}"
         )
 
-    def test_binary_adl_anchors(self):
-        """Binary (0/1) ADL column gets absent/present anchors."""
+    def test_adl_column_with_min_max_barthel_item(self):
+        """Barthel item column (0-10) with min/max → completely dependent / fully independent."""
         data = _describe([{
-            "col_key": "bathing",
-            "terminology_label": "bathing",
-            "values": [{"v": "0"}, {"v": "1"}],
+            "col_key": "ToiletBART1",
+            "terminology_label": "Ability to use toilet | 284548004",
+            "values": [
+                {"v": "0",  "min": "0", "max": "10"},
+                {"v": "5",  "min": "0", "max": "10"},
+                {"v": "10", "min": "0", "max": "10"},
+            ],
         }])
         descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
-        assert "absent" in descs["0"], (
-            f"Expected 'absent' for 0, got: {descs['0']!r}"
+        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
+            f"Expected dependency description for 0, got: {descs['0']!r}"
         )
-        assert "present" in descs["1"], (
-            f"Expected 'present' for 1, got: {descs['1']!r}"
+        assert "fully independent" in descs["10"] or "independent" in descs["10"], (
+            f"Expected independence description for 10, got: {descs['10']!r}"
+        )
+
+    def test_barthel_total_score_0_to_100(self):
+        """Barthel total (0-100) with min/max: 0→completely dependent, 100→fully independent."""
+        data = _describe([{
+            "col_key": "TOTALBARTHEL",
+            "terminology_label": "Barthel index | 273302005",
+            "values": [
+                {"v": "0",   "min": "0", "max": "100"},
+                {"v": "50",  "min": "0", "max": "100"},
+                {"v": "100", "min": "0", "max": "100"},
+            ],
+        }])
+        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
+        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
+            f"Expected 'completely dependent' for 0, got: {descs['0']!r}"
+        )
+        assert "fully independent" in descs["100"] or "independent" in descs["100"], (
+            f"Expected 'fully independent' for 100, got: {descs['100']!r}"
+        )
+        # SNOMED label 'Barthel index' must be extracted, not raw SNOMED string
+        col_desc = data["columns"][0]["col_desc"]
+        assert "273302005" not in col_desc, (
+            f"SNOMED code must not appear in col_desc, got: {col_desc!r}"
+        )
+        assert "Barthel" in col_desc, (
+            f"Expected 'Barthel' in col_desc, got: {col_desc!r}"
+        )
+
+    def test_bathing_binary_with_min_max(self):
+        """Binary Bathing column (0-5) with min/max → completely dependent / fully independent."""
+        data = _describe([{
+            "col_key": "BathingBART1",
+            "terminology_label": "Bathing | 284546000",
+            "values": [
+                {"v": "0", "min": "0", "max": "5"},
+                {"v": "5", "min": "0", "max": "5"},
+            ],
+        }])
+        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
+        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
+            f"Expected dependency for 0, got: {descs['0']!r}"
+        )
+        assert "fully independent" in descs["5"] or "independent" in descs["5"], (
+            f"Expected independence for 5, got: {descs['5']!r}"
         )
 
 

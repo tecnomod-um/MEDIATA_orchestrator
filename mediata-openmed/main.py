@@ -121,6 +121,8 @@ class BatchResponse(BaseModel):
 class ValueDescInput(BaseModel):
     v: str
     terminology_label: Optional[str] = None
+    min: Optional[str] = None   # numeric range lower bound (from ValueSpec.min)
+    max: Optional[str] = None   # numeric range upper bound (from ValueSpec.max)
 
 
 class ColumnDescInput(BaseModel):
@@ -470,17 +472,69 @@ def _sentence(text: str, fallback: str = "field") -> str:
     if s.startswith('"') and s.endswith('"') and len(s) >= 2:
         s = s[1:-1].strip()
     s = s[:1].upper() + s[1:] if s else s
-    if s and not s[-1] in ".!?":
+    if s and s[-1] not in ".!?":
         s += "."
     return s
 
 
-def _describe_numeric_value(v: str, col_desc: str, idx: int, total: int) -> str:
-    """Return an ordinal anchor description for a numeric value."""
-    if _is_adl_column(col_desc) and total in _ORDINAL_ANCHORS:
+def _describe_numeric_value(
+    v: str,
+    col_desc: str,
+    idx: int,
+    total: int,
+    scale_min: Optional[float] = None,
+    scale_max: Optional[float] = None,
+) -> str:
+    """Return a plain-language description for a numeric ordinal value.
+
+    When ``scale_min`` and ``scale_max`` are available (e.g. from the ValueSpec
+    range passed by the Java service), they are used to determine whether this
+    value represents the lowest, highest, or an intermediate point on the scale,
+    regardless of how many discrete values are in the batch.
+
+    For ADL / functional columns the endpoint anchors become clinically
+    meaningful terms (e.g. "Completely dependent", "Fully independent").
+    """
+    is_adl = _is_adl_column(col_desc)
+
+    # --- Range-aware logic when min/max are available ---
+    if scale_min is not None and scale_max is not None and scale_min < scale_max:
+        try:
+            fv = float(v)
+        except ValueError:
+            fv = None
+
+        if fv is not None:
+            at_min = abs(fv - scale_min) < 0.001
+            at_max = abs(fv - scale_max) < 0.001
+            span   = scale_max - scale_min
+
+            if is_adl:
+                if at_min:
+                    return "completely dependent"
+                if at_max:
+                    return "fully independent"
+                # Midpoint heuristic
+                if abs(fv - (scale_min + scale_max) / 2) < 0.001:
+                    return "partially dependent"
+                if fv < scale_min + span / 3:
+                    return "severely dependent"
+                if fv > scale_max - span / 3:
+                    return "mostly independent"
+                return f"score of {v} out of {int(scale_max)}"
+            else:
+                if at_min:
+                    return "lowest score"
+                if at_max:
+                    return "highest score"
+                return f"score of {v} out of {int(scale_max)}"
+
+    # --- Discrete-count logic (no min/max provided) ---
+    if is_adl and total in _ORDINAL_ANCHORS:
         anchors = _ORDINAL_ANCHORS[total]
         return anchors[idx] if idx < len(anchors) else v
-    # Generic: low / medium / high
+
+    # Generic low / high for large or unrecognised counts
     if total <= 1:
         return v
     if idx == 0:
@@ -537,9 +591,19 @@ async def describe_batch(request: DescribeBatchRequest):
                 # Use SNOMED label directly
                 d = _sentence(val_term, v)
             elif re.match(r"^-?\d+(\.\d+)?$", v):
-                # Numeric ordinal
+                # Numeric ordinal – use range context when available
                 idx = numeric_idx.get(v, 0)
-                raw_d = _describe_numeric_value(v, col_desc_raw, idx, n_numeric)
+                scale_min: Optional[float] = None
+                scale_max: Optional[float] = None
+                try:
+                    if val_info.min is not None:
+                        scale_min = float(val_info.min)
+                    if val_info.max is not None:
+                        scale_max = float(val_info.max)
+                except (ValueError, TypeError):
+                    pass
+                raw_d = _describe_numeric_value(v, col_desc_raw, idx, n_numeric,
+                                                scale_min, scale_max)
                 d = _sentence(raw_d, v)
             else:
                 # Text value: NER-assisted or normalised
