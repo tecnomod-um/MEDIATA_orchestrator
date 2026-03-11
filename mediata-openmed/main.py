@@ -460,15 +460,16 @@ def _build_value_phrase(
     scale_min: Optional[float],
     scale_max: Optional[float],
 ) -> str:
-    """Build a plain-language phrase for a numeric value using available context only.
+    """Build a contextual prompt for a **numeric** value to pass to the model.
 
-    The phrase explicitly states **what the values are measuring** (the column's
-    terminology label) so no hardcoded clinical-term lookup tables are needed.
-    The NER model (or the phrase itself) then provides the description.
+    Only uses the word "score" when an explicit ordinal scale range (min/max) is
+    known.  Without scale bounds the value could be a category code (e.g. 0=No,
+    1=Yes), so a neutral phrasing is used instead.
 
-    The format ``"score {v} of {max} measuring {col_label}"`` gives the model
-    the full context: the numeric value, the scale upper bound, and the clinical
-    concept being measured.
+    The phrase is intended as the model's **input prompt**.  The model processes
+    it and generates the clinical description (e.g. "dependent", "independent").
+    In fallback mode (no model) the normalised phrase itself is returned as the
+    description.
 
     Examples
     --------
@@ -478,8 +479,8 @@ def _build_value_phrase(
     col_label="Barthel index", v="50", min=0, max=100
       → "score 50 of 100 measuring Barthel index"
 
-    col_label="pain level", v="3", no scale
-      → "score 3 measuring pain level"
+    col_label="Gender", v="1", no scale   (category code)
+      → "1 as a value of Gender"
     """
     label = (col_label or "").strip()
 
@@ -489,9 +490,34 @@ def _build_value_phrase(
             return f"score {v} of {max_str} measuring {label}"
         return f"score {v} of {max_str}"
 
+    # No scale bounds → may be a category code; use neutral phrasing
     if label:
-        return f"score {v} measuring {label}"
+        return f"{v} as a value of {label}"
     return f"value {v}"
+
+
+def _build_category_phrase(v: str, col_label: str) -> str:
+    """Build a contextual prompt for a **text/categorical** value to pass to the model.
+
+    The phrase identifies the value as a category of the column concept so the
+    model can infer the appropriate clinical description without any hardcoded
+    term mappings.
+
+    The phrase is intended as the model's **input prompt**.  In fallback mode
+    the normalised phrase is used as the description.
+
+    Examples
+    --------
+    col_label="Stroke", v="Ischemic"
+      → "Ischemic as a category of Stroke"
+
+    col_label="Gender", v="Male"
+      → "Male as a category of Gender"
+    """
+    label = (col_label or "").strip()
+    if label:
+        return f"{v} as a category of {label}"
+    return v
 
 
 @app.post("/describe_batch", response_model=DescribeBatchResponse)
@@ -503,15 +529,20 @@ async def describe_batch(request: DescribeBatchRequest):
     - **col_desc**: SNOMED terminology label when available; otherwise normalise
       the column key.
     - **values[i].d**:
-        - If a SNOMED terminology label is provided for the value, use it directly.
-        - If the value is numeric, build a context phrase that explicitly states
-          what the values are measuring:
-          ``"score {v} of {max} measuring {col_label}"``
-          No hardcoded clinical-term lookup tables are used; the description is
-          derived entirely from the column's terminology label, the numeric value,
-          and the optional scale range (min/max).
-        - If the value is text, run NER with column context to extract the best
-          biomedical term; fall back to text normalisation.
+        1. If a SNOMED terminology label is provided for the value, use it directly.
+        2. If the value is numeric **and** scale bounds (min/max) are known, build
+           an ordinal score prompt and pass it to the model:
+           ``"score {v} of {max} measuring {col_label}"``
+        3. If the value is numeric **without** scale bounds (could be a category
+           code), build a neutral value prompt and pass it to the model:
+           ``"{v} as a value of {col_label}"``
+        4. If the value is text/categorical, build a category prompt and pass it
+           to the model: ``"{v} as a category of {col_label}"``
+
+    In all cases the contextual phrase is the **model's input prompt**.  The
+    model generates the clinical description (e.g. "dependent", "independent",
+    "male", "ischemic stroke").  When the model is unavailable the normalised
+    prompt phrase is returned as the description.
     """
     pipe = _load_model_once()
     t0 = time.time()
@@ -540,8 +571,9 @@ async def describe_batch(request: DescribeBatchRequest):
                 d = _sentence(val_term, v)
 
             elif re.match(r"^-?\d+(\.\d+)?$", v):
-                # Numeric value: build a contextual phrase that states what the
-                # value is measuring.  No hardcoded clinical terms are used.
+                # Numeric value: build a contextual prompt and pass it to the model.
+                # Only use "score" phrasing when an explicit ordinal range is known;
+                # without it the value may be a category code (0=No, 1=Yes, …).
                 scale_min: Optional[float] = None
                 scale_max: Optional[float] = None
                 try:
@@ -551,19 +583,17 @@ async def describe_batch(request: DescribeBatchRequest):
                         scale_max = float(val_info.max)
                 except (ValueError, TypeError):
                     pass
-                phrase = _build_value_phrase(v, col_desc_raw, scale_min, scale_max)
-                d = _sentence(phrase, v)
+                prompt = _build_value_phrase(v, col_desc_raw, scale_min, scale_max)
+                inferred = _infer_term(prompt, pipe)
+                d = _sentence(inferred if inferred else prompt, v)
 
             else:
-                # Text value: run NER with column context so the model knows
-                # what these values are measuring.
-                context_phrase = f"{v} {col_desc_raw}" if col_desc_raw else v
-                inferred = _infer_term(context_phrase, pipe)
-                # Keep only the value-level NER result (not the full context phrase)
-                # unless NER returned nothing useful.
-                if not inferred or inferred == _normalise(context_phrase):
-                    inferred = _infer_term(v, pipe) or _normalise(v)
-                d = _sentence(inferred, v)
+                # Text/categorical value: build a category prompt and pass it to
+                # the model.  The model infers the clinical description from the
+                # value and its column context.
+                prompt = _build_category_phrase(v, col_desc_raw)
+                inferred = _infer_term(prompt, pipe)
+                d = _sentence(inferred if inferred else _normalise(v), v)
 
             value_descs.append(ValueDesc(v=v, d=d))
 

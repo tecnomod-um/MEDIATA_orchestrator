@@ -211,8 +211,10 @@ class TestFallbackNormalisation:
             "values": [{"v": "primary_school"}],
         }])
         vd = data["columns"][0]["values"][0]
-        assert vd["d"].lower().startswith("primary"), (
-            f"Expected 'primary school' normalised, got: {vd['d']!r}"
+        # Category phrase: "Primary school as a category of education level."
+        # The value token must appear in the description
+        assert "primary" in vd["d"].lower(), (
+            f"Expected 'primary' in normalised category desc, got: {vd['d']!r}"
         )
 
 
@@ -222,7 +224,7 @@ class TestFallbackNormalisation:
 
 class TestNumericValues:
     def test_numeric_values_get_contextual_descs(self):
-        """Numeric values should get non-empty descriptions that include the value itself."""
+        """Numeric values without scale bounds are treated as value codes – not 'scores'."""
         data = _describe([{
             "col_key": "Score",
             "values": [{"v": "0"}, {"v": "1"}, {"v": "2"}],
@@ -235,26 +237,42 @@ class TestNumericValues:
                 f"Expected value {vd['v']!r} to appear in description, got: {vd['d']!r}"
             )
 
-    def test_adl_column_descriptions_contain_value_and_label(self):
-        """Toilet column: descriptions state what the values measure and include the value."""
+    def test_numeric_without_scale_uses_value_phrase_not_score(self):
+        """Numeric values without min/max must NOT say 'score' (could be category codes)."""
+        data = _describe([{
+            "col_key": "Gender",
+            "values": [{"v": "1"}, {"v": "2"}],
+        }])
+        for vd in data["columns"][0]["values"]:
+            assert vd["d"].lower().startswith("score") is False, (
+                f"Value without scale bounds must not say 'score', got: {vd['d']!r}"
+            )
+            assert vd["v"] in vd["d"], (
+                f"Expected value {vd['v']!r} in description, got: {vd['d']!r}"
+            )
+
+    def test_adl_column_without_scale_uses_neutral_phrase(self):
+        """Toilet column without min/max → neutral value phrase, not score phrase."""
         data = _describe([{
             "col_key": "Toilet",
             "terminology_label": "Ability to use toilet | 284548004",
             "values": [{"v": "0"}, {"v": "5"}, {"v": "10"}],
         }])
         descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
-        # Each description must reference the value being described
         for val_str, desc in descs.items():
             assert val_str in desc, (
                 f"Expected value {val_str!r} in description, got: {desc!r}"
             )
-        # The column label (or a key part of it) should appear in the description
+            assert desc.lower().startswith("score") is False, (
+                f"Without scale bounds must not say 'score', got: {desc!r}"
+            )
+        # The column label should appear in the description
         assert any("toilet" in d.lower() for d in descs.values()), (
             "Expected 'toilet' to appear in at least one value description"
         )
 
-    def test_adl_column_with_min_max_includes_scale_context(self):
-        """Barthel item column (0-10) with min/max: descriptions state the scale context."""
+    def test_adl_column_with_min_max_uses_score_phrase(self):
+        """Barthel item (0-10) with min/max → score phrase including value, max and label."""
         data = _describe([{
             "col_key": "ToiletBART1",
             "terminology_label": "Ability to use toilet | 284548004",
@@ -265,7 +283,6 @@ class TestNumericValues:
             ],
         }])
         descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
-        # Each description must contain the numeric value and the scale maximum
         for val_str, desc in descs.items():
             assert val_str in desc, (
                 f"Expected value {val_str!r} in description, got: {desc!r}"
@@ -279,7 +296,7 @@ class TestNumericValues:
         )
 
     def test_barthel_total_score_0_to_100_context(self):
-        """Barthel total (0-100): descriptions state value, scale max and column label."""
+        """Barthel total (0-100): descriptions include value, scale max and column label."""
         data = _describe([{
             "col_key": "TOTALBARTHEL",
             "terminology_label": "Barthel index | 273302005",
@@ -290,14 +307,12 @@ class TestNumericValues:
             ],
         }])
         descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
-        # Each value's description includes the value itself and scale max
         assert "0" in descs["0"] and "100" in descs["0"], (
             f"Expected '0' and '100' in description for 0, got: {descs['0']!r}"
         )
         assert "100" in descs["100"], (
             f"Expected '100' in description for 100, got: {descs['100']!r}"
         )
-        # SNOMED code must NOT appear; the label should
         col_desc = data["columns"][0]["col_desc"]
         assert "273302005" not in col_desc, (
             f"SNOMED code must not appear in col_desc, got: {col_desc!r}"
@@ -305,7 +320,6 @@ class TestNumericValues:
         assert "Barthel" in col_desc, (
             f"Expected 'Barthel' in col_desc, got: {col_desc!r}"
         )
-        # Descriptions should mention what is being measured
         assert "barthel" in descs["0"].lower(), (
             f"Expected 'barthel' in description for 0, got: {descs['0']!r}"
         )
@@ -329,6 +343,63 @@ class TestNumericValues:
         )
         assert "bathing" in descs["0"].lower(), (
             f"Expected 'bathing' in description for 0, got: {descs['0']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Categorical (text) values
+# ---------------------------------------------------------------------------
+
+class TestCategoricalValues:
+    def test_text_categories_include_column_context(self):
+        """Text values are treated as categories – column label appears in description."""
+        data = _describe([{
+            "col_key": "StrokeType",
+            "terminology_label": "Stroke | 230690007",
+            "values": [{"v": "Ischemic"}, {"v": "Hemorrhagic"}],
+        }])
+        for vd in data["columns"][0]["values"]:
+            assert "stroke" in vd["d"].lower(), (
+                f"Expected 'stroke' (column context) in category description, got: {vd['d']!r}"
+            )
+
+    def test_text_categories_sentence_format(self):
+        """Category descriptions must be valid sentences."""
+        data = _describe([{
+            "col_key": "Status",
+            "values": [{"v": "Yes"}, {"v": "No"}],
+        }])
+        for vd in data["columns"][0]["values"]:
+            assert vd["d"][0].isupper(), f"Must start uppercase: {vd['d']!r}"
+            assert vd["d"].endswith("."), f"Must end with period: {vd['d']!r}"
+
+    def test_text_categories_no_hardcoded_terms(self):
+        """Category descriptions are derived from context, not hardcoded lookup tables."""
+        data = _describe([{
+            "col_key": "educationLevel",
+            "values": [{"v": "primary_school"}, {"v": "university"}],
+        }])
+        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
+        # 'education' (from col_key) should appear in the descriptions
+        assert "education" in descs["primary_school"], (
+            f"Expected 'education' in description for 'primary_school', got: {descs['primary_school']!r}"
+        )
+        assert "education" in descs["university"], (
+            f"Expected 'education' in description for 'university', got: {descs['university']!r}"
+        )
+
+    def test_boolean_text_categories_include_context(self):
+        """Yes/No values include column context so they are distinguishable."""
+        data = _describe([{
+            "col_key": "HasDiabetes",
+            "values": [{"v": "Yes"}, {"v": "No"}],
+        }])
+        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
+        assert "diabetes" in descs["Yes"] or "has diabetes" in descs["Yes"], (
+            f"Expected column context in 'Yes' description, got: {descs['Yes']!r}"
+        )
+        assert "diabetes" in descs["No"] or "has diabetes" in descs["No"], (
+            f"Expected column context in 'No' description, got: {descs['No']!r}"
         )
 
 
