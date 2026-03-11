@@ -147,13 +147,19 @@ public class MappingServiceReportTest {
                 EmbeddingService embeddingService,
                 TerminologyLookupService terminologyLookupService,
                 TerminologyTermInferenceService terminologyTermInferenceService,
+                org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                 org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
-                    terminologyTermInferenceService, descriptionGenerator,
+                    terminologyTermInferenceService, openMedTerminologyService, descriptionGenerator,
                     valueMappingBuilder, objectMapper, mappingSettings);
+        }
+
+        @Bean
+        public org.taniwha.service.OpenMedTerminologyService openMedTerminologyService(RDFService rdfService) {
+            return new org.taniwha.service.OpenMedTerminologyService(rdfService);
         }
 
         @Bean
