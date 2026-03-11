@@ -2,17 +2,16 @@
 
 A lightweight FastAPI service that provides two distinct capabilities:
 
-1. **SNOMED term extraction** (``/batch``): uses a biomedical NER model
-   (``d4data/biomedical-ner-all``) to extract medical entity names suitable
-   for Snowstorm SNOMED CT lookup.
+1. **SNOMED term extraction** (``/infer_batch``): uses a biomedical NER model
+   (``OpenMed/OpenMed-NER-DiseaseDetect-SuperClinical-434M``) to extract
+   medical entity names suitable for Snowstorm SNOMED CT lookup.
 
-2. **Value description generation** (``/describe_batch``): uses a small
-   instruction-tuned generative LLM (``Qwen/Qwen2.5-0.5B-Instruct``) to
-   produce short, human-readable clinical descriptions from contextual
-   prompts.  For example, the prompt
+2. **Value description generation** (``/describe_batch``): uses
+   ``OpenMeditron/Meditron3-Gemma2-2B``, a Gemma2-based medical LLM
+   fine-tuned on clinical data, to produce short clinical descriptions from
+   contextual prompts.  For example:
    ``"score 0 of 10 measuring Ability to use toilet"``
-   is passed to the generative model which produces a description such as
-   ``"Low ability to use toilet"`` or similar.
+   → ``"Unable to use toilet independently"``
 
 When either model cannot be loaded, the service falls back to simple
 camelCase / snake_case text normalisation so it always returns a usable
@@ -20,6 +19,7 @@ result.
 """
 
 import logging
+import os
 import re
 import time
 from typing import Dict, List, Optional
@@ -130,9 +130,12 @@ _DESCRIBE_PROMPT_TEMPLATE = (
 def _load_describe_model_once():
     """Load the OpenMeditron generative LLM used to generate value descriptions.
 
-    Returns a ``(tokenizer, model)`` tuple on success, or the string
-    ``"fallback"`` when the model cannot be loaded.  The fallback path
+    Returns a ``(tokenizer, model, stop_token_ids)`` tuple on success, or the
+    string ``"fallback"`` when the model cannot be loaded.  The fallback path
     uses normalised phrase text as the description.
+
+    ``stop_token_ids`` is a list containing the newline, comma, and EOS token
+    IDs so generation stops naturally at phrase boundaries.
     """
     global _describe_pipeline
     if _describe_pipeline is not None:
@@ -142,6 +145,13 @@ def _load_describe_model_once():
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        # Use all available CPU cores for faster matrix multiplications.
+        # Falls back to 4 if os.cpu_count() returns None (rare, e.g. inside
+        # certain container environments).
+        n_threads = os.cpu_count() or 4
+        torch.set_num_threads(n_threads)
+        logger.info("[OpenMed] Using %d CPU threads for description model", n_threads)
+
         logger.info("[OpenMed] Loading description model: %s", DESCRIBE_MODEL_NAME)
         t0 = time.time()
         tok = AutoTokenizer.from_pretrained(DESCRIBE_MODEL_NAME)
@@ -149,7 +159,22 @@ def _load_describe_model_once():
             DESCRIBE_MODEL_NAME, dtype=torch.bfloat16
         )
         mdl.eval()
-        _describe_pipeline = (tok, mdl)
+
+        # Compute stopping token IDs from the loaded tokenizer so the model
+        # stops at natural phrase boundaries (newline or comma) rather than
+        # always generating the full max_new_tokens budget.
+        stop_ids: List[int] = []
+        for ch in ("\n", ","):
+            ids = tok.encode(ch, add_special_tokens=False)
+            stop_ids.extend(ids)
+        if tok.eos_token_id is not None:
+            stop_ids.append(tok.eos_token_id)
+        # Deduplicate and remove UNK.
+        unk = tok.unk_token_id
+        stop_ids = list({sid for sid in stop_ids if sid is not None and sid != unk})
+        logger.info("[OpenMed] Stop token IDs: %s", stop_ids)
+
+        _describe_pipeline = (tok, mdl, stop_ids)
         logger.info("[OpenMed] Description model loaded in %.1fs", time.time() - t0)
 
     except (ImportError, OSError, RuntimeError, EnvironmentError) as exc:
@@ -178,6 +203,13 @@ def _generate_desc(prompt: str, pipe) -> str:
 
     Falls back to normalised prompt text when the model is unavailable.
 
+    Optimisations applied
+    ---------------------
+    - ``torch.inference_mode()`` instead of ``no_grad()`` (no autograd tracking).
+    - ``eos_token_id`` includes newline and comma tokens so the model stops at
+      natural phrase boundaries rather than running to ``max_new_tokens``.
+    - ``max_new_tokens=12`` (2-6 words need at most ~8-10 Gemma2 tokens).
+
     Examples (with model loaded)
     ----------------------------
     prompt="score 0 of 10 measuring Ability to use toilet"
@@ -202,19 +234,27 @@ def _generate_desc(prompt: str, pipe) -> str:
 
     try:
         import torch
-        tok, mdl = pipe
+        tok, mdl, stop_ids = pipe
         # Meditron3-Gemma2-2B does not support a system role; embed the
         # instruction directly in the user turn.
         user_content = _DESCRIBE_PROMPT_TEMPLATE.format(phrase=prompt.strip())
         msgs = [{"role": "user", "content": user_content}]
         text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         ids = tok([text], return_tensors="pt")
-        with torch.no_grad():
-            out = mdl.generate(**ids, max_new_tokens=20, do_sample=False)
+        with torch.inference_mode():
+            out = mdl.generate(
+                **ids,
+                # 2-6 word clinical phrases need at most ~8-10 Gemma2 tokens;
+                # 12 gives headroom while preventing edge-case runaway output.
+                max_new_tokens=12,
+                do_sample=False,
+                pad_token_id=tok.pad_token_id,
+                eos_token_id=stop_ids if stop_ids else None,
+            )
         gen_ids = out[0][ids["input_ids"].shape[-1]:]
         result = tok.decode(gen_ids, skip_special_tokens=True).strip()
-        # Trim to the first sentence/line.
-        result = re.split(r"[\n.]", result)[0].strip()
+        # Trim to the first sentence/line (belt-and-suspenders after stop tokens).
+        result = re.split(r"[\n.,]", result)[0].strip()
         alpha_chars = sum(1 for c in result if c.isalpha())
         if result and alpha_chars >= 2:
             logger.debug("[OpenMed] Generated desc for '%s' → '%s'", prompt[:40], result)
