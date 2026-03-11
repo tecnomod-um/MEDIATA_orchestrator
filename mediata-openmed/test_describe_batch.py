@@ -221,38 +221,40 @@ class TestFallbackNormalisation:
 # ---------------------------------------------------------------------------
 
 class TestNumericValues:
-    def test_numeric_values_get_ordinal_descs(self):
-        """Numeric values should get non-empty, meaningful descriptions."""
+    def test_numeric_values_get_contextual_descs(self):
+        """Numeric values should get non-empty descriptions that include the value itself."""
         data = _describe([{
             "col_key": "Score",
             "values": [{"v": "0"}, {"v": "1"}, {"v": "2"}],
         }])
         descs = [vd["d"] for vd in data["columns"][0]["values"]]
         assert all(d for d in descs), "Each numeric value should have a non-empty description"
-        assert descs[0].lower().startswith("lowest"), (
-            f"Expected 'lowest value' for first, got: {descs[0]!r}"
-        )
-        assert descs[-1].lower().startswith("highest"), (
-            f"Expected 'highest value' for last, got: {descs[-1]!r}"
-        )
+        # Each description must contain the numeric value
+        for vd in data["columns"][0]["values"]:
+            assert vd["v"] in vd["d"], (
+                f"Expected value {vd['v']!r} to appear in description, got: {vd['d']!r}"
+            )
 
-    def test_adl_column_barthel_anchors(self):
-        """Toilet column (via SNOMED label) with 3 numeric values: dependent/help/independent."""
+    def test_adl_column_descriptions_contain_value_and_label(self):
+        """Toilet column: descriptions state what the values measure and include the value."""
         data = _describe([{
             "col_key": "Toilet",
             "terminology_label": "Ability to use toilet | 284548004",
             "values": [{"v": "0"}, {"v": "5"}, {"v": "10"}],
         }])
-        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
-        assert "dependent" in descs["0"], (
-            f"Expected 'dependent' for value 0, got: {descs['0']!r}"
-        )
-        assert "independent" in descs["10"], (
-            f"Expected 'independent' for value 10, got: {descs['10']!r}"
+        descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
+        # Each description must reference the value being described
+        for val_str, desc in descs.items():
+            assert val_str in desc, (
+                f"Expected value {val_str!r} in description, got: {desc!r}"
+            )
+        # The column label (or a key part of it) should appear in the description
+        assert any("toilet" in d.lower() for d in descs.values()), (
+            "Expected 'toilet' to appear in at least one value description"
         )
 
-    def test_adl_column_with_min_max_barthel_item(self):
-        """Barthel item column (0-10) with min/max → completely dependent / fully independent."""
+    def test_adl_column_with_min_max_includes_scale_context(self):
+        """Barthel item column (0-10) with min/max: descriptions state the scale context."""
         data = _describe([{
             "col_key": "ToiletBART1",
             "terminology_label": "Ability to use toilet | 284548004",
@@ -262,16 +264,22 @@ class TestNumericValues:
                 {"v": "10", "min": "0", "max": "10"},
             ],
         }])
-        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
-        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
-            f"Expected dependency description for 0, got: {descs['0']!r}"
-        )
-        assert "fully independent" in descs["10"] or "independent" in descs["10"], (
-            f"Expected independence description for 10, got: {descs['10']!r}"
+        descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
+        # Each description must contain the numeric value and the scale maximum
+        for val_str, desc in descs.items():
+            assert val_str in desc, (
+                f"Expected value {val_str!r} in description, got: {desc!r}"
+            )
+            assert "10" in desc, (
+                f"Expected scale max '10' in description for {val_str!r}, got: {desc!r}"
+            )
+        # Descriptions should explicitly name what is being measured
+        assert "toilet" in descs["0"].lower(), (
+            f"Expected 'toilet' in description for 0, got: {descs['0']!r}"
         )
 
-    def test_barthel_total_score_0_to_100(self):
-        """Barthel total (0-100) with min/max: 0→completely dependent, 100→fully independent."""
+    def test_barthel_total_score_0_to_100_context(self):
+        """Barthel total (0-100): descriptions state value, scale max and column label."""
         data = _describe([{
             "col_key": "TOTALBARTHEL",
             "terminology_label": "Barthel index | 273302005",
@@ -281,14 +289,15 @@ class TestNumericValues:
                 {"v": "100", "min": "0", "max": "100"},
             ],
         }])
-        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
-        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
-            f"Expected 'completely dependent' for 0, got: {descs['0']!r}"
+        descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
+        # Each value's description includes the value itself and scale max
+        assert "0" in descs["0"] and "100" in descs["0"], (
+            f"Expected '0' and '100' in description for 0, got: {descs['0']!r}"
         )
-        assert "fully independent" in descs["100"] or "independent" in descs["100"], (
-            f"Expected 'fully independent' for 100, got: {descs['100']!r}"
+        assert "100" in descs["100"], (
+            f"Expected '100' in description for 100, got: {descs['100']!r}"
         )
-        # SNOMED label 'Barthel index' must be extracted, not raw SNOMED string
+        # SNOMED code must NOT appear; the label should
         col_desc = data["columns"][0]["col_desc"]
         assert "273302005" not in col_desc, (
             f"SNOMED code must not appear in col_desc, got: {col_desc!r}"
@@ -296,9 +305,13 @@ class TestNumericValues:
         assert "Barthel" in col_desc, (
             f"Expected 'Barthel' in col_desc, got: {col_desc!r}"
         )
+        # Descriptions should mention what is being measured
+        assert "barthel" in descs["0"].lower(), (
+            f"Expected 'barthel' in description for 0, got: {descs['0']!r}"
+        )
 
-    def test_bathing_binary_with_min_max(self):
-        """Binary Bathing column (0-5) with min/max → completely dependent / fully independent."""
+    def test_bathing_binary_with_scale_context(self):
+        """Binary Bathing column (0-5): descriptions include value, scale max and label."""
         data = _describe([{
             "col_key": "BathingBART1",
             "terminology_label": "Bathing | 284546000",
@@ -307,12 +320,15 @@ class TestNumericValues:
                 {"v": "5", "min": "0", "max": "5"},
             ],
         }])
-        descs = {vd["v"]: vd["d"].lower() for vd in data["columns"][0]["values"]}
-        assert "completely dependent" in descs["0"] or "dependent" in descs["0"], (
-            f"Expected dependency for 0, got: {descs['0']!r}"
+        descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
+        assert "0" in descs["0"] and "5" in descs["0"], (
+            f"Expected '0' and '5' in description for 0, got: {descs['0']!r}"
         )
-        assert "fully independent" in descs["5"] or "independent" in descs["5"], (
-            f"Expected independence for 5, got: {descs['5']!r}"
+        assert "5" in descs["5"], (
+            f"Expected '5' in description for 5, got: {descs['5']!r}"
+        )
+        assert "bathing" in descs["0"].lower(), (
+            f"Expected 'bathing' in description for 0, got: {descs['0']!r}"
         )
 
 

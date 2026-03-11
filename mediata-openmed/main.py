@@ -443,29 +443,6 @@ async def infer_batch(request: BatchRequest):
 # Description helpers
 # ---------------------------------------------------------------------------
 
-# ADL / functional scale keywords that commonly use 0-5-10 / 0-1 ordinal anchors.
-_ADL_KEYWORDS = {
-    "toilet", "toileting", "bathing", "dressing", "feeding", "transfer",
-    "mobility", "stairs", "continence", "grooming", "hygiene", "walking",
-    "barthel", "fim", "katz", "adl", "functional",
-}
-
-# Common ordinal scale anchors keyed by (value, total_levels).
-_ORDINAL_ANCHORS: Dict[int, List[str]] = {
-    2: ["absent", "present"],
-    3: ["dependent", "needs help", "independent"],
-    4: ["total assistance", "moderate assistance", "minimal assistance", "independent"],
-    5: ["total dependence", "maximum assistance", "moderate assistance",
-        "minimal assistance", "independent"],
-}
-
-
-def _is_adl_column(col_desc: str) -> bool:
-    """Return True when the column description suggests an ADL / functional scale."""
-    text = col_desc.lower()
-    return any(kw in text for kw in _ADL_KEYWORDS)
-
-
 def _sentence(text: str, fallback: str = "field") -> str:
     """Capitalise and ensure the text ends with a full stop."""
     s = (text or "").strip() or fallback.strip() or "field"
@@ -477,71 +454,44 @@ def _sentence(text: str, fallback: str = "field") -> str:
     return s
 
 
-def _describe_numeric_value(
+def _build_value_phrase(
     v: str,
-    col_desc: str,
-    idx: int,
-    total: int,
-    scale_min: Optional[float] = None,
-    scale_max: Optional[float] = None,
+    col_label: str,
+    scale_min: Optional[float],
+    scale_max: Optional[float],
 ) -> str:
-    """Return a plain-language description for a numeric ordinal value.
+    """Build a plain-language phrase for a numeric value using available context only.
 
-    When ``scale_min`` and ``scale_max`` are available (e.g. from the ValueSpec
-    range passed by the Java service), they are used to determine whether this
-    value represents the lowest, highest, or an intermediate point on the scale,
-    regardless of how many discrete values are in the batch.
+    The phrase explicitly states **what the values are measuring** (the column's
+    terminology label) so no hardcoded clinical-term lookup tables are needed.
+    The NER model (or the phrase itself) then provides the description.
 
-    For ADL / functional columns the endpoint anchors become clinically
-    meaningful terms (e.g. "Completely dependent", "Fully independent").
+    The format ``"score {v} of {max} measuring {col_label}"`` gives the model
+    the full context: the numeric value, the scale upper bound, and the clinical
+    concept being measured.
+
+    Examples
+    --------
+    col_label="Ability to use toilet", v="0", min=0, max=10
+      → "score 0 of 10 measuring Ability to use toilet"
+
+    col_label="Barthel index", v="50", min=0, max=100
+      → "score 50 of 100 measuring Barthel index"
+
+    col_label="pain level", v="3", no scale
+      → "score 3 measuring pain level"
     """
-    is_adl = _is_adl_column(col_desc)
+    label = (col_label or "").strip()
 
-    # --- Range-aware logic when min/max are available ---
-    if scale_min is not None and scale_max is not None and scale_min < scale_max:
-        try:
-            fv = float(v)
-        except ValueError:
-            fv = None
+    if scale_min is not None and scale_max is not None and scale_max > scale_min:
+        max_str = str(int(scale_max)) if scale_max == int(scale_max) else str(scale_max)
+        if label:
+            return f"score {v} of {max_str} measuring {label}"
+        return f"score {v} of {max_str}"
 
-        if fv is not None:
-            at_min = abs(fv - scale_min) < 0.001
-            at_max = abs(fv - scale_max) < 0.001
-            span   = scale_max - scale_min
-
-            if is_adl:
-                if at_min:
-                    return "completely dependent"
-                if at_max:
-                    return "fully independent"
-                # Midpoint heuristic
-                if abs(fv - (scale_min + scale_max) / 2) < 0.001:
-                    return "partially dependent"
-                if fv < scale_min + span / 3:
-                    return "severely dependent"
-                if fv > scale_max - span / 3:
-                    return "mostly independent"
-                return f"score of {v} out of {int(scale_max)}"
-            else:
-                if at_min:
-                    return "lowest score"
-                if at_max:
-                    return "highest score"
-                return f"score of {v} out of {int(scale_max)}"
-
-    # --- Discrete-count logic (no min/max provided) ---
-    if is_adl and total in _ORDINAL_ANCHORS:
-        anchors = _ORDINAL_ANCHORS[total]
-        return anchors[idx] if idx < len(anchors) else v
-
-    # Generic low / high for large or unrecognised counts
-    if total <= 1:
-        return v
-    if idx == 0:
-        return "lowest value"
-    if idx == total - 1:
-        return "highest value"
-    return "intermediate value"
+    if label:
+        return f"score {v} measuring {label}"
+    return f"value {v}"
 
 
 @app.post("/describe_batch", response_model=DescribeBatchResponse)
@@ -549,14 +499,19 @@ async def describe_batch(request: DescribeBatchRequest):
     """Generate plain-language descriptions for column headers and their values.
 
     For each ``ColumnDescInput``:
-    - ``col_desc``: use the SNOMED terminology label when available; otherwise
-      normalise the column key.
-    - ``values[i].d``: use the value's SNOMED terminology label when available;
-      for numeric values apply ordinal anchors (Barthel/FIM style for ADL columns);
-      for text values apply NER or text normalisation.
 
-    No generative LLM is needed – descriptions are derived from SNOMED labels,
-    ordinal rules, and biomedical NER.
+    - **col_desc**: SNOMED terminology label when available; otherwise normalise
+      the column key.
+    - **values[i].d**:
+        - If a SNOMED terminology label is provided for the value, use it directly.
+        - If the value is numeric, build a context phrase that explicitly states
+          what the values are measuring:
+          ``"score {v} of {max} measuring {col_label}"``
+          No hardcoded clinical-term lookup tables are used; the description is
+          derived entirely from the column's terminology label, the numeric value,
+          and the optional scale range (min/max).
+        - If the value is text, run NER with column context to extract the best
+          biomedical term; fall back to text normalisation.
     """
     pipe = _load_model_once()
     t0 = time.time()
@@ -573,26 +528,20 @@ async def describe_batch(request: DescribeBatchRequest):
         col_desc_raw = term_label if term_label else _normalise(col_key)
         col_desc = _sentence(col_desc_raw, col_key)
 
-        # Value descriptions
-        values = col.values or []
-        # Identify numeric values in order so we can assign ordinal anchors
-        numeric_vals = [vi for vi in values if re.match(r"^-?\d+(\.\d+)?$", (vi.v or "").strip())]
-        n_numeric = len(numeric_vals)
-        numeric_idx: Dict[str, int] = {vi.v.strip(): i for i, vi in enumerate(numeric_vals)}
-
         value_descs: List[ValueDesc] = []
-        for val_info in values:
+        for val_info in (col.values or []):
             v = (val_info.v or "").strip()
             if not v:
                 continue
 
             val_term = _extract_label(val_info.terminology_label or "")
             if val_term:
-                # Use SNOMED label directly
+                # SNOMED label available – use it directly.
                 d = _sentence(val_term, v)
+
             elif re.match(r"^-?\d+(\.\d+)?$", v):
-                # Numeric ordinal – use range context when available
-                idx = numeric_idx.get(v, 0)
+                # Numeric value: build a contextual phrase that states what the
+                # value is measuring.  No hardcoded clinical terms are used.
                 scale_min: Optional[float] = None
                 scale_max: Optional[float] = None
                 try:
@@ -602,13 +551,19 @@ async def describe_batch(request: DescribeBatchRequest):
                         scale_max = float(val_info.max)
                 except (ValueError, TypeError):
                     pass
-                raw_d = _describe_numeric_value(v, col_desc_raw, idx, n_numeric,
-                                                scale_min, scale_max)
-                d = _sentence(raw_d, v)
+                phrase = _build_value_phrase(v, col_desc_raw, scale_min, scale_max)
+                d = _sentence(phrase, v)
+
             else:
-                # Text value: NER-assisted or normalised
-                inferred = _infer_term(v, pipe)
-                d = _sentence(inferred or _normalise(v), v)
+                # Text value: run NER with column context so the model knows
+                # what these values are measuring.
+                context_phrase = f"{v} {col_desc_raw}" if col_desc_raw else v
+                inferred = _infer_term(context_phrase, pipe)
+                # Keep only the value-level NER result (not the full context phrase)
+                # unless NER returned nothing useful.
+                if not inferred or inferred == _normalise(context_phrase):
+                    inferred = _infer_term(v, pipe) or _normalise(v)
+                d = _sentence(inferred, v)
 
             value_descs.append(ValueDesc(v=v, d=d))
 

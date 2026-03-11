@@ -401,16 +401,11 @@ public class MappingServiceReportTest {
                                     + "' description missing terminator: " + valDesc);
                         }
 
-                        // Value 0 must indicate dependency (not independence)
-                        if ("0".equals(valName)) {
-                            String lower = valDesc.toLowerCase();
-                            boolean indicatesDependency = lower.contains("dependent")
-                                    || lower.contains("lowest") || lower.contains("completely")
-                                    || lower.contains("total") || lower.contains("severely");
-                            if (!indicatesDependency) {
-                                descViolations.add("Barthel col='" + key + "' value='0' should indicate "
-                                        + "dependency, got: " + valDesc);
-                            }
+                        // Context check: description must contain the numeric value
+                        // (descriptions are derived from context – "score {v} of {max} measuring {label}")
+                        if (!valDesc.contains(valName)) {
+                            descViolations.add("Barthel col='" + key + "' value='" + valName
+                                    + "' description does not contain the value: " + valDesc);
                         }
 
                         System.out.printf("    val=%-5s desc=%s%n", valName, valDesc);
