@@ -8,6 +8,7 @@ import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.model.ColumnRecord;
 import org.taniwha.service.DescriptionService;
+import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
 import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.jobs.ProgressReporter;
@@ -30,17 +31,20 @@ class MappingEnrichmentHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingEnrichmentHelper.class);
 
+    private final OpenMedTerminologyService openMedTerminologyService;
     private final TerminologyTermInferenceService terminologyInferenceService;
     private final TerminologyLookupService terminologyLookupService;
     private final DescriptionService descriptionGenerator;
     private final MappingServiceSettings settings;
 
     MappingEnrichmentHelper(
+            OpenMedTerminologyService openMedTerminologyService,
             TerminologyTermInferenceService terminologyInferenceService,
             TerminologyLookupService terminologyLookupService,
             DescriptionService descriptionGenerator,
             MappingServiceSettings settings
     ) {
+        this.openMedTerminologyService = openMedTerminologyService;
         this.terminologyInferenceService = terminologyInferenceService;
         this.terminologyLookupService = terminologyLookupService;
         this.descriptionGenerator = descriptionGenerator;
@@ -75,8 +79,10 @@ class MappingEnrichmentHelper {
     /**
      * Runs the full enrichment pipeline:
      * <ol>
-     *   <li>Infers SNOMED search terms per column/value via the LLM (batched).</li>
-     *   <li>Looks up SNOMED codes in bulk (with one retry for missing keys).</li>
+     *   <li>Infers SNOMED search terms per column/value via the OpenMed service (primary)
+     *       or the LLM inference service (fallback), both batched.</li>
+     *   <li>Looks up SNOMED codes in bulk (with one retry for missing keys).
+     *       When Snowstorm returns nothing, the OpenMed-suggested term itself is kept.</li>
      *   <li>Applies terminology codes to mapping DTOs.</li>
      *   <li>Generates plain-language descriptions via the LLM (async, windowed).</li>
      * </ol>
@@ -89,7 +95,11 @@ class MappingEnrichmentHelper {
         if (cb != null) cb.report(5, "Inferring terminology search terms…");
 
         List<ColumnRecord> colInputs = getColumnInputs(allMappings);
-        int inferBatchSize = terminologyInferenceService == null ? 5 : terminologyInferenceService.batchSize();
+
+        // Use OpenMed batch size when available, otherwise fall back to the old LLM service size.
+        int inferBatchSize = openMedTerminologyService != null
+                ? openMedTerminologyService.batchSize()
+                : (terminologyInferenceService == null ? 5 : terminologyInferenceService.batchSize());
         if (inferBatchSize <= 0) inferBatchSize = 5;
 
         Map<String, String> colLookupKeyByCol = new LinkedHashMap<>();
@@ -101,7 +111,7 @@ class MappingEnrichmentHelper {
         int inferBatchNo = 0;
 
         // ------------------------------------------------------------------
-        // 1) Terminology inference (batched)
+        // 1) Terminology inference (batched) – OpenMed primary, LLM fallback
         // ------------------------------------------------------------------
         for (int i = 0; i < colInputs.size(); i += inferBatchSize) {
             int end = Math.min(colInputs.size(), i + inferBatchSize);
@@ -114,8 +124,24 @@ class MappingEnrichmentHelper {
                 cb.report(pct, "Inferring terminology… (batch " + inferBatchNo + "/" + totalInferBatches + ")");
             }
 
-            List<TerminologyTermInferenceService.InferredTerm> inferred =
-                    terminologyInferenceService == null ? List.of() : terminologyInferenceService.inferBatch(batch);
+            // Try OpenMed first; fall back to old LLM service when OpenMed returns nothing.
+            List<?> inferred = List.of();
+            if (openMedTerminologyService != null) {
+                List<OpenMedTerminologyService.InferredTerm> openMedResult =
+                        openMedTerminologyService.inferBatch(batch);
+                if (!openMedResult.isEmpty()) {
+                    inferred = openMedResult;
+                    logger.info("[TermInfer/OpenMed] batch {}/{} -> inferred {}",
+                            inferBatchNo, Math.max(1, totalInferBatches), openMedResult.size());
+                }
+            }
+            if (inferred.isEmpty() && terminologyInferenceService != null) {
+                inferred = terminologyInferenceService.inferBatch(batch);
+                if (!inferred.isEmpty()) {
+                    logger.info("[TermInfer/LLM] batch {}/{} -> inferred {}",
+                            inferBatchNo, Math.max(1, totalInferBatches), inferred.size());
+                }
+            }
 
             if (inferred.isEmpty()) {
                 for (ColumnRecord ci : batch) {
@@ -134,16 +160,27 @@ class MappingEnrichmentHelper {
                 continue;
             }
 
-            for (TerminologyTermInferenceService.InferredTerm it : inferred) {
-                if (it == null) continue;
-                String colKey = StringUtil.safeTrim(it.colKey());
-                if (colKey.isEmpty()) continue;
+            for (Object rawTerm : inferred) {
+                if (rawTerm == null) continue;
+                String colKey, colSearchTerm;
+                Map<String, String> vmap;
 
-                String colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                if (rawTerm instanceof OpenMedTerminologyService.InferredTerm it) {
+                    colKey       = StringUtil.safeTrim(it.colKey());
+                    colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                    vmap         = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+                } else if (rawTerm instanceof TerminologyTermInferenceService.InferredTerm it) {
+                    colKey       = StringUtil.safeTrim(it.colKey());
+                    colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                    vmap         = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+                } else {
+                    continue;
+                }
+
+                if (colKey.isEmpty()) continue;
                 if (colSearchTerm.isEmpty()) colSearchTerm = colKey;
                 colLookupKeyByCol.put(colKey, colKey + "|" + colSearchTerm);
 
-                Map<String, String> vmap = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
                 for (Map.Entry<String, String> ve : vmap.entrySet()) {
                     String rawVal = StringUtil.safeTrim(ve.getKey());
                     String vTerm = StringUtil.safeTrim(ve.getValue());
@@ -152,13 +189,6 @@ class MappingEnrichmentHelper {
                     }
                 }
                 inferredCols++;
-            }
-
-            logger.info("[TermInfer] batch {}/{} -> inferred {}", inferBatchNo, Math.max(1, totalInferBatches), inferred.size());
-            if (logger.isInfoEnabled()) {
-                logger.info("[TermInfer] inferred detail batch {}/{}: {}",
-                        inferBatchNo, Math.max(1, totalInferBatches),
-                        summarizeInferred(inferred, 4, 2, 90));
             }
 
             if (cb != null) {
@@ -240,8 +270,8 @@ class MappingEnrichmentHelper {
                         .map(String::trim).filter(s -> !s.isEmpty()).orElse("field");
 
                 String colLookupKey = colLookupKeyByCol.getOrDefault(colKey, colKey + "|" + colKey);
-                String columnTerminology = terminologyResults.getOrDefault(colLookupKey, "");
-                mapping.setTerminology(columnTerminology == null ? "" : columnTerminology);
+                String columnTerminology = resolveTerminology(colLookupKey, terminologyResults);
+                mapping.setTerminology(columnTerminology);
 
                 if (mapping.getGroups() != null) {
                     for (SuggestedGroupDTO group : mapping.getGroups()) {
@@ -251,9 +281,9 @@ class MappingEnrichmentHelper {
                             String valueName = StringUtil.safeTrim(value.getName());
                             if (valueName.isEmpty()) continue;
                             String vLookupKey = valLookupKeyByValueKey.get(colKey + "|" + valueName);
-                            String valueTerminology =
-                                    (vLookupKey == null) ? "" : terminologyResults.getOrDefault(vLookupKey, "");
-                            value.setTerminology(valueTerminology == null ? "" : valueTerminology);
+                            String valueTerminology = vLookupKey == null ? ""
+                                    : resolveTerminology(vLookupKey, terminologyResults);
+                            value.setTerminology(valueTerminology);
                         }
                     }
                 }
@@ -489,41 +519,47 @@ class MappingEnrichmentHelper {
     }
 
     // ------------------------------------------------------------------
-    // Logging utilities
+    // Terminology resolution helper
     // ------------------------------------------------------------------
 
-    private static String summarizeInferred(
-            List<TerminologyTermInferenceService.InferredTerm> inferred,
-            int maxCols, int maxValsPerCol, int maxLen
+    /**
+     * Returns the resolved terminology for {@code lookupKey} from Snowstorm results,
+     * accepting <em>only</em> valid SNOMED codes.
+     *
+     * <p>A value is accepted when it matches the Snowstorm output format:
+     * {@code "numericConceptId"} or {@code "numericConceptId|label"}
+     * (e.g. {@code "73211009|Diabetes mellitus"}).  Synthetic hash codes
+     * ({@code CONCEPT_XXXXXXXXX}), raw search phrases, and empty strings are all
+     * rejected and {@code ""} is returned, guaranteeing that the
+     * {@code terminology} field of every mapping DTO is either a genuine SNOMED
+     * code or empty.</p>
+     *
+     * @param lookupKey the composite key in {@code "colKey|searchTerm"} format
+     * @param results   the Snowstorm results map keyed by lookupKey
+     * @return a SNOMED code+label string, or {@code ""}
+     */
+    private static String resolveTerminology(
+            String lookupKey,
+            Map<String, String> results
     ) {
-        if (inferred == null || inferred.isEmpty()) return "[]";
-        StringBuilder sb = new StringBuilder(512);
-        sb.append("[");
-        int cols = 0;
-        for (TerminologyTermInferenceService.InferredTerm it : inferred) {
-            if (it == null) continue;
-            if (cols++ >= Math.max(1, maxCols)) break;
-            sb.append("{colKey=").append(shortStr(it.colKey(), maxLen))
-                    .append(", colSearchTerm=").append(shortStr(it.colSearchTerm(), maxLen));
-            Map<String, String> vm = (it.valueSearchTerms() == null) ? Map.of() : it.valueSearchTerms();
-            if (!vm.isEmpty()) {
-                sb.append(", values=[");
-                int v = 0;
-                for (Map.Entry<String, String> e : vm.entrySet()) {
-                    if (v++ >= Math.max(1, maxValsPerCol)) break;
-                    sb.append("{raw=").append(shortStr(e.getKey(), maxLen))
-                            .append(", term=").append(shortStr(e.getValue(), maxLen)).append("},");
-                }
-                if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
-                sb.append("]");
-            }
-            sb.append("},");
-        }
-        if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
-        if (inferred.size() > cols) sb.append(", …");
-        sb.append("]");
-        return sb.toString();
+        String value = results.getOrDefault(lookupKey, "");
+        return isSnowstormCode(value) ? value : "";
     }
+
+    /**
+     * Returns {@code true} when {@code value} is in the Snowstorm SNOMED format,
+     * i.e. starts with at least 6 consecutive digits (the SNOMED CT concept ID),
+     * optionally followed by {@code "|label"}.
+     */
+    private static boolean isSnowstormCode(String value) {
+        if (value == null || value.isBlank()) return false;
+        // SNOMED CT concept IDs are at minimum 6 digits; typical codes are 7–18 digits.
+        return value.trim().matches("^\\d{6,}(\\|.+)?$");
+    }
+
+    // ------------------------------------------------------------------
+    // Logging utilities
+    // ------------------------------------------------------------------
 
     private static String shortStr(String s, int maxLen) {
         String x = StringUtil.safeTrim(s).replaceAll("\\s+", " ");

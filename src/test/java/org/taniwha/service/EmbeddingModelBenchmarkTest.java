@@ -263,9 +263,15 @@ public class EmbeddingModelBenchmarkTest {
 
         ValueMappingBuilder valueMappingBuilder = new ValueMappingBuilder(embeddingService);
 
+        org.taniwha.service.OpenMedTerminologyService openMedService =
+            Mockito.mock(org.taniwha.service.OpenMedTerminologyService.class);
+        Mockito.when(openMedService.batchSize()).thenReturn(5);
+        Mockito.when(openMedService.inferBatch(Mockito.any()))
+            .thenReturn(Collections.emptyList());
+
         return new MappingService(
             embeddingService, terminologyService, inferenceService,
-            descriptionService, valueMappingBuilder, OBJECT_MAPPER, SETTINGS
+            openMedService, descriptionService, valueMappingBuilder, OBJECT_MAPPER, SETTINGS
         );
     }
 
