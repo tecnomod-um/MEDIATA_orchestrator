@@ -47,11 +47,13 @@ import static org.junit.jupiter.api.Assertions.*;
     "spring.data.mongodb.auto-index-creation=false",
     "openmed.enabled=true",
     "openmed.service.url=http://localhost:8002",
-    // Qwen2.5-0.5B generates ~2-3s per value on CPU; a 6-column batch can
-    // take 15-60s.  Use a generous timeout so batches complete successfully.
-    "openmed.timeout.ms=120000",
+    // Meditron3-Gemma2-2B generates ~10s per value on CPU; 2-column batches
+    // (default) can take up to 60s each.  Use 300s to be safe.
+    "openmed.timeout.ms=300000",
     // Java-side CompletableFuture timeout: must exceed openmed.timeout.ms/1000.
-    "description.timeoutSeconds=180"
+    "description.timeoutSeconds=360",
+    // Small batches so each HTTP call stays within the timeout.
+    "mapping.service.description-batch-columns=2"
 })
 public class MappingServiceReportTest {
 
