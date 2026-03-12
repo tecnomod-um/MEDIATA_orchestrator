@@ -64,24 +64,10 @@ public class ModelComparisonTest {
         }
 
         @Bean
-        public TerminologyTermInferenceService terminologyTermInferenceService() {
-            TerminologyTermInferenceService mock = Mockito.mock(TerminologyTermInferenceService.class);
-            Mockito.when(mock.batchSize()).thenReturn(5);
-            Mockito.when(mock.inferBatch(Mockito.any())).thenReturn(Collections.emptyList());
-            return mock;
-        }
-
-        @Bean
-        public LLMTextGenerator llmTextGenerator() {
-            LLMTextGenerator mock = Mockito.mock(LLMTextGenerator.class);
-            Mockito.when(mock.isEnabled()).thenReturn(false);
-            return mock;
-        }
-
-        @Bean
-        public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
-                                                       java.util.concurrent.ExecutorService llmExecutor) {
-            return new DescriptionService(llmTextGenerator, llmExecutor);
+        public DescriptionService descriptionGenerator(
+                java.util.concurrent.ExecutorService llmExecutor) {
+            // No OpenMed service in this test – text-normalisation fallback is used
+            return new DescriptionService((OpenMedDescriptionService) null, llmExecutor);
         }
 
         @Bean
@@ -104,13 +90,22 @@ public class ModelComparisonTest {
         @Bean
         public MappingService mappingService(EmbeddingService embeddingService,
                                              TerminologyLookupService terminologyService,
-                                             TerminologyTermInferenceService terminologyTermInferenceService,
+                                             org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
                                              DescriptionService descriptionGenerator,
                                              ValueMappingBuilder valueMappingBuilder,
                                              ObjectMapper objectMapper,
                                              org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
-            return new MappingService(embeddingService, terminologyService, terminologyTermInferenceService,
-                    descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
+            return new MappingService(embeddingService, terminologyService,
+                    openMedTerminologyService, descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
+        }
+
+        @Bean
+        public org.taniwha.service.OpenMedTerminologyService openMedTerminologyService() {
+            org.taniwha.service.OpenMedTerminologyService mock =
+                    Mockito.mock(org.taniwha.service.OpenMedTerminologyService.class);
+            Mockito.when(mock.batchSize()).thenReturn(5);
+            Mockito.when(mock.inferBatch(Mockito.any())).thenReturn(java.util.List.of());
+            return mock;
         }
     }
 

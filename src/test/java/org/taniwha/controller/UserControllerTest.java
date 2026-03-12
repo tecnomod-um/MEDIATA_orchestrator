@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.LoginRequestDTO;
@@ -90,7 +91,7 @@ class UserControllerTest {
     void login_badCreds_returns401() throws Exception {
         when(mongoDb.listCollectionNames().first()).thenReturn("ok");
         when(userService.loginUser("bob", "wrong"))
-                .thenThrow(new RuntimeException("bad creds"));
+                .thenThrow(new BadCredentialsException("bad creds"));
 
         LoginRequestDTO req = new LoginRequestDTO();
         req.setUsername("bob");

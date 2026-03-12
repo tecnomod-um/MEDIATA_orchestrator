@@ -54,3 +54,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# OpenMed Python service artefacts
+mediata-openmed/.venv/
+mediata-openmed/__pycache__/
+mediata-openmed/*.pyc

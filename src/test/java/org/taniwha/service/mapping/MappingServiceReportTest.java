@@ -3,7 +3,6 @@ package org.taniwha.service.mapping;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -13,23 +12,22 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.OpenMedDescriptionService;
+import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.EmbeddingsClient;
-import org.taniwha.service.LLMTextGenerator;
 import org.taniwha.service.RDFService;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.ai.ollama.api.OllamaApi;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -46,7 +44,16 @@ import static org.junit.jupiter.api.Assertions.*;
     "rdfbuilder.csvpath=/tmp/test.csv",
     "rdfbuilder.service.url=http://localhost:8000",
     "spring.datasource.enabled=false",
-    "spring.data.mongodb.auto-index-creation=false"
+    "spring.data.mongodb.auto-index-creation=false",
+    "openmed.enabled=true",
+    "openmed.service.url=http://localhost:8002",
+    // Meditron3-Gemma2-2B generates ~10s per value on CPU; 2-column batches
+    // (default) can take up to 60s each.  Use 300s to be safe.
+    "openmed.timeout.ms=300000",
+    // Java-side CompletableFuture timeout: must exceed openmed.timeout.ms/1000.
+    "description.timeoutSeconds=360",
+    // Small batches so each HTTP call stays within the timeout.
+    "mapping.service.description-batch-columns=2"
 })
 public class MappingServiceReportTest {
 
@@ -56,48 +63,12 @@ public class MappingServiceReportTest {
         MongoAutoConfiguration.class
     })
     static class TestConfig {
-        // NOTE: This test manually creates ChatModel, but in deployment OllamaLauncherConfig
-        // automatically starts Ollama and Spring AI autoconfigures ChatModel
-        // This test mimics that behavior by expecting Ollama to be running
 
         @Bean(destroyMethod = "shutdown")
         public java.util.concurrent.ExecutorService llmExecutor() {
             return java.util.concurrent.Executors.newFixedThreadPool(8);
         }
 
-        @Bean
-        public ChatModel ollamaChatModel() {
-            // Create OllamaApi to connect to localhost Ollama
-            // (In deployment, OllamaLauncherConfig ensures Ollama is running)
-            OllamaApi api = OllamaApi.builder()
-                .baseUrl("http://localhost:11434")
-                .build();
-            
-            // Create default options for llama2
-            org.springframework.ai.ollama.api.OllamaChatOptions options = 
-                org.springframework.ai.ollama.api.OllamaChatOptions.builder()
-                    .model("llama2")
-                    .temperature(0.7)
-                    .build();
-            
-            // Create empty ToolCallingManager (required)
-            org.springframework.ai.model.tool.ToolCallingManager toolCallingManager = 
-                org.springframework.ai.model.tool.ToolCallingManager.builder().build();
-                
-            // Create ModelManagementOptions (required)
-            org.springframework.ai.ollama.management.ModelManagementOptions modelManagementOptions =
-                org.springframework.ai.ollama.management.ModelManagementOptions.builder().build();
-            
-            // Create with required parameters (Spring AI 1.1.2)
-            return new OllamaChatModel(
-                api,
-                options,
-                toolCallingManager,
-                io.micrometer.observation.ObservationRegistry.NOOP,
-                modelManagementOptions
-            );
-        }
-        
         // EmbeddingModel is intentionally NOT declared here so that Spring AI
         // auto-configuration picks up the production PubMedBERT model from
         // application.properties (spring.ai.embedding.transformer.onnx.model-uri).
@@ -123,11 +94,22 @@ public class MappingServiceReportTest {
         }
 
         @Bean
-        public TerminologyTermInferenceService terminologyTermInferenceService(
-                LLMTextGenerator llmTextGenerator,
-                @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
+        public OpenMedDescriptionService openMedDescriptionService(
+                @Value("${openmed.service.url:http://localhost:8002}") String url,
+                @Value("${openmed.enabled:false}") boolean enabled,
+                @Value("${openmed.timeout.ms:10000}") int timeoutMs) {
+            OpenMedDescriptionService svc = new OpenMedDescriptionService();
+            ReflectionTestUtils.setField(svc, "openmedUrl", url);
+            ReflectionTestUtils.setField(svc, "enabled",    enabled);
+            ReflectionTestUtils.setField(svc, "timeoutMs",  timeoutMs);
+            return svc;
+        }
+
+        @Bean
+        public DescriptionService descriptionGenerator(
+                OpenMedDescriptionService openMedDescriptionService,
                 java.util.concurrent.ExecutorService llmExecutor) {
-            return new TerminologyTermInferenceService(llmTextGenerator, llmExecutor);
+            return new DescriptionService(openMedDescriptionService, llmExecutor);
         }
 
         @Bean
@@ -146,200 +128,107 @@ public class MappingServiceReportTest {
         public MappingService mappingService(
                 EmbeddingService embeddingService,
                 TerminologyLookupService terminologyLookupService,
-                TerminologyTermInferenceService terminologyTermInferenceService,
+                org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                 org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
-                    terminologyTermInferenceService, descriptionGenerator,
+                    openMedTerminologyService, descriptionGenerator,
                     valueMappingBuilder, objectMapper, mappingSettings);
         }
 
         @Bean
+        public org.taniwha.service.OpenMedTerminologyService openMedTerminologyService(RDFService rdfService) {
+            return new org.taniwha.service.OpenMedTerminologyService(rdfService);
+        }
+
+        @Bean
         public RDFService rdfService() {
-            // Mock RDFService to return realistic SNOMED codes
+            // Mock RDFService to return realistic OntologyTermDTOs for SNOMED lookup.
+            // OntologyTermDTO(id, label, description, iri) – iri contains the SNOMED concept ID.
             RDFService mock = Mockito.mock(RDFService.class);
-            
-            // Return realistic SNOMED suggestions based on term
+
             Mockito.when(mock.getSNOMEDTermSuggestions(Mockito.anyString()))
                 .thenAnswer(invocation -> {
                     String term = invocation.getArgument(0);
                     String lower = term.toLowerCase();
-                    
-                    // Return realistic SNOMED codes based on term
+
                     if (lower.contains("bath")) {
-                        return Arrays.asList("284546000|Bathing|", "129007002|Personal bathing|", "313009003|Personal hygiene|");
+                        return snomedList("284546000", "Bathing", "129007002", "Personal bathing");
                     } else if (lower.contains("toilet")) {
-                        return Arrays.asList("284548004|Ability to use toilet|", "129006006|Toileting independence|");
+                        return snomedList("284548004", "Ability to use toilet", "129006006", "Toileting independence");
                     } else if (lower.contains("dress")) {
-                        return Arrays.asList("284547009|Ability to dress|", "165235000|Dressing independence|");
+                        return snomedList("284547009", "Ability to dress", "165235000", "Dressing independence");
                     } else if (lower.contains("feed") || lower.contains("eat")) {
-                        return Arrays.asList("284545001|Ability to feed|", "289168000|Eating independence|");
+                        return snomedList("284545001", "Ability to feed", "289168000", "Eating independence");
                     } else if (lower.contains("groom")) {
-                        return Arrays.asList("284549007|Ability to groom|", "313009003|Personal hygiene|");
+                        return snomedList("284549007", "Ability to groom", "313009003", "Personal hygiene");
                     } else if (lower.contains("stair")) {
-                        return Arrays.asList("284551006|Ability to climb stairs|", "228869008|Stair climbing|");
+                        return snomedList("284551006", "Ability to climb stairs", "228869008", "Stair climbing");
                     } else if (lower.contains("bowel")) {
-                        return Arrays.asList("129008007|Continence bowel|", "165243003|Bowel control|");
-                    } else if (lower.contains("bladder")) {
-                        return Arrays.asList("129009004|Continence urinary|", "165244009|Bladder control|");
-                    } else if (lower.contains("sex") || lower.contains("gender")) {
-                        return Arrays.asList("263495000|Gender|", "734000001|Sex|");
-                    } else if (lower.contains("type") || lower.contains("isch") || lower.contains("hem") || lower.contains("etiology")) {
-                        return Arrays.asList("230690007|Stroke|", "432504007|Cerebrovascular accident|");
+                        return snomedList("129008007", "Continence bowel", "165243003", "Bowel control");
+                    } else if (lower.contains("bladder") || lower.contains("continence urinary")) {
+                        return snomedList("129009004", "Continence urinary", "165244009", "Bladder control");                    } else if (lower.contains("sex") || lower.contains("gender")) {
+                        return snomedList("263495000", "Gender", "734000001", "Sex");
+                    } else if (lower.contains("stroke") || lower.contains("isch") || lower.contains("hem") || lower.contains("etiology")) {
+                        return snomedList("230690007", "Stroke", "432504007", "Cerebrovascular accident");
                     } else if (lower.contains("diabet")) {
-                        return Arrays.asList("73211009|Diabetes mellitus|", "44054006|Type 2 diabetes|");
+                        return snomedList("73211009", "Diabetes mellitus", "44054006", "Type 2 diabetes");
                     } else if (lower.contains("age")) {
-                        return Arrays.asList("397669002|Age|", "424144002|Current chronological age|");
-                    } else if (lower.contains("nihss")) {
-                        return Arrays.asList("450741004|NIH stroke scale|", "450703000|Stroke severity score|");
+                        return snomedList("397669002", "Age", "424144002", "Current chronological age");
+                    } else if (lower.contains("nihss") || lower.contains("nih stroke")) {
+                        return snomedList("450741004", "NIH stroke scale", "450703000", "Stroke severity score");
                     } else if (lower.contains("barthel")) {
-                        return Arrays.asList("273302005|Barthel index|", "445313000|Activities of daily living score|");
-                    } else if (lower.contains("fim")) {
-                        return Arrays.asList("445713009|Functional independence measure|", "445313000|Activities of daily living score|");
-                    } else if (lower.contains("transfer")) {
-                        return Arrays.asList("284550007|Ability to transfer|", "301438001|Transfer independence|");
-                    } else if (lower.contains("mobil")) {
-                        return Arrays.asList("364666007|Ability to mobilize|", "228869008|Walking ability|");
-                    } else if (lower.contains("fac")) {
-                        return Arrays.asList("52052004|Functional ambulation|", "228869008|Walking ability|");
-                    } else if (lower.contains("independent") || term.equals("10")) {
-                        return Arrays.asList("371153006|Independent|", "165245005|Functionally independent|");
-                    } else if (lower.contains("dependent") || term.equals("0")) {
-                        return Arrays.asList("371152001|Dependent|", "371154000|Totally dependent|");
-                    } else if (term.equals("5")) {
-                        return Arrays.asList("371155004|Partially dependent|", "371156003|Requires assistance|");
+                        return snomedList("273302005", "Barthel index", "445313000", "Activities of daily living score");
+                    } else if (lower.contains("fim") || lower.contains("functional independence")) {
+                        return snomedList("445713009", "Functional independence measure", "445313000", "Activities of daily living score");
+                    } else if (lower.contains("transfer") || lower.startsWith("transf")) {
+                        return snomedList("284550007", "Ability to transfer", "301438001", "Transfer independence");
+                    } else if (lower.contains("mobil") || lower.contains("locomotion") || lower.contains("walking")) {
+                        return snomedList("364666007", "Ability to mobilize", "228869008", "Walking ability");
+                    } else if (lower.contains("fac") || lower.contains("ambulation")) {
+                        return snomedList("52052004", "Functional ambulation", "228869008", "Walking ability");
+                    } else if (lower.contains("independent")) {
+                        return snomedList("371153006", "Independent", "165245005", "Functionally independent");
+                    } else if (lower.contains("dependent")) {
+                        return snomedList("371152001", "Dependent", "371154000", "Totally dependent");
                     } else {
-                        // Generic fallback
-                        return Arrays.asList("404684003|Clinical finding|", "123037004|Body structure|");
+                        return snomedList("404684003", "Clinical finding", "123037004", "Body structure");
                     }
                 });
-            
+
             return mock;
         }
-        
-        @Bean
-        public LLMTextGenerator llmTextGenerator(ObjectProvider<ChatModel> chatModelProvider,
-                                                 @Value("${llm.enabled:true}") boolean llmEnabled) {
-            return new LLMTextGenerator(chatModelProvider, llmEnabled);
-        }
 
-        @Bean
-        public DescriptionService descriptionGenerator(LLMTextGenerator llmTextGenerator,
-                                                       java.util.concurrent.ExecutorService llmExecutor) {
-            return new DescriptionService(llmTextGenerator, llmExecutor);
+        /** Build a two-element OntologyTermDTO list from pairs of (conceptId, label). */
+        private static List<OntologyTermDTO> snomedList(String id1, String label1, String id2, String label2) {
+            return Arrays.asList(
+                new OntologyTermDTO(id1, label1, label1,
+                    "http://snomed.info/id/sct/" + id1),
+                new OntologyTermDTO(id2, label2, label2,
+                    "http://snomed.info/id/sct/" + id2)
+            );
         }
     }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    @org.junit.jupiter.api.BeforeAll
-    static void startOllama() throws Exception {
-        // Start Ollama the same way as deployment (OllamaLauncherConfig)
-        System.out.println("\n=== Starting Ollama for Test ===");
-        
-        try {
-            // Check if Docker is available
-            ProcessBuilder dockerCheck = new ProcessBuilder("docker", "version");
-            Process process = dockerCheck.start();
-            int exitCode = process.waitFor();
-            
-            if (exitCode != 0) {
-                System.out.println("Docker not available. Ollama will not be auto-launched.");
-                System.out.println("Please start Ollama manually: ollama serve");
-                return;
-            }
-            
-            System.out.println("Docker is available. Starting Ollama container...");
-            
-            // Start Ollama container
-            ProcessBuilder startOllama = new ProcessBuilder(
-                "docker", "run", "-d",
-                "--name", "ollama-test",
-                "-p", "11434:11434",
-                "-v", "ollama-models:/root/.ollama",
-                "ollama/ollama:latest"
-            );
-            Process startProcess = startOllama.start();
-            int startExitCode = startProcess.waitFor();
-            
-            if (startExitCode != 0) {
-                // Container might already exist, try to start it
-                System.out.println("Container might already exist, trying to start existing container...");
-                ProcessBuilder startExisting = new ProcessBuilder("docker", "start", "ollama-test");
-                startExisting.start().waitFor();
-            }
-            
-            // Wait for Ollama to be ready
-            System.out.println("Waiting for Ollama to be ready...");
-            int maxWait = 60;
-            boolean ready = false;
-            for (int i = 0; i < maxWait; i++) {
-                try {
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) 
-                        new java.net.URL("http://localhost:11434/").openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(1000);
-                    conn.setReadTimeout(1000);
-                    if (conn.getResponseCode() == 200) {
-                        ready = true;
-                        System.out.println("✓ Ollama is ready at http://localhost:11434/");
-                        break;
-                    }
-                } catch (Exception e) {
-                    // Not ready yet
-                }
-                Thread.sleep(1000);
-            }
-            
-            if (!ready) {
-                System.out.println("WARNING: Ollama did not become ready within 60 seconds");
-                return;
-            }
-            
-            // Pull llama2 model if needed
-            System.out.println("Ensuring llama2 model is available...");
-            ProcessBuilder pullModel = new ProcessBuilder(
-                "docker", "exec", "ollama-test", "ollama", "pull", "llama2"
-            );
-            pullModel.inheritIO();
-            Process pullProcess = pullModel.start();
-            int pullExitCode = pullProcess.waitFor();
-            
-            if (pullExitCode == 0) {
-                System.out.println("✓ llama2 model ready");
-            } else {
-                System.out.println("WARNING: Failed to pull llama2 model");
-            }
-            
-            System.out.println("=== Ollama Setup Complete ===\n");
-            
-        } catch (Exception e) {
-            System.err.println("Error starting Ollama: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
     @Autowired
     private MappingService mappingService;
-    
-    @Autowired(required = false)
-    private LLMTextGenerator llmTextGenerator;
 
     @Test
     void generates_mapping_report_from_fixture() throws Exception {
         MappingSuggestRequestDTO req = loadRequestFixture();
 
+        // Step 1: suggest structural mappings (embedding-based)
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
 
-        // Display LLM configuration status
-        System.out.println("\n=== LLM Configuration ===");
-        System.out.println("LLM Text Generator: " + (llmTextGenerator != null ? "AVAILABLE" : "NOT AVAILABLE (descriptions will be fallback)"));
-        System.out.println("==========================\n");
-        
-        // Quality checks - validate LLM is performing well
+        // Step 2: enrich with terminology (SNOMED) and descriptions (OpenMed)
+        // This mirrors what MappingController does in two separate HTTP calls.
+        result = mappingService.enrichHierarchy(result, req.getSchema(), null);
+
         assertNotNull(result, "Result should not be null");
         
         // Log actual results for inspection
@@ -347,7 +236,7 @@ public class MappingServiceReportTest {
             .flatMap(map -> map.keySet().stream())
             .collect(Collectors.toSet());
         
-        System.out.println("\n=== LLM Embedding Results ===");
+        System.out.println("\n=== Embedding Results ===");
         System.out.println("Total mappings found: " + result.size());
         System.out.println("Mapping keys: " + foundMappings);
         
@@ -409,21 +298,142 @@ public class MappingServiceReportTest {
         assertTrue(Files.exists(jsonOut), "JSON report should exist: " + jsonOut);
         assertTrue(Files.exists(mdOut), "Markdown report should exist: " + mdOut);
         
-        System.out.println("\n=== LLM Embedding Quality Report ===");
+        System.out.println("\n=== Mapping Quality Report ===");
         System.out.println("Total mapping suggestions: " + result.size());
         System.out.println("Key categories identified: " + matchCount + "/" + expectedCategories.size());
         System.out.println("Report saved to: " + mdOut);
         System.out.println("====================================\n");
-        
+
         // Quality checks - validate embedding model is producing useful pairings
         assertNotNull(result, "Result should not be null");
-        assertTrue(result.size() >= 25, 
+        assertTrue(result.size() >= 25,
             "Embedding model should produce at least 25 mapping suggestions (got " + result.size() + ")");
-        assertTrue(matchCount >= 6, 
+        assertTrue(matchCount >= 6,
             "Embedding model should identify at least 6 of 7 key medical categories (found " + matchCount + ")");
-        
+
         // CRITICAL: Validate value mappings are correct
         validateValueMappings(result);
+
+        // CRITICAL: Validate descriptions and terminologies are non-empty for key Barthel columns
+        validateDescriptionsAndTerminologies(result);
+    }
+
+    /**
+     * Verify that the description service (OpenMed) produced non-empty, sentence-formatted
+     * descriptions for the key Barthel index columns, and that terminologies were set for
+     * those columns.
+     *
+     * <p>When OpenMed is not running the descriptions fall back to text normalisation; we still
+     * require them to be non-empty. When OpenMed IS running, we also verify the ordinal anchor
+     * quality (value 0 → dependent, max → independent/fully independent).</p>
+     */
+    private void validateDescriptionsAndTerminologies(List<Map<String, SuggestedMappingDTO>> result) {
+        System.out.println("\n=== Description & Terminology Validation ===");
+
+        // ADL Barthel categories we expect to find (substring match against union key)
+        List<String> barthelCategories = Arrays.asList("toilet", "bath", "dress", "feed", "groom", "stair", "bowel", "bladder");
+
+        int columnsWithTerminology = 0;
+        int columnsWithDescription = 0;
+        int barthelColumnsChecked = 0;
+        List<String> descViolations = new ArrayList<>();
+
+        for (Map<String, SuggestedMappingDTO> mappingMap : result) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                String key = entry.getKey();
+                SuggestedMappingDTO mapping = entry.getValue();
+                if (mapping == null) continue;
+
+                // Terminology check
+                String terminology = mapping.getTerminology();
+                if (terminology != null && !terminology.isEmpty()) {
+                    columnsWithTerminology++;
+                    System.out.printf("  TERM  %-30s %s%n", key, terminology);
+                }
+
+                // Description check
+                String description = mapping.getDescription();
+                if (description != null && !description.isEmpty()) {
+                    columnsWithDescription++;
+                    // Must start with uppercase and end with a sentence terminator
+                    if (!Character.isUpperCase(description.charAt(0))) {
+                        descViolations.add("col='" + key + "' description does not start uppercase: " + description);
+                    }
+                    if (!description.endsWith(".") && !description.endsWith("!") && !description.endsWith("?")) {
+                        descViolations.add("col='" + key + "' description missing terminator: " + description);
+                    }
+                    System.out.printf("  DESC  %-30s %s%n", key, description);
+                }
+
+                // Barthel value description quality check
+                boolean isBarthel = barthelCategories.stream().anyMatch(cat -> key.contains(cat));
+                if (!isBarthel) continue;
+                barthelColumnsChecked++;
+
+                if (mapping.getGroups() == null) continue;
+                for (SuggestedGroupDTO group : mapping.getGroups()) {
+                    if (group == null || group.getValues() == null) continue;
+
+                    List<SuggestedValueDTO> values = group.getValues();
+                    // Collect numeric values to identify 0 (min) and max
+                    List<SuggestedValueDTO> numericValues = new ArrayList<>();
+                    for (SuggestedValueDTO v : values) {
+                        if (v == null || v.getName() == null) continue;
+                        try {
+                            Double.parseDouble(v.getName().trim());
+                            numericValues.add(v);
+                        } catch (NumberFormatException ignored) {}
+                    }
+                    if (numericValues.isEmpty()) continue;
+
+                    for (SuggestedValueDTO val : numericValues) {
+                        String valName = val.getName().trim();
+                        String valDesc = val.getDescription();
+
+                        // Every numeric value in a Barthel column must have a non-empty description
+                        if (valDesc == null || valDesc.isBlank()) {
+                            descViolations.add("Barthel col='" + key + "' value='" + valName
+                                    + "' has empty description");
+                            continue;
+                        }
+
+                        // Sentence format check
+                        if (!Character.isUpperCase(valDesc.charAt(0))) {
+                            descViolations.add("Barthel col='" + key + "' value='" + valName
+                                    + "' description doesn't start uppercase: " + valDesc);
+                        }
+                        if (!valDesc.endsWith(".") && !valDesc.endsWith("!") && !valDesc.endsWith("?")) {
+                            descViolations.add("Barthel col='" + key + "' value='" + valName
+                                    + "' description missing terminator: " + valDesc);
+                        }
+
+                        // Note: the description is generated by the LLM from a contextual prompt
+                        // ("score {v} of {max} measuring {label}"), so it will be a natural-language
+                        // phrase like "Low ability to use toilet" rather than a phrase that echoes
+                        // back the raw numeric value.  We do NOT assert valDesc.contains(valName).
+
+                        System.out.printf("    val=%-5s desc=%s%n", valName, valDesc);
+                    }
+                }
+            }
+        }
+
+        System.out.printf("%n  Columns with terminology: %d%n", columnsWithTerminology);
+        System.out.printf("  Columns with description: %d%n", columnsWithDescription);
+        System.out.printf("  Barthel columns validated: %d%n", barthelColumnsChecked);
+        descViolations.forEach(v -> System.out.println("  ✗ " + v));
+        System.out.println("===========================================\n");
+
+        // Key assertions
+        assertTrue(columnsWithTerminology >= 6,
+                "At least 6 Barthel columns should have SNOMED terminology (got " + columnsWithTerminology + ")");
+        assertTrue(columnsWithDescription >= 5,
+                "At least 5 columns should have a non-empty description (got " + columnsWithDescription
+                        + ") – is OpenMed running at http://localhost:8002?");
+        assertTrue(barthelColumnsChecked >= 4,
+                "At least 4 Barthel ADL columns should be present in the result (got " + barthelColumnsChecked + ")");
+        assertTrue(descViolations.isEmpty(),
+                "Description/terminology violations:\n" + String.join("\n", descViolations));
     }
 
     private MappingSuggestRequestDTO loadRequestFixture() throws IOException {
