@@ -226,12 +226,16 @@ public class RDFService {
         return resp.getBody();
     }
 
+    @Value("${rdfbuilder.probe.enabled:true}")
+    private boolean pythonProbeEnabled;
+
     @Value("${rdfbuilder.probe.upProbeIntervalMs:10000}")
     private long pythonUpProbeIntervalMs;
 
     private final AtomicLong pyNextUpProbeEpochMs = new AtomicLong(0);
 
     private boolean pythonAllowAttemptOrProbe() {
+        if (!pythonProbeEnabled) return true;
         PyState state = pyState.get();
         long now = System.currentTimeMillis();
 

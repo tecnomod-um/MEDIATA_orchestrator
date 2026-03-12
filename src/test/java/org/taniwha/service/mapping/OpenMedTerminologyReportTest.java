@@ -78,7 +78,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
         "rdfbuilder.service.url=http://localhost:8000",
         "openmed.service.url=http://localhost:8002",
         "openmed.enabled=true",
-        "openmed.timeout.ms=30000",
+        "openmed.timeout.ms=300000",
         "openmed.launcher.enabled=false",
         "snowstorm.enabled=true",
         "snowstorm.launcher.enabled=false",
@@ -232,6 +232,8 @@ public class OpenMedTerminologyReportTest {
     private static final int SNOWSTORM_STARTUP_TIMEOUT_S = 180;
     private static final int OPENMED_HEALTH_TIMEOUT_S    = 30;
     private static final int OPENMED_WARMUP_TIMEOUT_S    = 30;
+    /** Extra seconds to wait for the 5 GB Meditron3 generative model to load from disk. */
+    private static final int OPENMED_DESCRIBE_WARMUP_TIMEOUT_S = 300;
 
     private static boolean snowstormAvailable = false;
     private static boolean openMedAvailable   = false;
@@ -921,16 +923,23 @@ public class OpenMedTerminologyReportTest {
 
         // ── Semantic / medical assertions ─────────────────────────────────────
         // Toilet column: descriptions are context-derived ("score N of 10 measuring Ability to use toilet")
-        // so we check that the value appears in the description and the column label is referenced.
+        // so we verify they are non-empty and sentence-formatted (the LLM's description replaces the
+        // raw value with a clinical phrase, e.g. "No ability to use toilet." for value "0").
         org.taniwha.service.DescriptionService.EnrichmentResult toiletResult = results.get("Toilet");
         if (toiletResult != null && toiletResult.valueDescByValue() != null) {
             Map<String, String> vd = toiletResult.valueDescByValue();
-            String d0  = vd.getOrDefault("0",  "");
-            String d10 = vd.getOrDefault("10", "");
-            if (!d0.isEmpty() && !d0.contains("0"))
-                violations.add("Toilet value '0' description should contain the value '0', got: '" + vd.get("0") + "'");
-            if (!d10.isEmpty() && !d10.contains("10"))
-                violations.add("Toilet value '10' description should contain the value '10', got: '" + vd.get("10") + "'");
+            for (Map.Entry<String, String> e : vd.entrySet()) {
+                String val = e.getKey();
+                String desc = e.getValue();
+                if (desc == null || desc.isBlank()) {
+                    violations.add("Toilet value '" + val + "' has an empty description");
+                } else {
+                    if (!Character.isUpperCase(desc.charAt(0)))
+                        violations.add("Toilet value '" + val + "' description should start uppercase: " + desc);
+                    if (!desc.endsWith(".") && !desc.endsWith("!") && !desc.endsWith("?"))
+                        violations.add("Toilet value '" + val + "' description missing sentence terminator: " + desc);
+                }
+            }
         }
 
         // ── Write report ───────────────────────────────────────────────────────
@@ -1254,7 +1263,9 @@ public class OpenMedTerminologyReportTest {
                 if (resp.statusCode() == 200 && resp.body() != null
                         && resp.body().contains("col_key")) {
                     logger.info("[OpenMedReport] Warm-up succeeded on attempt {}", attempt);
-                    return true;
+                    // Also trigger the generative model load so the first /describe_batch
+                    // call in the tests does not time out waiting for the 5 GB model.
+                    return warmUpDescribeBatch();
                 }
             } catch (Exception e) {
                 logger.debug("[OpenMedReport] Warm-up attempt {}: {}", attempt, e.getMessage());
@@ -1265,6 +1276,54 @@ public class OpenMedTerminologyReportTest {
             }
         }
         System.out.println();
+        return false;
+    }
+
+    /**
+     * Sends a minimal {@code /describe_batch} request to pre-load the generative model
+     * (OpenMeditron/Meditron3-Gemma2-2B, ~5 GB).  Loading from the on-disk HuggingFace
+     * cache can take several minutes; we wait up to
+     * {@link #OPENMED_DESCRIBE_WARMUP_TIMEOUT_S} seconds before giving up.
+     *
+     * @return {@code true} when the first successful non-empty response is received
+     */
+    private static boolean warmUpDescribeBatch() {
+        String body = "{\"columns\":[{\"col_key\":\"diagnosis\",\"terminology_label\":\"\","
+                + "\"values\":[{\"v\":\"stroke\"}]}]}";
+        long deadline = System.currentTimeMillis() + OPENMED_DESCRIBE_WARMUP_TIMEOUT_S * 1_000L;
+        System.out.print("  Loading describe model (may take several minutes)");
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                HttpResponse<String> resp = HttpClient.newBuilder()
+                        .version(HttpClient.Version.HTTP_1_1)
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .build()
+                        .send(HttpRequest.newBuilder()
+                                        .uri(URI.create("http://localhost:8002/describe_batch"))
+                                        .timeout(Duration.ofMillis(remaining))
+                                        .header("Content-Type", "application/json")
+                                        .POST(HttpRequest.BodyPublishers.ofString(body))
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200 && resp.body() != null
+                        && resp.body().contains("col_key")) {
+                    System.out.println(" ✓ ready");
+                    logger.info("[OpenMedReport] Describe model warm-up succeeded");
+                    return true;
+                }
+                logger.debug("[OpenMedReport] describe warm-up: status={}", resp.statusCode());
+            } catch (Exception e) {
+                logger.debug("[OpenMedReport] describe warm-up error: {}", e.getMessage());
+            }
+            System.out.print(".");
+            try { Thread.sleep(5_000); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt(); break;
+            }
+        }
+        System.out.println(" ✗ not ready in " + OPENMED_DESCRIBE_WARMUP_TIMEOUT_S + "s");
+        logger.warn("[OpenMedReport] Describe model did not become ready – describe tests will be skipped");
         return false;
     }
 

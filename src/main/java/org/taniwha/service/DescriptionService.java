@@ -42,13 +42,19 @@ public class DescriptionService {
     private int timeoutSeconds;
 
     /** Spring-managed constructor – wires OpenMed via {@link ObjectProvider}. */
+    @org.springframework.beans.factory.annotation.Autowired
     public DescriptionService(ObjectProvider<OpenMedDescriptionService> openMedDescProvider,
                               @Qualifier("llmExecutor") ExecutorService descExecutor) {
         this.openMedDescriptionService = openMedDescProvider.getIfAvailable();
         this.descExecutor = descExecutor;
     }
 
-    /** Test constructor – accepts explicit OpenMed service (may be {@code null}). */
+    /**
+     * Test constructor – accepts an explicit (possibly {@code null}) OpenMed service
+     * instance directly, avoiding the Spring {@link ObjectProvider} indirection.
+     * <p>Used only in unit tests that create {@link DescriptionService} with a mock or
+     * stub; Spring Boot always uses the {@code @Autowired} constructor above.</p>
+     */
     public DescriptionService(OpenMedDescriptionService openMedDescriptionService,
                               ExecutorService descExecutor) {
         this.openMedDescriptionService = openMedDescriptionService;
@@ -172,18 +178,23 @@ public class DescriptionService {
             if (in == null) continue;
             String ck = safe(in.colKey()).trim();
             if (ck.isEmpty()) continue;
-            out.put(ck, new EnrichmentResult(cleanSentence(ck, ck), identityValueMap(in.values())));
+            out.put(ck, new EnrichmentResult(cleanSentence(ck, ck), fallbackValueDescMap(ck, in.values())));
         }
         return out;
     }
 
-    private Map<String, String> identityValueMap(List<ValueSpec> values) {
+    /**
+     * Produces sentence-formatted fallback descriptions for individual values.
+     * Uses the column key as a prefix so that numeric values like "0" become
+     * "Bathing 0." (uppercase start, sentence terminator) rather than just "0".
+     */
+    private Map<String, String> fallbackValueDescMap(String colKey, List<ValueSpec> values) {
         if (values == null || values.isEmpty()) return Map.of();
         Map<String, String> out = new LinkedHashMap<>();
         for (ValueSpec vs : values) {
             if (vs == null) continue;
             String v = safe(vs.v()).trim();
-            if (!v.isEmpty()) out.put(v, v);
+            if (!v.isEmpty()) out.put(v, cleanSentence(colKey + " " + v, v));
         }
         return out;
     }
