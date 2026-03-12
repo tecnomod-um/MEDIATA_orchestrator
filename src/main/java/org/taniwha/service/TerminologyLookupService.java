@@ -46,7 +46,10 @@ public class TerminologyLookupService {
     @Value("${snowstorm.lookup.retryBackoffMs:150}")
     private long snowstormLookupRetryBackoffMs;
 
-    @Value("${terminology.fallback.enabled:true}")
+    // Fallback is disabled by default: MappingEnrichmentHelper.isSnowstormCode() always rejects
+    // synthetic CONCEPT_XXXXXXXXX codes, so the fallback never affects output. Disabling it avoids
+    // the unnecessary embeddingsClient.embed() side-call when rdf-builder is unavailable.
+    @Value("${terminology.fallback.enabled:false}")
     private boolean fallbackEnabled;
 
     public TerminologyLookupService(
