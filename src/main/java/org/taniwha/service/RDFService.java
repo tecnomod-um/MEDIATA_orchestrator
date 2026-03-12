@@ -74,6 +74,10 @@ public class RDFService {
     }
 
     public List<OntologyTermDTO> getClassSuggestions(String query) {
+        if (!pythonAllowAttemptOrProbe()) {
+            logger.debug("[RDFService] rdf-builder unavailable; returning empty class list");
+            return Collections.emptyList();
+        }
         String url = serviceUrl + "/types";
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         List<OntologyTermDTO> suggestions = new ArrayList<>();
@@ -84,6 +88,7 @@ public class RDFService {
                     null,
                     new ParameterizedTypeReference<List<String>>() {}
             );
+            markPythonSuccess();
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<String> types = response.getBody();
                 if (types != null) {
@@ -100,16 +105,24 @@ public class RDFService {
                     }
                 }
             } else {
-                logger.error("Non-200 response from python service when fetching types: {} => {}",
+                logger.debug("[RDFService] Non-200 from rdf-builder fetching types: {} => {}",
                         url, response.getStatusCode());
             }
+        } catch (ResourceAccessException e) {
+            markPythonFailure();
+            logger.debug("[RDFService] rdf-builder unreachable fetching types: {}", shortMsg(e));
         } catch (RestClientException e) {
-            logger.error("Error fetching types from python service: {}", url, e);
+            markPythonFailure();
+            logger.debug("[RDFService] rdf-builder error fetching types: {}", shortMsg(e));
         }
         return suggestions;
     }
 
     public List<FieldMetadataDTO> getClassFields(String type) {
+        if (!pythonAllowAttemptOrProbe()) {
+            logger.debug("[RDFService] rdf-builder unavailable; returning empty fields for type '{}'", type);
+            return Collections.emptyList();
+        }
         String url = serviceUrl + "/form/" + type;
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         try {
@@ -117,6 +130,7 @@ public class RDFService {
                     url, HttpMethod.GET, null,
                     new ParameterizedTypeReference<List<Map<String, Object>>>() {}
             );
+            markPythonSuccess();
             if (response.getStatusCode().is2xxSuccessful()) {
                 List<Map<String, Object>> body = response.getBody();
                 List<FieldMetadataDTO> result = new ArrayList<>();
@@ -130,10 +144,15 @@ public class RDFService {
                 }
                 return result;
             } else {
-                logger.error("Non-200 from {}: {}", url, response.getStatusCode());
+                logger.debug("[RDFService] Non-200 from rdf-builder for class fields: {} => {}",
+                        url, response.getStatusCode());
             }
+        } catch (ResourceAccessException e) {
+            markPythonFailure();
+            logger.debug("[RDFService] rdf-builder unreachable for class fields: {}", shortMsg(e));
         } catch (RestClientException e) {
-            logger.error("Error fetching form fields for {}: {}", type, e.getMessage(), e);
+            markPythonFailure();
+            logger.debug("[RDFService] rdf-builder error for class fields: {}", shortMsg(e));
         }
         return Collections.emptyList();
     }
@@ -216,14 +235,23 @@ public class RDFService {
     }
 
     public String generateRdf() {
+        if (!pythonAllowAttemptOrProbe()) {
+            throw new RuntimeException("rdf-builder service not available");
+        }
         String url = serviceUrl + "/generate-rdf";
         RestTemplate rt = restTemplateConfig.getRestTemplate();
-        ResponseEntity<String> resp = rt.getForEntity(url, String.class);
-        if (!resp.getStatusCode().is2xxSuccessful()) {
-            throw new RuntimeException("Python RDF generation returned " + resp.getStatusCode());
+        try {
+            ResponseEntity<String> resp = rt.getForEntity(url, String.class);
+            markPythonSuccess();
+            if (!resp.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("Python RDF generation returned " + resp.getStatusCode());
+            }
+            logger.info("Python RDF generator said: {}", resp.getBody());
+            return resp.getBody();
+        } catch (ResourceAccessException e) {
+            markPythonFailure();
+            throw new RuntimeException("rdf-builder service not available: " + shortMsg(e), e);
         }
-        logger.info("Python RDF generator said: {}", resp.getBody());
-        return resp.getBody();
     }
 
     @Value("${rdfbuilder.probe.enabled:true}")
@@ -280,13 +308,18 @@ public class RDFService {
     }
 
     private void markPythonSuccess() {
+        PyState prev = pyState.get();
         pyState.set(PyState.UP);
         pyLastSuccess.set(Instant.now());
         pyConsecutiveFailures.set(0);
         pyNextProbeEpochMs.set(0);
+        if (prev == PyState.DOWN) {
+            logger.info("[RDFService] rdf-builder is now reachable; SNOMED terminology lookup enabled.");
+        }
     }
 
     private void markPythonFailure() {
+        PyState prev = pyState.get();
         pyState.set(PyState.DOWN);
         pyLastFailure.set(Instant.now());
 
@@ -294,6 +327,12 @@ public class RDFService {
         long backoff = pythonBaseCooldownMs * (1L << Math.min(10, Math.max(0, fails - 1)));
         backoff = Math.min(pythonMaxCooldownMs, backoff);
         pyNextProbeEpochMs.set(System.currentTimeMillis() + backoff);
+
+        if (fails == 1 || prev == PyState.UP) {
+            logger.info("[RDFService] rdf-builder not reachable (failure #{}). " +
+                    "Terminology lookup will return empty until the service is available. " +
+                    "Next probe in {}ms.", fails, backoff);
+        }
     }
 
     private static String shortMsg(Throwable t) {
