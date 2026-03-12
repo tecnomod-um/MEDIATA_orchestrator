@@ -106,8 +106,14 @@ class MappingEnrichmentHelper {
                 : ((colInputs.size() + inferBatchSize - 1) / inferBatchSize);
         int inferBatchNo = 0;
 
+        // Snowstorm futures: one per inference batch, submitted immediately after each
+        // OpenMed batch completes so that Snowstorm lookups run in parallel with the
+        // next inference batch rather than waiting for all inference to finish first.
+        List<CompletableFuture<Map<String, String>>> snowstormFutures = new ArrayList<>();
+        Set<String> submittedLookupKeys = new HashSet<>();
+
         // ------------------------------------------------------------------
-        // 1) Terminology inference (batched) – OpenMed
+        // 1) Terminology inference (batched) – OpenMed + immediate Snowstorm submit
         // ------------------------------------------------------------------
         for (int i = 0; i < colInputs.size(); i += inferBatchSize) {
             int end = Math.min(colInputs.size(), i + inferBatchSize);
@@ -143,27 +149,59 @@ class MappingEnrichmentHelper {
                     }
                 }
                 logger.info("[TermInfer] batch {}/{} -> inferred {}", inferBatchNo, Math.max(1, totalInferBatches), 0);
-                continue;
+            } else {
+                for (OpenMedTerminologyService.InferredTerm it : inferred) {
+                    if (it == null) continue;
+                    String colKey        = StringUtil.safeTrim(it.colKey());
+                    String colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
+                    Map<String, String> vmap = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+
+                    if (colKey.isEmpty()) continue;
+                    if (colSearchTerm.isEmpty()) colSearchTerm = colKey;
+                    colLookupKeyByCol.put(colKey, colKey + "|" + colSearchTerm);
+
+                    for (Map.Entry<String, String> ve : vmap.entrySet()) {
+                        String rawVal = StringUtil.safeTrim(ve.getKey());
+                        String vTerm  = StringUtil.safeTrim(ve.getValue());
+                        if (!rawVal.isEmpty() && !vTerm.isEmpty()) {
+                            valLookupKeyByValueKey.put(colKey + "|" + rawVal, colKey + "|" + vTerm);
+                        }
+                    }
+                    inferredCols++;
+                }
             }
 
-            for (OpenMedTerminologyService.InferredTerm it : inferred) {
-                if (it == null) continue;
-                String colKey      = StringUtil.safeTrim(it.colKey());
-                String colSearchTerm = StringUtil.safeTrim(it.colSearchTerm());
-                Map<String, String> vmap = it.valueSearchTerms() == null ? Map.of() : it.valueSearchTerms();
+            // Submit Snowstorm lookups for THIS batch immediately without waiting for
+            // the next inference batch to start.
+            if (terminologyLookupService != null) {
+                List<TerminologyLookupService.TerminologyRequest> batchSnowReqs = new ArrayList<>();
+                for (ColumnRecord ci : batch) {
+                    if (ci == null) continue;
+                    String colKey = StringUtil.safeTrim(ci.colKey());
+                    if (colKey.isEmpty()) continue;
 
-                if (colKey.isEmpty()) continue;
-                if (colSearchTerm.isEmpty()) colSearchTerm = colKey;
-                colLookupKeyByCol.put(colKey, colKey + "|" + colSearchTerm);
-
-                for (Map.Entry<String, String> ve : vmap.entrySet()) {
-                    String rawVal = StringUtil.safeTrim(ve.getKey());
-                    String vTerm = StringUtil.safeTrim(ve.getValue());
-                    if (!rawVal.isEmpty() && !vTerm.isEmpty()) {
-                        valLookupKeyByValueKey.put(colKey + "|" + rawVal, colKey + "|" + vTerm);
+                    String colLkup = colLookupKeyByCol.get(colKey);
+                    if (colLkup != null && !StringUtil.safeTrim(colLkup).isEmpty()
+                            && submittedLookupKeys.add(colLkup)) {
+                        batchSnowReqs.add(new TerminologyLookupService.TerminologyRequest(colLkup, null));
+                    }
+                    if (ci.values() != null) {
+                        for (String rv : ci.values()) {
+                            String v = StringUtil.safeTrim(rv);
+                            if (v.isEmpty()) continue;
+                            String vLkup = valLookupKeyByValueKey.get(colKey + "|" + v);
+                            if (vLkup != null && !StringUtil.safeTrim(vLkup).isEmpty()
+                                    && submittedLookupKeys.add(vLkup)) {
+                                batchSnowReqs.add(new TerminologyLookupService.TerminologyRequest(vLkup, colKey));
+                            }
+                        }
                     }
                 }
-                inferredCols++;
+                if (!batchSnowReqs.isEmpty()) {
+                    snowstormFutures.add(terminologyLookupService.submitLookupAsync(batchSnowReqs));
+                    logger.info("[TermLookup] batch {}/{}: submitted {} Snowstorm requests (async)",
+                            inferBatchNo, Math.max(1, totalInferBatches), batchSnowReqs.size());
+                }
             }
 
             if (cb != null) {
@@ -175,51 +213,50 @@ class MappingEnrichmentHelper {
 
         logger.info("[MappingService] terminology inference: cols={}, inferred={}", colInputs.size(), inferredCols);
         if (cb != null) cb.report(30, "Terminology inference complete.");
-        if (cb != null) cb.report(35, "Looking up SNOMED codes…");
+        if (cb != null) cb.report(35, "Waiting for SNOMED lookups…");
 
         // ------------------------------------------------------------------
-        // 2) SNOMED lookup
+        // 2) Collect Snowstorm results (futures were submitted concurrently above)
         // ------------------------------------------------------------------
-        List<TerminologyLookupService.TerminologyRequest> requests = new ArrayList<>();
-        Set<String> seenReq = new HashSet<>();
+        Map<String, String> terminologyResults = new LinkedHashMap<>();
+        for (CompletableFuture<Map<String, String>> f : snowstormFutures) {
+            try {
+                Map<String, String> partial = f.join();
+                if (partial != null) terminologyResults.putAll(partial);
+            } catch (Exception e) {
+                logger.warn("[TermLookup] Snowstorm future failed: {}", e.toString());
+            }
+        }
 
+        // Retry any keys that are still missing from results (once)
+        int missing = 0;
+        List<TerminologyLookupService.TerminologyRequest> retryReqs = new ArrayList<>();
+        Set<String> retrySeenReq = new HashSet<>();
         for (Map.Entry<String, String> e : colLookupKeyByCol.entrySet()) {
-            String lookupKey = e.getValue();
-            if (!StringUtil.safeTrim(lookupKey).isEmpty() && seenReq.add(lookupKey)) {
-                requests.add(new TerminologyLookupService.TerminologyRequest(lookupKey, null));
+            String lookupKey = StringUtil.safeTrim(e.getValue());
+            if (!lookupKey.isEmpty() && !terminologyResults.containsKey(lookupKey)
+                    && retrySeenReq.add(lookupKey)) {
+                retryReqs.add(new TerminologyLookupService.TerminologyRequest(lookupKey, null));
+                missing++;
             }
         }
         for (Map.Entry<String, String> e : valLookupKeyByValueKey.entrySet()) {
-            String valueKey = e.getKey();
-            String lookupKey = e.getValue();
-            String colKey = "";
+            String valueKey  = e.getKey();
+            String lookupKey = StringUtil.safeTrim(e.getValue());
+            String colKey    = "";
             int bar = valueKey.indexOf('|');
             if (bar > 0) colKey = valueKey.substring(0, bar);
-            if (!StringUtil.safeTrim(lookupKey).isEmpty() && seenReq.add(lookupKey)) {
-                requests.add(new TerminologyLookupService.TerminologyRequest(lookupKey, colKey));
+            if (!lookupKey.isEmpty() && !terminologyResults.containsKey(lookupKey)
+                    && retrySeenReq.add(lookupKey)) {
+                retryReqs.add(new TerminologyLookupService.TerminologyRequest(lookupKey, colKey));
+                missing++;
             }
-        }
-
-        logger.info("[MappingService] SNOMED lookup requests={}", requests.size());
-        Map<String, String> terminologyResults =
-                terminologyLookupService == null ? Map.of() : terminologyLookupService.batchLookupTerminology(requests);
-
-        // Retry missing once
-        int missing = 0;
-        List<TerminologyLookupService.TerminologyRequest> retryReqs = new ArrayList<>();
-        for (TerminologyLookupService.TerminologyRequest r : requests) {
-            if (r == null) continue;
-            String k = StringUtil.safeTrim(r.term);
-            if (k.isEmpty()) continue;
-            if (!terminologyResults.containsKey(k)) { missing++; retryReqs.add(r); }
         }
         if (missing > 0 && terminologyLookupService != null) {
             logger.warn("[MappingService] SNOMED missing {} keys, retrying once", missing);
             Map<String, String> retry = terminologyLookupService.batchLookupTerminology(retryReqs);
             if (retry != null && !retry.isEmpty()) {
-                Map<String, String> merged = new LinkedHashMap<>(terminologyResults);
-                merged.putAll(retry);
-                terminologyResults = merged;
+                terminologyResults.putAll(retry);
             }
         }
 
