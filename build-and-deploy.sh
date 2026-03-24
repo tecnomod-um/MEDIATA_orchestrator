@@ -1,44 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+
+has_crlf() {
+  LC_ALL=C grep -q $'\r' "$1" 2>/dev/null
+}
+
+crlf_to_lf_inplace() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  has_crlf "$f" || return 0
+
+  echo "Fixing Windows line endings in $f"
+
+  # GNU sed
+  if sed --version >/dev/null 2>&1; then
+    sed -i 's/\r$//' "$f"
+    return 0
+  fi
+
+  # BSD/macOS sed
+  if sed -i '' 's/\r$//' "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Fallback
+  tmp="${f}.tmp.$$"
+  tr -d '\r' < "$f" > "$tmp"
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
 echo "================================================"
 echo "MEDIATA Orchestrator - Docker Build Script"
 echo "================================================"
 echo
 
-fix_crlf() {
-  local f="$1"
-  [[ -f "$f" ]] || return 0
-  sed -i 's/\r$//' "$f" 2>/dev/null || true
-}
+if [ -f ".env.example" ]; then
+  crlf_to_lf_inplace ".env.example"
+fi
 
-normalize_env_file() {
-  local f="$1"
-  [[ -f "$f" ]] || return 0
-  fix_crlf "$f"
-  sed -i 's/^[[:space:]]\+//' "$f" 2>/dev/null || true
-  sed -i -E 's/^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*/\1=/' "$f" 2>/dev/null || true
-}
-
-dc() {
-  if docker compose version >/dev/null 2>&1; then
-    docker compose "$@"
-  elif command -v docker-compose >/dev/null 2>&1; then
-    docker-compose "$@"
-  else
-    echo "ERROR: Neither 'docker compose' nor 'docker-compose' found."
-    exit 1
-  fi
-}
-
-mkdir_safe() {
-  mkdir -p "$@" 2>/dev/null || true
-}
-
-fix_crlf "$0"
-
-if [[ ! -f ".env" ]]; then
-  if [[ -f ".env.example" ]]; then
+if [ ! -f ".env" ]; then
+  if [ -f ".env.example" ]; then
     echo "No .env found. Creating one from .env.example..."
     normalize_env_file ".env.example"
     cp ".env.example" ".env"
@@ -53,6 +56,9 @@ if [[ ! -f ".env" ]]; then
 else
   normalize_env_file ".env"
 fi
+
+# Normalize .env before sourcing
+crlf_to_lf_inplace ".env"
 
 set -a
 source ".env"
@@ -75,11 +81,8 @@ echo "  ENABLE_FHIR_API=${ENABLE_FHIR_API}"
 echo "Compose profiles: ${profiles[*]:-(none)}"
 echo
 
-# ---------- pre-create commonly mounted host dirs (idempotent) ----------
-mkdir_safe "node-data" "mongo-data" "es-data" "snowstorm-data" 2>/dev/null || true
-
-if [[ "$ENABLE_RDF_BUILDER" == "true" ]]; then
-  if [[ ! -d "mediata-rdf-builder" ]]; then
+if [ "$ENABLE_RDF_BUILDER" = "true" ]; then
+  if [ ! -d "mediata-rdf-builder" ]; then
     echo "ERROR: mediata-rdf-builder directory not found!"
     echo "Clone it first:"
     echo "  git clone https://github.com/tecnomod-um/mediata-rdf-builder.git"
