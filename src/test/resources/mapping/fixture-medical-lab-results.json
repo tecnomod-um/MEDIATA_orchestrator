@@ -1,0 +1,88 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "lab001",
+      "fileName": "lab_system_quest.csv",
+      "column": "White Blood Cell Count",
+      "values": ["double", "min:3.5", "max:15.8"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab002",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "WBC",
+      "values": ["double", "min:3.2", "max:16.1"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "lab003",
+      "fileName": "lab_system_quest.csv",
+      "column": "Serum Creatinine",
+      "values": ["double", "min:0.5", "max:3.2"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab004",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "Cr",
+      "values": ["double", "min:0.6", "max:3.5"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "lab005",
+      "fileName": "lab_system_quest.csv",
+      "column": "Glomerular Filtration Rate",
+      "values": ["integer", "min:15", "max:120"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab006",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "eGFR",
+      "values": ["integer", "min:18", "max:115"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "lab007",
+      "fileName": "lab_system_quest.csv",
+      "column": "Total Cholesterol",
+      "values": ["integer", "min:120", "max:350"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab008",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "Cholesterol Total",
+      "values": ["integer", "min:115", "max:340"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "lab009",
+      "fileName": "lab_system_quest.csv",
+      "column": "Low Density Lipoprotein",
+      "values": ["integer", "min:50", "max:220"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab010",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "LDL",
+      "values": ["integer", "min:48", "max:215"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "lab011",
+      "fileName": "lab_system_quest.csv",
+      "column": "High Density Lipoprotein",
+      "values": ["integer", "min:25", "max:95"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "lab012",
+      "fileName": "lab_system_labcorp.csv",
+      "column": "HDL",
+      "values": ["integer", "min:28", "max:92"],
+      "color": "#4ecdc4"
+    }
+  ]
+}

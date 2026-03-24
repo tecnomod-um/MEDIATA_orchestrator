@@ -1,0 +1,46 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "med001",
+      "fileName": "pharmacy_system_a.csv",
+      "column": "Medication Name",
+      "values": ["Aspirin", "Metformin", "Lisinopril", "Atorvastatin", "Warfarin"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "med002",
+      "fileName": "pharmacy_system_b.csv",
+      "column": "Drug",
+      "values": ["ASA", "Glucophage", "ACE Inhibitor", "Lipitor", "Coumadin"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "med003",
+      "fileName": "pharmacy_system_a.csv",
+      "column": "Dose",
+      "values": ["81mg", "500mg", "10mg", "20mg", "5mg"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "med004",
+      "fileName": "pharmacy_system_b.csv",
+      "column": "Dosage",
+      "values": ["81 mg", "500 mg", "10 mg", "20 mg", "5 mg"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "med005",
+      "fileName": "pharmacy_system_a.csv",
+      "column": "Route",
+      "values": ["PO", "IV", "SC", "IM", "Topical"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "med006",
+      "fileName": "pharmacy_system_b.csv",
+      "column": "Administration Route",
+      "values": ["Oral", "Intravenous", "Subcutaneous", "Intramuscular", "Topical"],
+      "color": "#4ecdc4"
+    }
+  ]
+}
