@@ -3,6 +3,7 @@ package org.taniwha.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -42,7 +43,7 @@ public class DescriptionService {
     private int timeoutSeconds;
 
     /** Spring-managed constructor – wires OpenMed via {@link ObjectProvider}. */
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public DescriptionService(ObjectProvider<OpenMedDescriptionService> openMedDescProvider,
                               @Qualifier("llmExecutor") ExecutorService descExecutor) {
         this.openMedDescriptionService = openMedDescProvider.getIfAvailable();
@@ -50,7 +51,7 @@ public class DescriptionService {
     }
 
     /**
-     * Test constructor – accepts an explicit (possibly {@code null}) OpenMed service
+     * Test constructor – accepts an explicit (possibly {@Error fetching node metadata forcode null}) OpenMed service
      * instance directly, avoiding the Spring {@link ObjectProvider} indirection.
      * <p>Used only in unit tests that create {@link DescriptionService} with a mock or
      * stub; Spring Boot always uses the {@code @Autowired} constructor above.</p>
