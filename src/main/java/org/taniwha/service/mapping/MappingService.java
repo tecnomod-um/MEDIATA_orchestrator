@@ -16,8 +16,8 @@ import org.taniwha.model.LearnedNoise;
 import org.taniwha.model.SimilarityScore;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.JsonSchemaParsingUtil;
@@ -58,7 +58,7 @@ public class MappingService {
 
     public MappingService(EmbeddingService embeddingService,
                           TerminologyLookupService terminologyLookupService,
-                          TerminologyTermInferenceService terminologyInferenceService,
+                          OpenMedTerminologyService openMedTerminologyService,
                           DescriptionService descriptionGenerator,
                           ValueMappingBuilder valueMappingBuilder,
                           ObjectMapper objectMapper,
@@ -72,7 +72,8 @@ public class MappingService {
         this.columnPicker      = new ColumnPicker(mappingSettings);
         this.mappingAssembler  = new MappingAssembler(valueMappingBuilder, mappingSettings);
         this.enrichmentHelper  = new MappingEnrichmentHelper(
-                terminologyInferenceService, terminologyLookupService, descriptionGenerator, mappingSettings);
+                openMedTerminologyService,
+                terminologyLookupService, descriptionGenerator, mappingSettings);
 
         logger.info("[MappingService] Initialized.");
     }

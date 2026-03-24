@@ -249,23 +249,21 @@ public class EmbeddingModelBenchmarkTest {
         Mockito.when(terminologyService.batchLookupTerminology(Mockito.any()))
             .thenReturn(Collections.emptyMap());
 
-        TerminologyTermInferenceService inferenceService =
-            Mockito.mock(TerminologyTermInferenceService.class);
-        Mockito.when(inferenceService.batchSize()).thenReturn(5);
-        Mockito.when(inferenceService.inferBatch(Mockito.any()))
-            .thenReturn(Collections.emptyList());
-
-        LLMTextGenerator llm = Mockito.mock(LLMTextGenerator.class);
-        Mockito.when(llm.isEnabled()).thenReturn(false);
-
         ExecutorService executor = Executors.newFixedThreadPool(4);
-        DescriptionService descriptionService = new DescriptionService(llm, executor);
+        DescriptionService descriptionService = new DescriptionService(
+                (OpenMedDescriptionService) null, executor);
 
         ValueMappingBuilder valueMappingBuilder = new ValueMappingBuilder(embeddingService);
 
+        org.taniwha.service.OpenMedTerminologyService openMedService =
+            Mockito.mock(org.taniwha.service.OpenMedTerminologyService.class);
+        Mockito.when(openMedService.batchSize()).thenReturn(5);
+        Mockito.when(openMedService.inferBatch(Mockito.any()))
+            .thenReturn(Collections.emptyList());
+
         return new MappingService(
-            embeddingService, terminologyService, inferenceService,
-            descriptionService, valueMappingBuilder, OBJECT_MAPPER, SETTINGS
+            embeddingService, terminologyService,
+            openMedService, descriptionService, valueMappingBuilder, OBJECT_MAPPER, SETTINGS
         );
     }
 
