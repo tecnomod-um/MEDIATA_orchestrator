@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   mediata-network:
     driver: bridge
@@ -8,6 +6,7 @@ volumes:
   mongodb-data:
   elasticsearch-data:
   kerby-data:
+  ollama-models:
 
 services:
   mongodb:
@@ -118,6 +117,43 @@ services:
       retries: 10
       start_period: 180s
 
+  # Optional: Ollama LLM service (enabled by profile "ollama")
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: mediata-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    networks:
+      - mediata-network
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # OpenMed Terminology Service (NER + Meditron3-Gemma2-2B description generation)
+  openmed:
+    build:
+      context: .
+      dockerfile: Dockerfile.openmed
+    container_name: mediata-openmed
+    restart: unless-stopped
+    ports:
+      - "${OPENMED_HOST_PORT:-8002}:8002"
+    networks:
+      - mediata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+
   orchestrator:
     build:
       context: .
@@ -131,6 +167,8 @@ services:
       mongodb:
         condition: service_healthy
       snowstorm:
+        condition: service_healthy
+      openmed:
         condition: service_healthy
 
     ports:
@@ -151,6 +189,13 @@ services:
       # Spring toggles (used by your /api/system/capabilities DTO, and by local launcher configs)
       - PY_LAUNCHER_ENABLED=${PY_LAUNCHER_ENABLED:-true}
       - FHIR_LAUNCHER_ENABLED=${FHIR_LAUNCHER_ENABLED:-true}
+
+      # Ollama LLM configuration - can point to container (with profile) or host
+      - SPRING_AI_OLLAMA_BASE_URL=${SPRING_AI_OLLAMA_BASE_URL:-http://localhost:11434}
+      - LLM_ENABLED=${LLM_ENABLED:-true}
+
+      # OpenMed Terminology Service - always points to the openmed container
+      - OPENMED_URL=${OPENMED_URL:-http://openmed:8002}
 
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}

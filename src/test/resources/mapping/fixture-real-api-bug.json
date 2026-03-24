@@ -1,0 +1,25 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "697cad1f4cc864115bcd9ff0",
+      "fileName": "fimbartheltodos_elements.csv",
+      "column": "Sex",
+      "values": ["D", "H"],
+      "color": "#eea9a8"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "Sex",
+      "values": ["F", "M"],
+      "color": "#74d0c4"
+    },
+    {
+      "nodeId": "6985e7f96e3bee26c16a813a",
+      "fileName": "SCUBA_1_elements.csv",
+      "column": "AF (Y/N)",
+      "values": ["FLUTTER", "Y", "N"],
+      "color": "#74d0c4"
+    }
+  ]
+}
