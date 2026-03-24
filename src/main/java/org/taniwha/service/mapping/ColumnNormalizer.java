@@ -19,9 +19,7 @@ class ColumnNormalizer {
 
     private static final Logger logger = LoggerFactory.getLogger(ColumnNormalizer.class);
 
-    /** Minimum length of a single-token concept before compound splitting is attempted. */
     private static final int MIN_COMPOUND_WORD_LENGTH = 8;
-    /** Minimum character length for each half of a compound split (left and right). */
     private static final int MIN_SUBTOKEN_LENGTH = 3;
 
     private final MappingServiceSettings settings;

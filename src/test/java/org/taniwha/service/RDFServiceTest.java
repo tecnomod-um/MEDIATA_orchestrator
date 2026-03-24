@@ -39,6 +39,9 @@ class RDFServiceTest {
         svc = new RDFService(cfg);
         ReflectionTestUtils.setField(svc, "serviceUrl", base);
         ReflectionTestUtils.setField(svc, "pythonCsvDir", "target/tmpCsv");
+        // Disable the Python-service health probe so that mock RestTemplate calls are
+        // never short-circuited by the unreachable service guard in tests.
+        ReflectionTestUtils.setField(svc, "pythonProbeEnabled", false);
     }
 
     @Test

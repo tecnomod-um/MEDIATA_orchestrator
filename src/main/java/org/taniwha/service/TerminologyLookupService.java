@@ -46,7 +46,10 @@ public class TerminologyLookupService {
     @Value("${snowstorm.lookup.retryBackoffMs:150}")
     private long snowstormLookupRetryBackoffMs;
 
-    @Value("${terminology.fallback.enabled:true}")
+    // Fallback is disabled by default: MappingEnrichmentHelper.isSnowstormCode() always rejects
+    // synthetic CONCEPT_XXXXXXXXX codes, so the fallback never affects output. Disabling it avoids
+    // the unnecessary embeddingsClient.embed() side-call when rdf-builder is unavailable.
+    @Value("${terminology.fallback.enabled:false}")
     private boolean fallbackEnabled;
 
     public TerminologyLookupService(
@@ -77,6 +80,73 @@ public class TerminologyLookupService {
             this.term = term;
             this.context = context;
         }
+    }
+
+    /**
+     * Submits all lookup requests to the backing executor and returns a
+     * {@link CompletableFuture} that completes when every lookup is done (or after
+     * the configured {@code snowstorm.timeout} seconds), <em>without blocking the
+     * calling thread</em>.
+     *
+     * <p>This is the non-blocking counterpart to {@link #batchLookupTerminology}.
+     * Use it when you want to pipeline Snowstorm lookups with subsequent work
+     * (e.g. the next OpenMed inference batch): submit one future per inference
+     * batch and join all futures at the end.</p>
+     *
+     * <p>The returned future always completes normally; on timeout it returns
+     * whatever results were collected so far.</p>
+     *
+     * @param requests lookup requests (null-safe)
+     * @return future of results map keyed by {@code request.term}
+     */
+    public CompletableFuture<Map<String, String>> submitLookupAsync(List<TerminologyRequest> requests) {
+        if (!snowstormEnabled || requests == null || requests.isEmpty()) {
+            return CompletableFuture.completedFuture(Collections.emptyMap());
+        }
+
+        Map<String, String> results = new ConcurrentHashMap<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        for (TerminologyRequest request : requests) {
+            if (request == null) continue;
+            final String termKey = safe(request.term).trim();
+            if (termKey.isEmpty()) continue;
+            final String ctx = safe(request.context).trim();
+            final String cacheKey = termKey + "|" + ctx;
+
+            String cached = terminologyCache.get(cacheKey);
+            if (cached != null) {
+                results.put(termKey, cached);
+                continue;
+            }
+
+            futures.add(CompletableFuture.runAsync(() -> {
+                String out;
+                try {
+                    LookupParts lp = splitValueKey(termKey, ctx);
+                    out = lookupSingleTerminology(lp.lookupTerm, lp.lookupContext);
+                } catch (Exception e) {
+                    logger.warn("[TerminologyService] async lookup error key='{}': {}", termKey, e.toString());
+                    out = "";
+                }
+                if (out == null) out = "";
+                results.put(termKey, out);
+                terminologyCache.put(cacheKey, out);
+            }, executorService));
+        }
+
+        if (futures.isEmpty()) {
+            return CompletableFuture.completedFuture(results);
+        }
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .orTimeout(snowstormTimeoutSeconds, TimeUnit.SECONDS)
+                .handle((v, ex) -> {
+                    if (ex != null) {
+                        logger.warn("[TerminologyService] async batch timed out or error: {}", ex.toString());
+                    }
+                    return (Map<String, String>) results;
+                });
     }
 
     public Map<String, String> batchLookupTerminology(List<TerminologyRequest> requests) {
@@ -226,7 +296,7 @@ public class TerminologyLookupService {
                     if (code.isEmpty()) return null;
                     String label = s.getLabel();
                     label = (label == null) ? "" : label.trim();
-                    return label.isEmpty() ? code : (code + "|" + label);
+                    return label.isEmpty() ? code : (label + " | " + code);
                 })
                 .filter(Objects::nonNull)
                 .findFirst()

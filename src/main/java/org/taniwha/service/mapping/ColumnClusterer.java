@@ -33,7 +33,7 @@ class ColumnClusterer {
      * recognise it as an abbreviation when the remainder is a standard English morphological
      * suffix, NOT a compound-word second part (e.g. "fim" in "totalfim").
      */
-    private static final Set<String> GRAMMATICAL_SUFFIXES = Set.of("ing", "ed", "er", "ers", "s", "es");
+    private static final Set<String> GRAMMATICAL_SUFFIXES = Set.of("ing", "ed", "er", "ers", "s", "es", "age");
 
     /**
      * Generic temporal/unit/qualifier tokens that should not contribute to Jaccard token overlap.
@@ -293,6 +293,15 @@ class ColumnClusterer {
                     String remainder = singleToken.substring(abbrev.length());
                     if (GRAMMATICAL_SUFFIXES.contains(remainder)) return true;
                 }
+                // English silent-e elision: "dose" → "dos" + "age" = "dosage".
+                // When the candidate ends in 'e', also check the stem (without the 'e').
+                if (abbrev.endsWith("e") && abbrev.length() > 3) {
+                    String stem = abbrev.substring(0, abbrev.length() - 1);
+                    if (singleToken.length() > stem.length() && singleToken.startsWith(stem)) {
+                        String remainder = singleToken.substring(stem.length());
+                        if (GRAMMATICAL_SUFFIXES.contains(remainder)) return true;
+                    }
+                }
             }
             return false;
         }
@@ -311,7 +320,10 @@ class ColumnClusterer {
             // ("at", "to", "by") and must not act as initialism abbreviations.  Without this
             // guard "at" in "age at injury" would incorrectly match the initials of
             // "tsi to admission days" (which share 'a' and 't').
-            if (candidateTokens.length > 1 && fullParts.size() > 1 && abbrev.length() < 3) continue;
+            // Exception: allow 2-char abbreviations when the abbreviation length equals the
+            // number of full-concept tokens exactly (perfect initialism, e.g. "HR" ↔ "Heart Rate").
+            if (candidateTokens.length > 1 && fullParts.size() > 1
+                    && abbrev.length() < 3 && abbrev.length() != fullParts.size()) continue;
 
             Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
             for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
@@ -333,9 +345,13 @@ class ColumnClusterer {
             // candidate token must also match some remaining full token (by equality or prefix).
             // This prevents "tot barthel" from abbreviating "total motor" just because "tot" is
             // a strict prefix of "total" — "barthel" has no match in ["motor"].
+            // Exception: when the full-concept token being prefix-matched looks like an acronym
+            // (≤ 1 vowel, 3-6 chars) the prefix is treated as a named-entity stem and the
+            // remaining-token guard is skipped (e.g. "NIH" prefix of "NIHSS").
             for (String token : fullParts) {
                 if (token.length() > abbrev.length() && token.startsWith(abbrev)) {
                     if (candidateTokens.length > 1 && fullParts.size() > 1) {
+                        if (isAcronymLike(token)) return true;
                         if (remainingTokensMatch(abbrev, candidateTokens, token, fullParts)) return true;
                     } else {
                         return true;
@@ -343,9 +359,12 @@ class ColumnClusterer {
                 }
             }
 
-            // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR
-            for (int start = 1; start <= abbrev.length() - 3; start++) {
+            // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR.
+            // Minimum suffix length is 2 so that common 2-char acronym tails (e.g. "SS" in
+            // "NIHSS" ↔ "NIH Stroke Scale") are also recognised.
+            for (int start = 1; start <= abbrev.length() - 2; start++) {
                 String suffix = abbrev.substring(start);
+                if (suffix.length() < 2) continue;
                 Map<Character, Integer> suffixMultiset = new LinkedHashMap<>();
                 for (char c : suffix.toCharArray()) suffixMultiset.merge(c, 1, Integer::sum);
                 boolean suffixMatch = true;
@@ -400,6 +419,22 @@ class ColumnClusterer {
     // ------------------------------------------------------------------
     // Value-embedding evidence
     // ------------------------------------------------------------------
+
+    /**
+     * Returns {@code true} when {@code token} appears to be an acronym or abbreviation
+     * rather than a regular English word.  Heuristic: at most one vowel and length in [3, 6].
+     * Used by the Case 2 prefix check to skip the remaining-token guard when the matched
+     * full-concept token is itself an acronym (e.g. {@code "nihss"} in
+     * {@code "nihss score"} being prefix-matched by {@code "nih"}).
+     */
+    private static boolean isAcronymLike(String token) {
+        if (token == null || token.length() < 3 || token.length() > 6) return false;
+        long vowels = 0;
+        for (char c : token.toCharArray()) {
+            if ("aeiou".indexOf(c) >= 0) vowels++;
+        }
+        return vowels <= 1;
+    }
 
     /**
      * Returns {@code true} when the char-n-gram value centroids of the two clusters have

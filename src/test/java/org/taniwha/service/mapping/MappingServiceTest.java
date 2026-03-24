@@ -10,8 +10,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
+import org.taniwha.service.OpenMedTerminologyService;
 import org.taniwha.service.TerminologyLookupService;
-import org.taniwha.service.TerminologyTermInferenceService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
@@ -40,7 +40,7 @@ class MappingServiceTest {
     private TerminologyLookupService terminologyService;
 
     @Mock
-    private TerminologyTermInferenceService terminologyInferenceService;
+    private OpenMedTerminologyService openMedTerminologyService;
 
     @Mock
     private DescriptionService descriptionGenerator;
@@ -58,7 +58,8 @@ class MappingServiceTest {
                 60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
         );
         mappingService = new MappingService(
-                embeddingService, terminologyService, terminologyInferenceService,
+                embeddingService, terminologyService,
+                openMedTerminologyService,
                 descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings
         );
 
@@ -73,9 +74,9 @@ class MappingServiceTest {
         lenient().when(terminologyService.batchLookupTerminology(any()))
             .thenReturn(Collections.emptyMap());
 
-        // Setup default mock behavior for TerminologyTermInferenceService
-        lenient().when(terminologyInferenceService.batchSize()).thenReturn(5);
-        lenient().when(terminologyInferenceService.inferBatch(any())).thenReturn(Collections.emptyList());
+        // Setup default mock behavior for OpenMedTerminologyService
+        lenient().when(openMedTerminologyService.batchSize()).thenReturn(5);
+        lenient().when(openMedTerminologyService.inferBatch(any())).thenReturn(Collections.emptyList());
 
         // Setup default mock behavior for DescriptionGenerator
         lenient().when(descriptionGenerator.generateEnrichmentBatchAsync(any()))
