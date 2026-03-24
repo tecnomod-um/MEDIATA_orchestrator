@@ -36,6 +36,11 @@ services:
       - node.store.allow_mmap=false
       - node.name=snowstorm
       - cluster.name=snowstorm-cluster
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD__ENABLED=true
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_LOW=20gb
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_HIGH=10gb
+      - ES_SETTING_CLUSTER_ROUTING_ALLOCATION_DISK_WATERMARK_FLOOD__STAGE=5gb
+
     ports:
       - "${SNOWSTORM_ES_HOST_PORT:-9200}:9200"
     volumes:
@@ -203,7 +208,8 @@ services:
 
     extra_hosts:
       - "localhost:host-gateway"
-
+      - "host.docker.internal:host-gateway"
+      
     volumes:
       - kerby-data:/app/kerby
     networks:
