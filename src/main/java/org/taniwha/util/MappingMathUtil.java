@@ -4,18 +4,22 @@ public final class MappingMathUtil {
     private MappingMathUtil() {}
 
     public static double cosine(float[] a, float[] b) {
+        if (a == null || b == null) return 0.0;
         int n = Math.min(a.length, b.length);
-        double dot = 0.0;
-        for (int i = 0; i < n; i++) dot += (double) a[i] * (double) b[i];
-        return dot;
-    }
+        if (n == 0) return 0.0;
 
-    public static void l2NormalizeInPlace(float[] v) {
-        double sum = 0.0;
-        for (float x : v) sum += (double) x * (double) x;
-        double norm = Math.sqrt(sum);
-        if (norm < 1e-12) return;
-        for (int i = 0; i < v.length; i++) v[i] = (float) (v[i] / norm);
+        double dot = 0.0;
+        double normA = 0.0;
+        double normB = 0.0;
+        for (int i = 0; i < n; i++) {
+            double x = a[i];
+            double y = b[i];
+            dot += x * y;
+            normA += x * x;
+            normB += y * y;
+        }
+        if (normA < 1e-12 || normB < 1e-12) return 0.0;
+        return dot / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
     public static int clamp(int x, int lo, int hi) {
@@ -28,6 +32,4 @@ public final class MappingMathUtil {
         try { return Integer.parseInt(s == null ? "" : s.trim()); }
         catch (Exception ignore) { return def; }
     }
-
-
 }

@@ -7,8 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.*;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
@@ -64,20 +63,36 @@ public class NodeAccessService {
         }
 
         String url = nodeInfo.getServiceUrl() + "/taniwha/node/metadata";
+        RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
 
         try {
-            RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
             ResponseEntity<NodeMetadata> response = restTemplate.getForEntity(url, NodeMetadata.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {
                 return response.getBody();
-            } else {
-                logger.error("Non-200 status fetching node metadata: {} => {}",
-                        url, response.getStatusCode());
-                return null;
             }
+
+            logger.warn("Unexpected status fetching node metadata for nodeId {} from {}: {}",
+                    nodeId, url, response.getStatusCode());
+            return null;
+
+        } catch (HttpClientErrorException.NotFound e) {
+            logger.debug("No metadata found for nodeId {} at {}", nodeId, url);
+            return null;
+        } catch (HttpClientErrorException e) {
+            logger.warn("Client error fetching node metadata for nodeId {} from {}: {} {}", nodeId, url, e.getStatusCode(), e.getStatusText());
+            return null;
+
+        } catch (HttpServerErrorException e) {
+            logger.error("Server error fetching node metadata for nodeId {} from {}: {} {}", nodeId, url, e.getStatusCode(), e.getStatusText());
+            return null;
+
+        } catch (ResourceAccessException e) {
+            logger.error("I/O error fetching node metadata for nodeId {} from {}", nodeId, url, e);
+            return null;
         } catch (RestClientException e) {
-            logger.error("Error fetching node metadata for nodeId {} with url {}", nodeId, url, e);
+            logger.error("Unexpected error fetching node metadata for nodeId {} from {}",
+                    nodeId, url, e);
             return null;
         }
     }

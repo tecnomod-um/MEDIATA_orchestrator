@@ -8,6 +8,6 @@ import java.util.List;
 @Getter
 @Setter
 public class MappingSuggestRequestDTO {
-    private List<ElementFileDTO> elementFiles;
+    private List<ColumnInFileDTO> elementFiles;
     private String schema;
 }

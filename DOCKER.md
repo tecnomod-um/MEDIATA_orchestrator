@@ -30,8 +30,9 @@ nano .env  # Set JWT_SECRET (32+ characters required)
 - MongoDB 7.0
 - Elasticsearch 8.11.1
 - Snowstorm (SNOMED CT server)
-- RDF Builder (Python service)
-- FHIR API (Python service)
+- **OpenMed Terminology Service** (NER + Meditron3-Gemma2-2B description generation)
+- RDF Builder (Python service, optional)
+- FHIR API (Python service, optional)
 - MEDIATA Orchestrator
 
 **Service URLs:**
@@ -40,6 +41,7 @@ nano .env  # Set JWT_SECRET (32+ characters required)
 - MongoDB: mongodb://localhost:27017/mediata
 - Elasticsearch: http://localhost:9200
 - Snowstorm: http://localhost:9100
+- OpenMed: http://localhost:8002/health
 - RDF Builder: http://localhost:8000/docs
 - FHIR API: http://localhost:8001/docs
 
@@ -67,6 +69,7 @@ mvn spring-boot:run
 **What gets launched automatically:**
 - Elasticsearch (in Docker)
 - Snowstorm (in Docker)
+- **OpenMed Terminology Service** (Python service from `mediata-openmed/`, auto-launched)
 - RDF Builder (Python service from cloned repo)
 - FHIR API (Python service from cloned repo)
 - MEDIATA Orchestrator (local Java process)
@@ -77,20 +80,22 @@ mvn spring-boot:run
 - MongoDB: Your configured URI
 - Elasticsearch: http://localhost:9200
 - Snowstorm: http://localhost:9100
+- OpenMed: http://localhost:8002/health
 - RDF Builder: http://localhost:8000/docs
 - FHIR API: http://localhost:8001/docs
 
 ## Port Mapping
 
-| Service       | Port  | Description             |
-|---------------|-------|-------------------------|
-| orchestrator  | 8088  | Main application API    |
-| orchestrator  | 8089  | Kerberos KDC            |
-| mongodb       | 27017 | MongoDB database        |
-| elasticsearch | 9200  | Elasticsearch           |
-| snowstorm     | 9100  | Snowstorm API           |
-| rdf-builder   | 8000  | RDF Builder API         |
-| fhir-api      | 8001  | FHIR Clustering API     |
+| Service       | Port  | Description                                 |
+|---------------|-------|---------------------------------------------|
+| orchestrator  | 8088  | Main application API                        |
+| orchestrator  | 8089  | Kerberos KDC                                |
+| openmed       | 8002  | OpenMed Terminology Service (NER + LLM)     |
+| mongodb       | 27017 | MongoDB database                            |
+| elasticsearch | 9200  | Elasticsearch                               |
+| snowstorm     | 9100  | Snowstorm API                               |
+| rdf-builder   | 8000  | RDF Builder API                             |
+| fhir-api      | 8001  | FHIR Clustering API                         |
 
 ## Useful Commands
 
@@ -198,6 +203,13 @@ Ensure repositories are cloned in the project root:
 ```bash
 ls -la mediata-rdf-builder/
 ls -la InteroperabilityFHIRAPI/
+ls -la mediata-openmed/   # should already be present (part of this repo)
+```
+
+Check the OpenMed service health:
+```bash
+curl http://localhost:8002/health
+# Expected: {"status":"ok","ner_model_loaded":true,...}
 ```
 
 Check Python version (3.11+ required):
