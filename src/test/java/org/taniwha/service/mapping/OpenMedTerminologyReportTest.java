@@ -230,7 +230,7 @@ public class OpenMedTerminologyReportTest {
 
     private static final int ES_STARTUP_TIMEOUT_S        = 90;
     private static final int SNOWSTORM_STARTUP_TIMEOUT_S = 180;
-    private static final int OPENMED_HEALTH_TIMEOUT_S    = 30;
+    private static final int OPENMED_HEALTH_TIMEOUT_S    = 120;
     private static final int OPENMED_WARMUP_TIMEOUT_S    = 30;
     /** Extra seconds to wait for the 5 GB Meditron3 generative model to load from disk. */
     private static final int OPENMED_DESCRIBE_WARMUP_TIMEOUT_S = 300;
@@ -640,7 +640,8 @@ public class OpenMedTerminologyReportTest {
         org.taniwha.util.PythonLauncherUtil.loadDotEnv(projectRoot.resolve(".env").toFile(), env);
 
         Path venvDir = projectRoot.resolve(".venv");
-        if (venvDir.toFile().isDirectory()) {
+        if (venvDir.toFile().isDirectory()
+                && venvDir.resolve("bin").resolve("activate").toFile().exists()) {
             System.out.println("    venv found – launching service directly…");
             String cmd = "source " + venvDir.toAbsolutePath() + "/bin/activate"
                     + " && uvicorn main:app --host 0.0.0.0 --port 8002";
@@ -653,7 +654,9 @@ public class OpenMedTerminologyReportTest {
                 proc.destroy();
             }));
         } else {
-            System.out.println("    No venv – running full setup…");
+            System.out.println("    " + (venvDir.toFile().isDirectory()
+                    ? "venv incomplete (missing bin/activate) – running setup…"
+                    : "No venv – running full setup…"));
             java.io.File venvFile = org.taniwha.util.PythonLauncherUtil.ensureVirtualEnv(projectRoot, env);
             java.io.File python   = org.taniwha.util.PythonLauncherUtil.pickPython(venvFile);
             org.taniwha.util.PythonLauncherUtil.ensureDependencies(
