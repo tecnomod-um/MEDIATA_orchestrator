@@ -18,7 +18,8 @@ public class PythonLauncherUtil {
     public static File ensureVirtualEnv(Path projectDir, Map<String, String> env) {
         File dir = projectDir.toFile();
         File venv = projectDir.resolve(".venv").toFile();
-        if (!venv.exists()) {
+        File activate = new File(venv, "bin/activate");
+        if (!activate.exists()) {
             logger.info("Creating virtualenv…");
             if (!runBash(dir, env, "python3 -m venv .venv"))
                 throw new IllegalStateException("Could not create virtualenv in " + projectDir);
