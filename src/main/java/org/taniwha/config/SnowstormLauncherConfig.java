@@ -193,8 +193,9 @@ public class SnowstormLauncherConfig {
     }
 
     private boolean httpResponds(String url) {
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(1000);
             c.setReadTimeout(2000);
             c.setRequestMethod("GET");
@@ -202,6 +203,8 @@ public class SnowstormLauncherConfig {
             return code >= 200 && code < 500;
         } catch (Exception e) {
             return false;
+        } finally {
+            if (c != null) c.disconnect();
         }
     }
 
