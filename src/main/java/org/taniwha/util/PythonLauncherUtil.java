@@ -4,8 +4,10 @@ import org.slf4j.Logger;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -34,7 +36,7 @@ public class PythonLauncherUtil {
     public static void loadDotEnv(File dotEnv, Map<String, String> env) {
         if (!dotEnv.exists()) return;
         logger.info("Loading .env");
-        try (BufferedReader r = new BufferedReader(new FileReader(dotEnv))) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(dotEnv), StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
                 line = line.trim();

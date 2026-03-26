@@ -21,6 +21,7 @@ import org.taniwha.kerberos.CustomKdcServer;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -137,12 +138,12 @@ public class KerberosService {
 
             if (krbTicket instanceof TgtTicket) {
                 TgtTicket tgtTicket = (TgtTicket) krbTicket;
-                byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes();
+                byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes(StandardCharsets.UTF_8);
                 objStream.writeInt(clientPrincipalBytes.length);
                 objStream.write(clientPrincipalBytes);
             } else if (krbTicket instanceof SgtTicket) {
                 SgtTicket sgtTicket = (SgtTicket) krbTicket;
-                byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes();
+                byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes(StandardCharsets.UTF_8);
                 objStream.writeInt(clientPrincipalBytes.length);
                 objStream.write(clientPrincipalBytes);
             }
@@ -172,7 +173,7 @@ public class KerberosService {
             int clientPrincipalLength = objStream.readInt();
             byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
             objStream.readFully(clientPrincipalBytes);
-            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
+            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes, StandardCharsets.UTF_8));
 
             if (isTgt) {
                 return new TgtTicket(ticket, (EncAsRepPart) encKdcRepPart, clientPrincipal);
