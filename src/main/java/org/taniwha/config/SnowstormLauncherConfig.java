@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Profile;
 import java.io.File;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -193,8 +194,9 @@ public class SnowstormLauncherConfig {
     }
 
     private boolean httpResponds(String url) {
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(1000);
             c.setReadTimeout(2000);
             c.setRequestMethod("GET");
@@ -202,6 +204,8 @@ public class SnowstormLauncherConfig {
             return code >= 200 && code < 500;
         } catch (Exception e) {
             return false;
+        } finally {
+            if (c != null) c.disconnect();
         }
     }
 
@@ -230,7 +234,7 @@ public class SnowstormLauncherConfig {
                 .redirectErrorStream(true)
                 .start();
         String out;
-        try (Scanner s = new Scanner(p.getInputStream()).useDelimiter("\\A")) {
+        try (Scanner s = new Scanner(p.getInputStream(), StandardCharsets.UTF_8).useDelimiter("\\A")) {
             out = s.hasNext() ? s.next().trim() : "";
         }
         p.waitFor();
@@ -245,7 +249,7 @@ public class SnowstormLauncherConfig {
 
         Process p = pb.start();
         String out;
-        try (Scanner s = new Scanner(p.getInputStream()).useDelimiter("\\A")) {
+        try (Scanner s = new Scanner(p.getInputStream(), StandardCharsets.UTF_8).useDelimiter("\\A")) {
             out = s.hasNext() ? s.next() : "";
         }
         p.waitFor();

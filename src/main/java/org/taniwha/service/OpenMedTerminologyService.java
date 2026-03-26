@@ -52,12 +52,15 @@ import java.util.Objects;
 public class OpenMedTerminologyService {
 
     private static final Logger logger = LoggerFactory.getLogger(OpenMedTerminologyService.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
 
     /** Mirrors the structure of {@link TerminologyTermInferenceService.InferredTerm}. */
     public record InferredTerm(String colKey, String colSearchTerm, Map<String, String> valueSearchTerms) {}
 
     private final RDFService rdfService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${openmed.service.url:http://localhost:8002}")
     private String openmedUrl;
@@ -268,14 +271,9 @@ public class OpenMedTerminologyService {
                 c.put("values", col.values() != null ? col.values() : List.of());
                 colInputs.add(c);
             }
-            String body = objectMapper.writeValueAsString(Map.of("columns", colInputs));
+            String body = OBJECT_MAPPER.writeValueAsString(Map.of("columns", colInputs));
 
             logger.debug("[OpenMed] POST {}/infer_batch – {} columns", openmedUrl, colInputs.size());
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofMillis(timeoutMs))
-                    .version(HttpClient.Version.HTTP_1_1)   // uvicorn speaks HTTP/1.1
-                    .build();
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(openmedUrl + "/infer_batch"))
@@ -284,14 +282,14 @@ public class OpenMedTerminologyService {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 logger.warn("[OpenMed] Non-200 response from OpenMed service: {}", response.statusCode());
                 return List.of();
             }
 
-            Map<String, Object> parsed = objectMapper.readValue(response.body(), new TypeReference<>() {});
+            Map<String, Object> parsed = OBJECT_MAPPER.readValue(response.body(), new TypeReference<>() {});
             return parseOpenMedResponse(parsed);
 
         } catch (java.net.ConnectException | java.net.http.HttpConnectTimeoutException e) {

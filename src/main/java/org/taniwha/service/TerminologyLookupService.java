@@ -191,8 +191,11 @@ public class TerminologyLookupService {
                     .get(snowstormTimeoutSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             logger.warn("[TerminologyService] batch timeout after {}s", snowstormTimeoutSeconds);
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             logger.warn("[TerminologyService] batch interrupted: {}", e.toString());
+        } catch (Exception e) {
+            logger.warn("[TerminologyService] batch error: {}", e.toString());
         }
 
         return results;

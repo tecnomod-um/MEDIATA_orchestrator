@@ -39,8 +39,10 @@ import java.util.Objects;
 public class OpenMedDescriptionService {
 
     private static final Logger logger = LoggerFactory.getLogger(OpenMedDescriptionService.class);
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
 
     @Value("${openmed.service.url:http://localhost:8002}")
     private String openmedUrl;
@@ -106,12 +108,7 @@ public class OpenMedDescriptionService {
                 colPayload.add(c);
             }
 
-            String body = objectMapper.writeValueAsString(Map.of("columns", colPayload));
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofMillis(timeoutMs))
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .build();
+            String body = OBJECT_MAPPER.writeValueAsString(Map.of("columns", colPayload));
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(openmedUrl + "/describe_batch"))
@@ -120,7 +117,7 @@ public class OpenMedDescriptionService {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 logger.warn("[OpenMedDesc] Non-200 from OpenMed /describe_batch: {}", response.statusCode());
@@ -145,7 +142,7 @@ public class OpenMedDescriptionService {
     @SuppressWarnings("unchecked")
     private Map<String, DescriptionService.EnrichmentResult> parseDescribeResponse(String json) {
         try {
-            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            Map<String, Object> parsed = OBJECT_MAPPER.readValue(json, new TypeReference<>() {});
             Object colsObj = parsed.get("columns");
             if (!(colsObj instanceof List<?> cols)) return Map.of();
 
