@@ -18,6 +18,7 @@ import org.taniwha.dto.OntologyTermDTO;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -167,7 +168,7 @@ public class RDFService {
             return Collections.emptyList();
         }
 
-        String url = serviceUrl + "/term/" + q;
+        String url = serviceUrl + "/term/" + URLEncoder.encode(q, StandardCharsets.UTF_8);
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
 
         try {
@@ -295,8 +296,9 @@ public class RDFService {
     }
 
     private boolean probePython() {
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(pythonHealthUrl).openConnection();
+            c = (HttpURLConnection) new URL(pythonHealthUrl).openConnection();
             c.setConnectTimeout(pythonProbeConnectTimeoutMs);
             c.setReadTimeout(pythonProbeReadTimeoutMs);
             c.setRequestMethod("GET");
@@ -304,6 +306,8 @@ public class RDFService {
             return code >= 200 && code < 500;
         } catch (Exception e) {
             return false;
+        } finally {
+            if (c != null) c.disconnect();
         }
     }
 

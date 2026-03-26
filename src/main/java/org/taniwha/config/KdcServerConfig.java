@@ -20,6 +20,7 @@ import org.taniwha.kerberos.KerberosConfigFileGenerator;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
@@ -191,7 +192,7 @@ public class KdcServerConfig {
             throw new IOException("Failed to create directory: " + krb5ConfFile.getParentFile().getAbsolutePath());
         }
 
-        try (FileWriter writer = new FileWriter(krb5ConfFile)) {
+        try (FileWriter writer = new FileWriter(krb5ConfFile, StandardCharsets.UTF_8)) {
             writer.write(krb5ConfContent);
         }
 
