@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Profile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
@@ -73,7 +74,7 @@ public class PythonFHIRLauncherConfig {
                 .directory(new File(projectRoot))
                 .redirectErrorStream(true)
                 .start();
-        try (Scanner s = new Scanner(p.getInputStream()).useDelimiter("\\A")) {
+        try (Scanner s = new Scanner(p.getInputStream(), StandardCharsets.UTF_8).useDelimiter("\\A")) {
             p.waitFor();
             return s.hasNext() ? s.next() : "";
         }

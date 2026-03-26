@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Profile;
 import java.io.File;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -233,7 +234,7 @@ public class SnowstormLauncherConfig {
                 .redirectErrorStream(true)
                 .start();
         String out;
-        try (Scanner s = new Scanner(p.getInputStream()).useDelimiter("\\A")) {
+        try (Scanner s = new Scanner(p.getInputStream(), StandardCharsets.UTF_8).useDelimiter("\\A")) {
             out = s.hasNext() ? s.next().trim() : "";
         }
         p.waitFor();
@@ -248,7 +249,7 @@ public class SnowstormLauncherConfig {
 
         Process p = pb.start();
         String out;
-        try (Scanner s = new Scanner(p.getInputStream()).useDelimiter("\\A")) {
+        try (Scanner s = new Scanner(p.getInputStream(), StandardCharsets.UTF_8).useDelimiter("\\A")) {
             out = s.hasNext() ? s.next() : "";
         }
         p.waitFor();

@@ -470,6 +470,10 @@ public class ValueMappingBuilder {
         int totalConsidered = 0;
         int totalMapped = 0;
 
+        if (sources == null) {
+            return Collections.emptyList();
+        }
+
         for (EmbeddedColumn src : sources) {
             List<String> rawVals = StringUtil.safeList(src.rawValues);
 
@@ -793,7 +797,7 @@ public class ValueMappingBuilder {
             if (best == null || score > bestScore) {
                 best = t;
                 bestScore = score;
-            } else if (score == bestScore && best != null && t.compareToIgnoreCase(best) < 0) {
+            } else if (score == bestScore && t.compareToIgnoreCase(best) < 0) {
                 best = t;
             }
         }
@@ -1055,8 +1059,9 @@ public class ValueMappingBuilder {
         for (int i = 0; i < lim; i++) {
             EmbeddedColumn c = picked.get(i);
             String stats = (c == null || c.stats == null) ? "stats=null" : statsSummary(c);
+            String concept = c == null ? "null" : StringUtil.safe(c.concept);
             log.debug("[VMB] {}: src[{}] {} concept='{}' {}",
-                    stage, i, sourceKey(c), StringUtil.safe(c.concept), stats);
+                    stage, i, sourceKey(c), concept, stats);
         }
         if (picked.size() > lim) {
             log.debug("[VMB] {}: ... {} more sources omitted", stage, picked.size() - lim);
