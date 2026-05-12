@@ -32,6 +32,7 @@ import java.util.Base64;
 public class KerberosService {
 
     private static final Logger logger = LoggerFactory.getLogger(KerberosService.class);
+    private final Object krbClientLock = new Object();
 
     private final CustomKdcServer kdcServer;
 
@@ -98,7 +99,10 @@ public class KerberosService {
     public String requestTgt(String userPrincipal, String password) {
         try {
             logger.debug("Requesting TGT for user principal: {} with password {}", userPrincipal, password);
-            TgtTicket tgtTicket = krbClient.requestTgt(userPrincipal, password);
+            TgtTicket tgtTicket;
+            synchronized (krbClientLock) {
+                tgtTicket = krbClient.requestTgt(userPrincipal, password);
+            }
             logger.debug("TGT acquired for user principal: {}", userPrincipal);
             return encodeKrbTicket(tgtTicket);
         } catch (KrbException | IOException e) {
@@ -110,7 +114,10 @@ public class KerberosService {
     public String requestSgt(String userTgtToken, String servicePrincipal) throws IOException, KrbException {
         logger.debug("Requesting SGT ticket");
         TgtTicket tgtTicket = (TgtTicket) decodeKrbTicket(userTgtToken, true);
-        SgtTicket sgtTicket = krbClient.requestSgt(tgtTicket, servicePrincipal);
+        SgtTicket sgtTicket;
+        synchronized (krbClientLock) {
+            sgtTicket = krbClient.requestSgt(tgtTicket, servicePrincipal);
+        }
         return encodeKrbTicket(sgtTicket);
     }
 

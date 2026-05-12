@@ -3,11 +3,14 @@ package org.taniwha.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+// Runs a startup check that initializes the embedding model, logs vector dimension
 @Configuration
+@ConditionalOnBean(EmbeddingModel.class)
 public class EmbeddingsWarmupConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingsWarmupConfig.class);

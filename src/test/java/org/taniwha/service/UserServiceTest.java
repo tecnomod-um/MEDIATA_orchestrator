@@ -7,12 +7,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.taniwha.dto.LoginResponseDTO;
 import org.taniwha.dto.RegisterRequestDTO;
+import org.taniwha.model.NodeInfo;
 import org.taniwha.model.Role;
 import org.taniwha.model.User;
 import org.taniwha.repository.RoleRepository;
@@ -143,6 +145,44 @@ class UserServiceTest {
     }
 
     @Test
+    void loginUser_whenKerberosReturnsNullTgt_failsLogin() {
+        String username = "joe", password = "pw";
+        User stored = new User(
+                "x", username, "Epw", "e",
+                Collections.emptyList(),
+                Collections.emptyList()
+        );
+        when(userRepo.findByUsername(username)).thenReturn(stored);
+        when(jwtUtil.generateToken(username)).thenReturn("JWT");
+        when(krb.getRealm()).thenReturn("null");
+        when(krb.getPrincipalName(username, "null")).thenReturn(username + "@null");
+        when(krb.requestTgt(username + "@null", password)).thenReturn(null);
+
+        assertThatThrownBy(() -> svc.loginUser(username, password))
+                .isInstanceOf(AuthenticationServiceException.class)
+                .hasMessageContaining("Kerberos TGT request failed");
+    }
+
+    @Test
+    void loginUser_whenKerberosReturnsBlankTgt_failsLogin() {
+        String username = "joe", password = "pw";
+        User stored = new User(
+                "x", username, "Epw", "e",
+                Collections.emptyList(),
+                Collections.emptyList()
+        );
+        when(userRepo.findByUsername(username)).thenReturn(stored);
+        when(jwtUtil.generateToken(username)).thenReturn("JWT");
+        when(krb.getRealm()).thenReturn("null");
+        when(krb.getPrincipalName(username, "null")).thenReturn(username + "@null");
+        when(krb.requestTgt(username + "@null", password)).thenReturn("   ");
+
+        assertThatThrownBy(() -> svc.loginUser(username, password))
+                .isInstanceOf(AuthenticationServiceException.class)
+                .hasMessageContaining("Kerberos TGT request failed");
+    }
+
+    @Test
     void loadUserByUsername_foundAndNotFound() {
         User u = new User(
                 "1", "alice", "pw", "e",
@@ -169,7 +209,7 @@ class UserServiceTest {
         User u = new User(
                 "1", "a", "p", "e",
                 Collections.emptyList(),
-                Collections.singletonList(new org.taniwha.model.NodeInfo() {{
+                Collections.singletonList(new NodeInfo() {{
                     setNodeId("n1");
                 }})
         );

@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import java.io.File;
 import java.nio.file.Paths;
 
+// KDC client setup
 @Configuration
 public class KdcClientConfig {
 
@@ -25,7 +26,6 @@ public class KdcClientConfig {
             throw new IllegalStateException("krb5.conf not found at: " + krb5Conf.getAbsolutePath());
         }
 
-        // Kerby supports KrbClient(File). Your compile log confirms this constructor exists.
         KrbClient client = new KrbClient(krb5Conf);
         client.init();
 

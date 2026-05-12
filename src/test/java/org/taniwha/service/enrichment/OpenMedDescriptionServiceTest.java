@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.enrichment;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -8,6 +8,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.taniwha.model.ColumnEnrichmentInput;
+import org.taniwha.model.EnrichmentResult;
+import org.taniwha.model.ValueSpec;
 
 import java.util.List;
 import java.util.Map;
@@ -80,10 +83,10 @@ class OpenMedDescriptionServiceTest {
     @DisplayName("disabled service returns empty map immediately")
     void disabled_returnsEmptyMap() {
         ReflectionTestUtils.setField(service, "enabled", false);
-        DescriptionService.ColumnEnrichmentInput input =
-                new DescriptionService.ColumnEnrichmentInput(
+        ColumnEnrichmentInput input =
+            new ColumnEnrichmentInput(
                         "Diagnosis", "Diagnosis | 46317288002",
-                        List.of(new DescriptionService.ValueSpec("Hypertension", null, null)));
+                List.of(new ValueSpec("Hypertension", null, null)));
         assertThat(service.describeColumns(List.of(input))).isEmpty();
         logger.info("[OpenMedDescTest] disabled → empty map ✓");
     }
@@ -104,10 +107,10 @@ class OpenMedDescriptionServiceTest {
     void descriptionService_usesOpenMed_whenAvailable() {
         OpenMedDescriptionService openMedMock = new OpenMedDescriptionService() {
             @Override
-            public Map<String, DescriptionService.EnrichmentResult> describeColumns(
-                    List<DescriptionService.ColumnEnrichmentInput> inputs) {
+                public Map<String, EnrichmentResult> describeColumns(
+                    List<ColumnEnrichmentInput> inputs) {
                 return Map.of("Diagnosis",
-                        new DescriptionService.EnrichmentResult(
+                    new EnrichmentResult(
                                 "Diagnosis column (SNOMED-based).",
                                 Map.of("Hypertension", "Elevated arterial blood pressure.")));
             }
@@ -116,12 +119,12 @@ class OpenMedDescriptionServiceTest {
         DescriptionService descSvc = new DescriptionService(
                 openMedMock, Executors.newSingleThreadExecutor());
 
-        DescriptionService.ColumnEnrichmentInput input =
-                new DescriptionService.ColumnEnrichmentInput(
+        ColumnEnrichmentInput input =
+            new ColumnEnrichmentInput(
                         "Diagnosis", "Diagnosis | 46317288002",
-                        List.of(new DescriptionService.ValueSpec("Hypertension", null, null)));
+                List.of(new ValueSpec("Hypertension", null, null)));
 
-        Map<String, DescriptionService.EnrichmentResult> result =
+        Map<String, EnrichmentResult> result =
                 descSvc.generateEnrichmentBatchAsync(List.of(input)).join();
 
         assertThat(result).containsKey("Diagnosis");
@@ -137,8 +140,8 @@ class OpenMedDescriptionServiceTest {
     void descriptionService_fallsBackWhenOpenMedEmpty() {
         OpenMedDescriptionService emptyOpenMed = new OpenMedDescriptionService() {
             @Override
-            public Map<String, DescriptionService.EnrichmentResult> describeColumns(
-                    List<DescriptionService.ColumnEnrichmentInput> inputs) {
+            public Map<String, EnrichmentResult> describeColumns(
+                    List<ColumnEnrichmentInput> inputs) {
                 return Map.of();
             }
         };
@@ -146,10 +149,10 @@ class OpenMedDescriptionServiceTest {
         DescriptionService descSvc = new DescriptionService(
                 emptyOpenMed, Executors.newSingleThreadExecutor());
 
-        DescriptionService.ColumnEnrichmentInput input =
-                new DescriptionService.ColumnEnrichmentInput("Diagnosis", "", List.of());
+        ColumnEnrichmentInput input =
+            new ColumnEnrichmentInput("Diagnosis", "", List.of());
 
-        Map<String, DescriptionService.EnrichmentResult> result =
+        Map<String, EnrichmentResult> result =
                 descSvc.generateEnrichmentBatchAsync(List.of(input)).join();
 
         assertThat(result).containsKey("Diagnosis");

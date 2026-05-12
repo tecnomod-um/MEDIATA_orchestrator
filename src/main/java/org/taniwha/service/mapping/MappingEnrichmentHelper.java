@@ -5,11 +5,15 @@ import org.slf4j.LoggerFactory;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
+import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.model.ColumnRecord;
-import org.taniwha.service.DescriptionService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.model.ColumnEnrichmentInput;
+import org.taniwha.model.EnrichmentResult;
+import org.taniwha.model.ValueSpec;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.StringUtil;
 
@@ -19,13 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
-/**
- * Orchestrates the terminology-lookup and description-generation pipeline that enriches a
- * set of {@link SuggestedMappingDTO} objects after initial column matching.
- * <p>
- * Extracted from {@link MappingService} for maintainability.
- * </p>
- */
+// Enriches suggested mappings with terminology matches and generated descriptions.
 class MappingEnrichmentHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingEnrichmentHelper.class);
@@ -47,13 +45,6 @@ class MappingEnrichmentHelper {
         this.settings = settings;
     }
 
-    // ------------------------------------------------------------------
-    // Post-processing: description fallbacks
-    // ------------------------------------------------------------------
-
-    /**
-     * Guarantees that every mapping entry has a non-empty description and non-null terminology.
-     */
     void ensureNonEmptyMappingDescriptions(List<Map<String, SuggestedMappingDTO>> allMappings) {
         for (Map<String, SuggestedMappingDTO> mappingMap : allMappings) {
             if (mappingMap == null) continue;
@@ -68,21 +59,6 @@ class MappingEnrichmentHelper {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Main enrichment pipeline
-    // ------------------------------------------------------------------
-
-    /**
-     * Runs the full enrichment pipeline:
-     * <ol>
-     *   <li>Infers SNOMED search terms per column/value via the OpenMed service (primary)
-     *       or the LLM inference service (fallback), both batched.</li>
-     *   <li>Looks up SNOMED codes in bulk (with one retry for missing keys).
-     *       When Snowstorm returns nothing, the OpenMed-suggested term itself is kept.</li>
-     *   <li>Applies terminology codes to mapping DTOs.</li>
-     *   <li>Generates plain-language descriptions via the LLM (async, windowed).</li>
-     * </ol>
-     */
     void populateTerminologyAndDescriptionsBatch(
             List<Map<String, SuggestedMappingDTO>> allMappings,
             ProgressReporter cb
@@ -92,7 +68,6 @@ class MappingEnrichmentHelper {
 
         List<ColumnRecord> colInputs = getColumnInputs(allMappings);
 
-        // Use OpenMed batch size when available, fall back to default.
         int inferBatchSize = openMedTerminologyService != null
                 ? openMedTerminologyService.batchSize()
                 : 5;
@@ -106,15 +81,10 @@ class MappingEnrichmentHelper {
                 : ((colInputs.size() + inferBatchSize - 1) / inferBatchSize);
         int inferBatchNo = 0;
 
-        // Snowstorm futures: one per inference batch, submitted immediately after each
-        // OpenMed batch completes so that Snowstorm lookups run in parallel with the
-        // next inference batch rather than waiting for all inference to finish first.
         List<CompletableFuture<Map<String, String>>> snowstormFutures = new ArrayList<>();
+        // Reuse lookup keys across the whole run so one column or value pair is only submitted once.
         Set<String> submittedLookupKeys = new HashSet<>();
 
-        // ------------------------------------------------------------------
-        // 1) Terminology inference (batched) – OpenMed + immediate Snowstorm submit
-        // ------------------------------------------------------------------
         for (int i = 0; i < colInputs.size(); i += inferBatchSize) {
             int end = Math.min(colInputs.size(), i + inferBatchSize);
             List<ColumnRecord> batch = colInputs.subList(i, end);
@@ -171,8 +141,6 @@ class MappingEnrichmentHelper {
                 }
             }
 
-            // Submit Snowstorm lookups for THIS batch immediately without waiting for
-            // the next inference batch to start.
             if (terminologyLookupService != null) {
                 List<TerminologyLookupService.TerminologyRequest> batchSnowReqs = new ArrayList<>();
                 for (ColumnRecord ci : batch) {
@@ -198,6 +166,7 @@ class MappingEnrichmentHelper {
                     }
                 }
                 if (!batchSnowReqs.isEmpty()) {
+                    // Submit Snowstorm work per inference batch so local inference and remote lookup overlap.
                     snowstormFutures.add(terminologyLookupService.submitLookupAsync(batchSnowReqs));
                     logger.info("[TermLookup] batch {}/{}: submitted {} Snowstorm requests (async)",
                             inferBatchNo, Math.max(1, totalInferBatches), batchSnowReqs.size());
@@ -215,9 +184,6 @@ class MappingEnrichmentHelper {
         if (cb != null) cb.report(30, "Terminology inference complete.");
         if (cb != null) cb.report(35, "Waiting for SNOMED lookups…");
 
-        // ------------------------------------------------------------------
-        // 2) Collect Snowstorm results (futures were submitted concurrently above)
-        // ------------------------------------------------------------------
         Map<String, String> terminologyResults = new LinkedHashMap<>();
         for (CompletableFuture<Map<String, String>> f : snowstormFutures) {
             try {
@@ -228,9 +194,9 @@ class MappingEnrichmentHelper {
             }
         }
 
-        // Retry any keys that are still missing from results (once)
         int missing = 0;
         List<TerminologyLookupService.TerminologyRequest> retryReqs = new ArrayList<>();
+        // Preserve the first retry per lookup key so later duplicates do not reshuffle priorities.
         Set<String> retrySeenReq = new HashSet<>();
         for (Map.Entry<String, String> e : colLookupKeyByCol.entrySet()) {
             String lookupKey = StringUtil.safeTrim(e.getValue());
@@ -263,10 +229,7 @@ class MappingEnrichmentHelper {
         logger.info("[MappingService] SNOMED lookup done: returned={}", terminologyResults.size());
         if (cb != null) cb.report(60, "SNOMED lookup complete. Applying terminologies…");
 
-        // ------------------------------------------------------------------
-        // 3) Apply terminology + build description task list
-        // ------------------------------------------------------------------
-        record EnrichTask(String colKey, SuggestedMappingDTO mapping, List<DescriptionService.ValueSpec> valueSpecs) {}
+        record EnrichTask(String colKey, SuggestedMappingDTO mapping, List<ValueSpec> valueSpecs) {}
 
         List<EnrichTask> tasks = new ArrayList<>();
         int colCount = 0;
@@ -290,6 +253,7 @@ class MappingEnrichmentHelper {
                         if (group == null || group.getValues() == null) continue;
                         for (SuggestedValueDTO value : group.getValues()) {
                             if (value == null) continue;
+                            // Value terminology is scoped by column and raw label so identical words stay column-specific.
                             String valueName = StringUtil.safeTrim(value.getName());
                             if (valueName.isEmpty()) continue;
                             String vLookupKey = valLookupKeyByValueKey.get(colKey + "|" + valueName);
@@ -309,9 +273,6 @@ class MappingEnrichmentHelper {
             }
         }
 
-        // ------------------------------------------------------------------
-        // 4) Generate descriptions (async, windowed)
-        // ------------------------------------------------------------------
         if (cb != null) cb.report(65, "Terminologies applied. Generating descriptions…");
         final int totalColsToDescribe = tasks.size();
 
@@ -327,6 +288,7 @@ class MappingEnrichmentHelper {
 
         Consumer<List<CompletableFuture<Void>>> flushWindow = window -> {
             if (window.isEmpty()) return;
+            // Keep description joins bounded so slow providers do not monopolize the whole enrichment pass.
             CompletableFuture.allOf(window.toArray(new CompletableFuture[0])).join();
             window.clear();
         };
@@ -339,10 +301,10 @@ class MappingEnrichmentHelper {
             batchNo++;
             final int thisBatchNo = batchNo;
 
-            List<DescriptionService.ColumnEnrichmentInput> inputs = new ArrayList<>(batch.size());
+            List<ColumnEnrichmentInput> inputs = new ArrayList<>(batch.size());
             for (EnrichTask t : batch) {
                 if (t == null || t.mapping() == null) continue;
-                inputs.add(new DescriptionService.ColumnEnrichmentInput(
+                inputs.add(new ColumnEnrichmentInput(
                         t.colKey(),
                         StringUtil.safe(t.mapping().getTerminology()),
                         t.valueSpecs()
@@ -382,18 +344,14 @@ class MappingEnrichmentHelper {
         if (cb != null) cb.report(100, "Done.");
     }
 
-    // ------------------------------------------------------------------
-    // Description helpers
-    // ------------------------------------------------------------------
-
     private void applyDescriptionResult(
             String colKey,
             SuggestedMappingDTO mapping,
-            Map<String, DescriptionService.EnrichmentResult> results,
+            Map<String, EnrichmentResult> results,
             AtomicInteger doneCols,
             IntConsumer reportProgress
     ) {
-        DescriptionService.EnrichmentResult r = (results == null) ? null : results.get(colKey);
+        EnrichmentResult r = (results == null) ? null : results.get(colKey);
 
         if (r != null) {
             String cd = r.colDesc();
@@ -443,10 +401,6 @@ class MappingEnrichmentHelper {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Column-input extraction
-    // ------------------------------------------------------------------
-
     private static List<ColumnRecord> getColumnInputs(List<Map<String, SuggestedMappingDTO>> allMappings) {
         Map<String, Set<String>> valuesByCol = new LinkedHashMap<>();
 
@@ -478,34 +432,27 @@ class MappingEnrichmentHelper {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Value-spec extraction
-    // ------------------------------------------------------------------
-
-    private List<DescriptionService.ValueSpec> extractValueSpecs(SuggestedMappingDTO mapping) {
-        List<DescriptionService.ValueSpec> out = new ArrayList<>();
+    private List<ValueSpec> extractValueSpecs(SuggestedMappingDTO mapping) {
+        List<ValueSpec> out = new ArrayList<>();
         if (mapping == null || mapping.getGroups() == null) return out;
 
         Set<String> seen = new HashSet<>();
-        List<DescriptionService.ValueSpec> raw = new ArrayList<>();
+        List<ValueSpec> raw = new ArrayList<>();
         for (SuggestedGroupDTO group : mapping.getGroups()) {
             if (group == null || group.getValues() == null) continue;
             for (SuggestedValueDTO value : group.getValues()) {
                 if (value == null) continue;
                 String name = StringUtil.safeTrim(value.getName());
                 if (name.isEmpty() || !seen.add(name)) continue;
-                raw.add(new DescriptionService.ValueSpec(name, extractMinFromValue(value), extractMaxFromValue(value)));
+                raw.add(new ValueSpec(name, extractMinFromValue(value), extractMaxFromValue(value)));
                 if (raw.size() >= 10) break;
             }
             if (raw.size() >= 10) break;
         }
 
-        // Compute the scale min and max from the numeric value names so that Python's
-        // /describe_batch can anchor ordinal descriptions correctly (e.g. "completely
-        // dependent" at 0 and "fully independent" at 10 for a Barthel 0-10 item).
         double scaleMin = Double.POSITIVE_INFINITY;
         double scaleMax = Double.NEGATIVE_INFINITY;
-        for (DescriptionService.ValueSpec vs : raw) {
+        for (ValueSpec vs : raw) {
             try {
                 double d = Double.parseDouble(vs.v());
                 if (d < scaleMin) scaleMin = d;
@@ -516,13 +463,11 @@ class MappingEnrichmentHelper {
         String scaleMinStr = hasNumericScale ? String.valueOf((long) scaleMin) : null;
         String scaleMaxStr = hasNumericScale ? String.valueOf((long) scaleMax) : null;
 
-        for (DescriptionService.ValueSpec vs : raw) {
+        for (ValueSpec vs : raw) {
             try {
                 Double.parseDouble(vs.v());
-                // Numeric value: use the scale min/max for full context
-                out.add(new DescriptionService.ValueSpec(vs.v(), scaleMinStr, scaleMaxStr));
+                out.add(new ValueSpec(vs.v(), scaleMinStr, scaleMaxStr));
             } catch (NumberFormatException e) {
-                // Non-numeric value: keep the interval bounds as-is (may be null)
                 out.add(vs);
             }
         }
@@ -531,7 +476,7 @@ class MappingEnrichmentHelper {
 
     private String extractMinFromValue(SuggestedValueDTO value) {
         if (value == null || value.getMapping() == null) return null;
-        for (org.taniwha.dto.SuggestedRefDTO ref : value.getMapping()) {
+        for (SuggestedRefDTO ref : value.getMapping()) {
             if (ref == null) continue;
             Object v = ref.getValue();
             if (v instanceof Map) {
@@ -546,7 +491,7 @@ class MappingEnrichmentHelper {
 
     private String extractMaxFromValue(SuggestedValueDTO value) {
         if (value == null || value.getMapping() == null) return null;
-        for (org.taniwha.dto.SuggestedRefDTO ref : value.getMapping()) {
+        for (SuggestedRefDTO ref : value.getMapping()) {
             if (ref == null) continue;
             Object v = ref.getValue();
             if (v instanceof Map) {
@@ -559,26 +504,6 @@ class MappingEnrichmentHelper {
         return null;
     }
 
-    // ------------------------------------------------------------------
-    // Terminology resolution helper
-    // ------------------------------------------------------------------
-
-    /**
-     * Returns the resolved terminology for {@code lookupKey} from Snowstorm results,
-     * accepting <em>only</em> valid SNOMED codes.
-     *
-     * <p>A value is accepted when it matches the Snowstorm output format:
-     * {@code "label | numericConceptId"} (e.g. {@code "Diabetes mellitus | 73211009"})
-     * or the bare numeric-only form {@code "numericConceptId"}.
-     * Synthetic hash codes ({@code CONCEPT_XXXXXXXXX}), raw search phrases, and
-     * empty strings are all rejected and {@code ""} is returned, guaranteeing that
-     * the {@code terminology} field of every mapping DTO is either a genuine SNOMED
-     * code or empty.</p>
-     *
-     * @param lookupKey the composite key in {@code "colKey|searchTerm"} format
-     * @param results   the Snowstorm results map keyed by lookupKey
-     * @return a SNOMED label+code string, or {@code ""}
-     */
     private static String resolveTerminology(
             String lookupKey,
             Map<String, String> results
@@ -587,27 +512,11 @@ class MappingEnrichmentHelper {
         return isSnowstormCode(value) ? value : "";
     }
 
-    /**
-     * Returns {@code true} when {@code value} is in the Snowstorm SNOMED format.
-     *
-     * <p>Accepted formats:
-     * <ul>
-     *   <li>{@code "label | numericConceptId"} – e.g. {@code "Diabetes mellitus | 73211009"}</li>
-     *   <li>{@code "numericConceptId"} – bare code without a label (uncommon but valid)</li>
-     * </ul>
-     * SNOMED CT concept IDs are at minimum 6 digits; typical codes are 7–18 digits.
-     */
     private static boolean isSnowstormCode(String value) {
         if (value == null || value.isBlank()) return false;
         String v = value.trim();
-        // New preferred format: "label | code"  (e.g. "Diabetes mellitus | 73211009")
-        // Also accept bare numeric code for robustness.
         return v.matches("^.+ \\| \\d{6,}$") || v.matches("^\\d{6,}$");
     }
-
-    // ------------------------------------------------------------------
-    // Logging utilities
-    // ------------------------------------------------------------------
 
     private static String shortStr(String s, int maxLen) {
         String x = StringUtil.safeTrim(s).replaceAll("\\s+", " ");

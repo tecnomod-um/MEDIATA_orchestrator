@@ -74,7 +74,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 || uri.equals("/taniwha/api/user/register")
                 || uri.startsWith("/taniwha/api/error")
                 || uri.equals("/taniwha/nodes/register")
-                || uri.equals("/taniwha/nodes/heartbeat");
+                || uri.equals("/taniwha/nodes/heartbeat")
+                || uri.equals("/taniwha/nodes/deregister");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {

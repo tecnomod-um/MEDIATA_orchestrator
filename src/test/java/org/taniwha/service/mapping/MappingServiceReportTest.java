@@ -13,20 +13,22 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
-import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
-import org.taniwha.service.OpenMedDescriptionService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.TerminologyLookupService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.EmbeddingsClient;
 import org.taniwha.service.RDFService;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedDescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.ParaphraseService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.springframework.ai.embedding.EmbeddingModel;
 
 import java.io.*;
@@ -89,8 +91,9 @@ public class MappingServiceReportTest {
                 RDFService rdfService,
                 EmbeddingsClient embeddingsClient,
                 @org.springframework.beans.factory.annotation.Qualifier("llmExecutor")
-                org.springframework.beans.factory.ObjectProvider<java.util.concurrent.ExecutorService> exec) {
-            return new TerminologyLookupService(rdfService, embeddingsClient, exec);
+                org.springframework.beans.factory.ObjectProvider<java.util.concurrent.ExecutorService> exec,
+                org.springframework.beans.factory.ObjectProvider<ParaphraseService> paraphraseProvider) {
+            return new TerminologyLookupService(rdfService, embeddingsClient, exec, paraphraseProvider);
         }
 
         @Bean
@@ -118,8 +121,8 @@ public class MappingServiceReportTest {
         }
 
         @Bean
-        public org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings() {
-            return new org.taniwha.config.MappingConfig.MappingServiceSettings(
+        public MappingServiceSettings mappingSettings() {
+            return new MappingServiceSettings(
                     60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6
             );
         }
@@ -128,19 +131,19 @@ public class MappingServiceReportTest {
         public MappingService mappingService(
                 EmbeddingService embeddingService,
                 TerminologyLookupService terminologyLookupService,
-                org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
+                OpenMedTerminologyService openMedTerminologyService,
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
+                MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
                     openMedTerminologyService, descriptionGenerator,
                     valueMappingBuilder, objectMapper, mappingSettings);
         }
 
         @Bean
-        public org.taniwha.service.OpenMedTerminologyService openMedTerminologyService(RDFService rdfService) {
-            return new org.taniwha.service.OpenMedTerminologyService(rdfService);
+        public OpenMedTerminologyService openMedTerminologyService(RDFService rdfService) {
+            return new OpenMedTerminologyService(rdfService);
         }
 
         @Bean
@@ -454,10 +457,11 @@ public class MappingServiceReportTest {
         // 2) Otherwise use default classpath resource.
         InputStream in = getClass().getClassLoader().getResourceAsStream("mapping/fixture-request.json");
         if (in == null) {
-            fail("No -DmappingFixture provided and missing test resource: src/test/resources/mapping/fixture-request.json"
-                    + "\nEither:"
-                    + "\n  - Provide a fixture: mvn -DmappingFixture=/abs/path/to/request.json -Dtest=MappingServiceReportTest test"
-                    + "\n  - Or add the resource: src/test/resources/mapping/fixture-request.json");
+            fail("""
+                    No -DmappingFixture provided and missing test resource: src/test/resources/mapping/fixture-request.json\
+                    Either:\
+                      - Provide a fixture: mvn -DmappingFixture=/abs/path/to/request.json -Dtest=MappingServiceReportTest test\
+                      - Or add the resource: src/test/resources/mapping/fixture-request.json""");
         }
 
         try {

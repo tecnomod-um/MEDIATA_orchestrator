@@ -18,7 +18,6 @@ import org.taniwha.dto.OntologyTermDTO;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,8 +26,11 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -47,6 +49,9 @@ public class RDFService {
     @Value("${rdfbuilder.csvpath}")
     private String pythonCsvDir;
     private enum PyState { UNKNOWN, UP, DOWN }
+
+    @Value("${snowstorm.api.url:http://localhost:9100}")
+    private String snowstormApiUrl;
 
     @Value("${rdfbuilder.healthUrl:${rdfbuilder.service.url}/types}")
     private String pythonHealthUrl;
@@ -87,7 +92,7 @@ public class RDFService {
                     url,
                     HttpMethod.GET,
                     null,
-                    new ParameterizedTypeReference<List<String>>() {}
+                    new ParameterizedTypeReference<>() {}
             );
             markPythonSuccess();
             if (response.getStatusCode().is2xxSuccessful()) {
@@ -129,7 +134,7 @@ public class RDFService {
         try {
             ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
                     url, HttpMethod.GET, null,
-                    new ParameterizedTypeReference<List<Map<String, Object>>>() {}
+                    new ParameterizedTypeReference<>() {}
             );
             markPythonSuccess();
             if (response.getStatusCode().is2xxSuccessful()) {
@@ -162,66 +167,27 @@ public class RDFService {
         String q = safe(query).trim();
         if (q.isEmpty()) return Collections.emptyList();
 
-        // If python service not reachable (and in cooldown), return blanks immediately.
-        if (!pythonAllowAttemptOrProbe()) {
-            logger.debug("[RDFService] Python service not reachable (cooldown). Returning 0 SNOMED suggestions for query='{}'", q);
-            return Collections.emptyList();
+        List<String> searchVariants = buildSearchVariants(q);
+        if (searchVariants.isEmpty()) return Collections.emptyList();
+
+        Set<String> seenConceptIds = new HashSet<>();
+        List<OntologyTermDTO> suggestions = new ArrayList<>();
+
+        for (String variant : searchVariants) {
+            for (SearchRequest request : buildSearchRequests(variant)) {
+                List<OntologyTermDTO> items = executeSnowstormSearch(request);
+                for (OntologyTermDTO item : items) {
+                    if (item == null) continue;
+                    String iri = safe(item.getIri());
+                    String conceptId = iri.replace("http://snomed.info/sct/", "").trim();
+                    if (conceptId.isEmpty() || !seenConceptIds.add(conceptId)) continue;
+                    suggestions.add(item);
+                    if (suggestions.size() >= 12) return suggestions;
+                }
+            }
         }
 
-        String url = serviceUrl + "/term/" + URLEncoder.encode(q, StandardCharsets.UTF_8);
-        RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
-
-        try {
-            ResponseEntity<List<String>> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.GET,
-                    null,
-                    new ParameterizedTypeReference<List<String>>() {}
-            );
-
-            markPythonSuccess();
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                logger.debug("[RDFService] Non-2xx from python service for SNOMED terms: {} => {}",
-                        url, response.getStatusCode());
-                return Collections.emptyList();
-            }
-
-            List<String> terms = response.getBody();
-            if (terms == null || terms.isEmpty()) return Collections.emptyList();
-
-            List<OntologyTermDTO> suggestions = new ArrayList<>(terms.size());
-            int idCounter = 1;
-
-            for (String term : terms) {
-                if (term == null) continue;
-                String[] parts = term.split("\\|", 2);
-                String code = safe(parts.length > 0 ? parts[0] : "").trim();
-                String label = safe(parts.length > 1 ? parts[1] : term).trim();
-                if (code.isEmpty() || label.isEmpty()) continue;
-
-                suggestions.add(new OntologyTermDTO(
-                        String.valueOf(idCounter++),
-                        label,
-                        "",
-                        "http://snomed.info/sct/" + code
-                ));
-            }
-
-            return suggestions;
-
-        } catch (ResourceAccessException e) {
-            markPythonFailure();
-            logger.debug("[RDFService] Python service unreachable for SNOMED terms ({}). Returning 0 suggestions.",
-                    shortMsg(e));
-            return Collections.emptyList();
-
-        } catch (RestClientException e) {
-            markPythonFailure();
-            logger.debug("[RDFService] Python service error for SNOMED terms ({}). Returning 0 suggestions.",
-                    shortMsg(e));
-            return Collections.emptyList();
-        }
+        return suggestions;
     }
 
     public void writeCsv(String csvText) throws IOException {
@@ -350,5 +316,224 @@ public class RDFService {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private List<OntologyTermDTO> executeSnowstormSearch(SearchRequest request) {
+        RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    request.url,
+                    HttpMethod.GET,
+                    null,
+                    Map.class,
+                    request.params
+            );
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                return Collections.emptyList();
+            }
+
+            Object body = response.getBody();
+            if (!(body instanceof Map<?, ?> mapBody)) {
+                return Collections.emptyList();
+            }
+
+            Object itemsObj = mapBody.get("items");
+            if (!(itemsObj instanceof List<?> items)) {
+                return Collections.emptyList();
+            }
+
+            List<OntologyTermDTO> out = new ArrayList<>();
+            int idCounter = 1;
+            for (Object rawItem : items) {
+                if (!(rawItem instanceof Map<?, ?> item)) continue;
+                OntologyTermDTO dto = toOntologyTerm(item, idCounter);
+                if (dto != null) {
+                    out.add(dto);
+                    idCounter++;
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+    private OntologyTermDTO toOntologyTerm(Map<?, ?> item, int idCounter) {
+        String conceptId = extractConceptId(item);
+        if (conceptId.isBlank()) return null;
+
+        String label = extractLabel(item);
+        if (label.isBlank()) return null;
+
+        return new OntologyTermDTO(
+                String.valueOf(idCounter),
+                label,
+                "",
+                "http://snomed.info/sct/" + conceptId
+        );
+    }
+
+    private String extractConceptId(Map<?, ?> item) {
+        Object conceptObj = item.get("concept");
+        if (conceptObj instanceof Map<?, ?> concept) {
+            Object conceptId = concept.get("conceptId");
+            if (conceptId != null && !conceptId.toString().isBlank()) {
+                return conceptId.toString().trim();
+            }
+        }
+        Object conceptId = item.get("conceptId");
+        return conceptId == null ? "" : conceptId.toString().trim();
+    }
+
+    private String extractLabel(Map<?, ?> item) {
+        Object term = item.get("term");
+        if (term != null && !term.toString().isBlank()) {
+            return term.toString().trim();
+        }
+
+        Object conceptObj = item.get("concept");
+        if (conceptObj instanceof Map<?, ?> concept) {
+            Object pt = concept.get("pt");
+            if (pt instanceof Map<?, ?> ptMap) {
+                Object ptTerm = ptMap.get("term");
+                if (ptTerm != null && !ptTerm.toString().isBlank()) {
+                    return ptTerm.toString().trim();
+                }
+            }
+            Object fsn = concept.get("fsn");
+            if (fsn instanceof Map<?, ?> fsnMap) {
+                Object fsnTerm = fsnMap.get("term");
+                if (fsnTerm != null && !fsnTerm.toString().isBlank()) {
+                    return fsnTerm.toString().trim();
+                }
+            }
+        }
+
+        Object pt = item.get("pt");
+        if (pt instanceof Map<?, ?> ptMap) {
+            Object ptTerm = ptMap.get("term");
+            if (ptTerm != null && !ptTerm.toString().isBlank()) {
+                return ptTerm.toString().trim();
+            }
+        }
+
+        Object fsn = item.get("fsn");
+        if (fsn instanceof Map<?, ?> fsnMap) {
+            Object fsnTerm = fsnMap.get("term");
+            if (fsnTerm != null && !fsnTerm.toString().isBlank()) {
+                return fsnTerm.toString().trim();
+            }
+        }
+
+        Object idAndFsnTerm = item.get("idAndFsnTerm");
+        if (idAndFsnTerm != null) {
+            String raw = idAndFsnTerm.toString().trim();
+            if (raw.length() > 2) return raw.substring(0, raw.length() - 2).trim();
+        }
+
+        return "";
+    }
+
+    private List<String> buildSearchVariants(String query) {
+        String normalized = normalizeQuery(query);
+        if (normalized.isBlank()) return Collections.emptyList();
+
+        List<String> variants = new ArrayList<>();
+        addVariant(variants, normalized);
+        addVariant(variants, stripNumericTokens(normalized));
+
+        List<String> tokens = new ArrayList<>();
+        for (String token : normalized.split("\\s+")) {
+            String t = token.trim();
+            if (t.length() >= 3 && !t.chars().allMatch(Character::isDigit)) {
+                tokens.add(t);
+            }
+        }
+
+        if (tokens.size() >= 2) {
+            for (int size = tokens.size() - 1; size >= 2; size--) {
+                for (int start = 0; start + size <= tokens.size(); start++) {
+                    addVariant(variants, String.join(" ", tokens.subList(start, start + size)));
+                }
+            }
+        }
+
+        for (String token : tokens) {
+            addVariant(variants, token);
+        }
+
+        return variants;
+    }
+
+    private void addVariant(List<String> variants, String candidate) {
+        String normalized = candidate == null ? "" : candidate.replaceAll("\\s+", " ").trim();
+        if (!normalized.isBlank() && !variants.contains(normalized)) {
+            variants.add(normalized);
+        }
+    }
+
+    private String normalizeQuery(String query) {
+        if (query == null) return "";
+        String text = java.text.Normalizer.normalize(query, java.text.Normalizer.Form.NFKC);
+        text = CAMEL_CASE_PATTERN.matcher(text).replaceAll("$1 $2");
+        text = DIGIT_ALPHA_PATTERN.matcher(text).replaceAll("$1 $2");
+        text = ALPHA_DIGIT_PATTERN.matcher(text).replaceAll("$1 $2");
+        text = text.replace('_', ' ').replace('-', ' ').replace('/', ' ');
+        text = NON_WORD_PATTERN.matcher(text).replaceAll(" ");
+        return text.toLowerCase().replaceAll("\\s+", " ").trim();
+    }
+
+    private String stripNumericTokens(String text) {
+        if (text == null || text.isBlank()) return "";
+        StringBuilder builder = new StringBuilder();
+        for (String token : text.split("\\s+")) {
+            if (!token.chars().allMatch(Character::isDigit)) {
+                if (builder.length() > 0) builder.append(' ');
+                builder.append(token);
+            }
+        }
+        return builder.toString().trim();
+    }
+
+    private List<SearchRequest> buildSearchRequests(String query) {
+        int tokenCount = query.isBlank() ? 0 : query.split("\\s+").length;
+        int expandedLimit = tokenCount <= 1 ? 1000 : Math.min(Math.max(12 * 3, 20), 100);
+
+        List<SearchRequest> requests = new ArrayList<>(2);
+        requests.add(new SearchRequest(
+                snowstormApiUrl + "/browser/MAIN/descriptions",
+                Map.of(
+                        "term", query,
+                        "active", "true",
+                        "conceptActive", "true",
+                        "groupByConcept", "true",
+                        "limit", String.valueOf(expandedLimit)
+                )
+        ));
+        requests.add(new SearchRequest(
+                snowstormApiUrl + "/concepts",
+                Map.of(
+                        "term", query,
+                        "activeFilter", "true",
+                        "termActive", "true",
+                        "limit", String.valueOf(expandedLimit)
+                )
+        ));
+        return requests;
+    }
+
+    private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z])");
+    private static final Pattern ALPHA_DIGIT_PATTERN = Pattern.compile("([A-Za-z])([0-9])");
+    private static final Pattern DIGIT_ALPHA_PATTERN = Pattern.compile("([0-9])([A-Za-z])");
+    private static final Pattern NON_WORD_PATTERN = Pattern.compile("[^\\w\\s]");
+
+    private static final class SearchRequest {
+        final String url;
+        final Map<String, ?> params;
+
+        SearchRequest(String url, Map<String, ?> params) {
+            this.url = url;
+            this.params = params;
+        }
     }
 }

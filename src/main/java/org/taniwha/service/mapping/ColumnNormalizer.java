@@ -9,12 +9,7 @@ import org.taniwha.util.StringUtil;
 
 import java.util.*;
 
-/**
- * Handles column-name tokenisation, structural-noise learning, and concept normalisation.
- * <p>
- * Extracted from {@link MappingService} for maintainability.
- * </p>
- */
+// Learns structural noise and normalizes raw column names into comparable concepts.
 class ColumnNormalizer {
 
     private static final Logger logger = LoggerFactory.getLogger(ColumnNormalizer.class);
@@ -28,14 +23,6 @@ class ColumnNormalizer {
         this.settings = settings;
     }
 
-    // ------------------------------------------------------------------
-    // Noise learning
-    // ------------------------------------------------------------------
-
-    /**
-     * Inspects all raw column names in the request and derives global + suffix stop-token sets
-     * that should be stripped before embedding.
-     */
     LearnedNoise learnNoiseFromRequest(List<String> rawColumnNames) {
         Map<String, Integer> df = new HashMap<>();
         Map<String, Integer> suffixCount = new HashMap<>();
@@ -74,12 +61,8 @@ class ColumnNormalizer {
             if (e.getValue() >= settings.suffixNoiseMinCount()) suffixCandidates.add(e.getKey());
         }
 
-        // High-frequency suffix override: a token appearing as the last token in >= 8 columns
-        // is almost certainly a dataset-specific technical marker (e.g. "bart" in Barthel ADL
-        // column names: BowelBART1, BladderBART1, BathingBART1 … 16 occurrences).  Strip it
-        // regardless of whether it contains vowels — the vowel heuristic only applies to the
-        // low-count case.
         for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
+            // Very frequent short suffixes are usually export noise rather than semantic signal.
             if (e.getValue() >= 8 && e.getKey().length() <= 5) suffixCandidates.add(e.getKey());
         }
 
@@ -92,8 +75,7 @@ class ColumnNormalizer {
         for (String t : suffixCandidates) {
             if (isStructuralSuffixToken(t)) suffixStop.add(t);
         }
-        // High-frequency suffix tokens added above are included unconditionally — they are
-        // structurally meaningful noise even with vowels.
+
         for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
             if (e.getValue() >= 8 && e.getKey().length() <= 5) suffixStop.add(e.getKey());
         }
@@ -112,10 +94,6 @@ class ColumnNormalizer {
         return new LearnedNoise(globalStop, suffixStop, df, n);
     }
 
-    // ------------------------------------------------------------------
-    // Tokenisation
-    // ------------------------------------------------------------------
-
     List<String> tokenizeName(String rawColumn) {
         String s0 = StringUtil.safeTrim(rawColumn);
         if (s0.isEmpty()) return Collections.emptyList();
@@ -123,7 +101,6 @@ class ColumnNormalizer {
         String s = NormalizationUtil.splitCamelStrong(s0);
         s = s.toLowerCase(Locale.ROOT);
 
-        // Split alpha<->digit boundaries before non-alnum split, so "bart2" becomes "bart 2"
         s = s.replaceAll("([a-z])([0-9])", "$1 $2");
         s = s.replaceAll("([0-9])([a-z])", "$1 $2");
 
@@ -133,21 +110,13 @@ class ColumnNormalizer {
             if (p == null) continue;
             String t = p.trim();
             if (t.isEmpty()) continue;
-            if (t.matches("\\d+")) continue;            // drop pure digits
-            if (t.length() == 1) continue;              // drop single-letter tokens
+            if (t.matches("\\d+")) continue;
+            if (t.length() == 1) continue;
             toks.add(t);
         }
         return toks;
     }
 
-    // ------------------------------------------------------------------
-    // Normalisation
-    // ------------------------------------------------------------------
-
-    /**
-     * Strips learned noise tokens from a raw column name and returns the cleaned concept string
-     * suitable for embedding.
-     */
     String normalizeRawColumn(String rawColumn, LearnedNoise noise) {
         List<String> tokens = tokenizeName(rawColumn);
         if (tokens.isEmpty()) return "";
@@ -169,12 +138,9 @@ class ColumnNormalizer {
         }
         if (kept.isEmpty()) kept = tokens;
 
-        // Compound-word split: if a single long token survives (e.g. "ageinjury",
-        // "totalbarthel"), try to split it into two known vocabulary sub-tokens.
-        // This lets all-caps compound columns ("AGEINJURY", "TOTALBARTHEL") align
-        // with their space-separated counterparts ("Age at injury", "TOTBarthel1").
         if (kept.size() == 1 && kept.get(0).length() >= MIN_COMPOUND_WORD_LENGTH
                 && noise != null && noise.df() != null) {
+            // Only split fused tokens when both halves already look like known column vocabulary.
             List<String> split = trySplitCompound(kept.get(0), noise.df());
             if (split != null) kept = split;
         }
@@ -182,14 +148,6 @@ class ColumnNormalizer {
         return String.join(" ", kept).replaceAll("\\s+", " ").trim();
     }
 
-    /**
-     * Tries to split a single compound token into two known vocabulary sub-tokens.
-     * Both the left and right part must appear in the request's token vocabulary (df >= 1).
-     * Returns {@code null} if no valid split is found.
-     * <p>
-     * Example: {@code "ageinjury"} → {@code ["age", "injury"]}  (when both are in other columns)
-     * </p>
-     */
     List<String> trySplitCompound(String token, Map<String, Integer> vocab) {
         int len = token.length();
         for (int i = MIN_SUBTOKEN_LENGTH; i <= len - MIN_SUBTOKEN_LENGTH; i++) {
@@ -201,10 +159,6 @@ class ColumnNormalizer {
         }
         return null;
     }
-
-    // ------------------------------------------------------------------
-    // Structural-token helpers
-    // ------------------------------------------------------------------
 
     private boolean isStructuralToken(String t) {
         if (t == null) return false;
@@ -223,7 +177,6 @@ class ColumnNormalizer {
         if (x.isEmpty()) return false;
         if (x.matches("\\d+")) return true;
         if (x.length() == 1) return true;
-        // Short vowel-less suffix → likely a dataset technical marker
         return x.length() <= 4 && !containsVowel(x);
     }
 

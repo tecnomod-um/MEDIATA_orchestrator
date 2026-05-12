@@ -25,6 +25,7 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 
+// KDC server setup
 @Configuration
 public class KdcServerConfig {
 
@@ -45,7 +46,7 @@ public class KdcServerConfig {
     @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
     public CustomKdcServer kdcServer() throws KrbException, IOException {
 
-        // Force IPv4 early (Docker + Java + localhost commonly causes IPv6 first)
+        // Force IPv4
         System.setProperty("java.net.preferIPv4Stack", "true");
         System.setProperty("java.net.preferIPv4Addresses", "true");
 
@@ -89,7 +90,7 @@ public class KdcServerConfig {
         
         // Retry logic to handle transient port conflicts in test environments
         int maxRetries = 3;
-        int retryDelay = 200; // milliseconds
+        int retryDelay = 200;
         KrbException lastException = null;
         boolean started = false;
         
@@ -182,9 +183,7 @@ public class KdcServerConfig {
             throw new IOException("Failed to create directory: " + krb5ConfDir.getAbsolutePath());
         }
 
-        // IMPORTANT: generate krb5.conf pointing KDC to 127.0.0.1 (not "localhost")
         String krb5ConfContent = KerberosConfigFileGenerator.generateKrb5ConfContent(realm, kdcPort, "127.0.0.1");
-
         File krb5ConfFile = Paths.get(workDirPath, "krb5.conf").toFile();
         if (krb5ConfFile.getParentFile() != null &&
                 !krb5ConfFile.getParentFile().exists() &&

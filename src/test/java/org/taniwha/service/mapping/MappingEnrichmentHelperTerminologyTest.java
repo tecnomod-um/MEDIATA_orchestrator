@@ -12,10 +12,10 @@ import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedValueDTO;
-import org.taniwha.service.DescriptionService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.OpenMedTerminologyService.InferredTerm;
-import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService.InferredTerm;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;

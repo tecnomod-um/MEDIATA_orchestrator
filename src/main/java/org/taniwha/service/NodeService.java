@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-// All node related operations go here
+// All node-related operations go here
 @Service
 public class NodeService {
 
@@ -150,6 +150,13 @@ public class NodeService {
 
     public List<NodeSummary> getNodeSummaries() {
         lastNodeListAccess = Instant.now();
-        return nodeRepository.findAll().stream().map(node -> new NodeSummary(node.getNodeId(), node.getName(), node.getDescription(), node.getColor())).collect(Collectors.toList());
+        return nodeRepository.findAll().stream()
+                .map(node -> new NodeSummary(
+                        node.getNodeId(),
+                        node.getName(),
+                        node.getDescription(),
+                        node.getColor(),
+                        node.getServiceUrl()))
+                .collect(Collectors.toList());
     }
 }

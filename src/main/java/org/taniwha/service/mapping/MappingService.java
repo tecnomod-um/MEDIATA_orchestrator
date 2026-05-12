@@ -14,10 +14,10 @@ import org.taniwha.model.EmbeddedColumn;
 import org.taniwha.model.EmbeddedSchemaField;
 import org.taniwha.model.LearnedNoise;
 import org.taniwha.model.SimilarityScore;
-import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.JsonSchemaParsingUtil;
@@ -27,20 +27,8 @@ import org.taniwha.util.ValueVectorUtil;
 
 import java.util.*;
 
-/**
- * Orchestrates column-concept matching and mapping suggestion.
- *
- * <p>This class is intentionally kept as a thin coordinator. All heavy logic has been
- * extracted into focused helpers in this package:</p>
- * <ul>
- *   <li>{@link ColumnNormalizer}  — tokenisation, noise learning, concept normalisation</li>
- *   <li>{@link ColumnClusterer}   — cosine-similarity clustering with structural guards</li>
- *   <li>{@link ColumnPicker}      — score-based column selection and batch partitioning</li>
- *   <li>{@link MappingAssembler}  — DTO assembly, union-key management, type detection</li>
- *   <li>{@link MappingEnrichmentHelper} — terminology lookup and description generation</li>
- * </ul>
- */
 @Service
+// Orchestrates column normalization, clustering, mapping assembly, and enrichment.
 public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
@@ -49,7 +37,6 @@ public class MappingService {
     private final ObjectMapper objectMapper;
     private final MappingServiceSettings mappingSettings;
 
-    // Package-private helpers — instantiated from the same injectable dependencies.
     private final ColumnNormalizer columnNormalizer;
     private final ColumnClusterer columnClusterer;
     private final ColumnPicker columnPicker;
@@ -69,8 +56,8 @@ public class MappingService {
 
         this.columnNormalizer  = new ColumnNormalizer(mappingSettings);
         this.columnClusterer   = new ColumnClusterer(mappingSettings);
-        this.columnPicker      = new ColumnPicker(mappingSettings);
-        this.mappingAssembler  = new MappingAssembler(valueMappingBuilder, mappingSettings);
+        this.columnPicker      = new ColumnPicker();
+        this.mappingAssembler  = new MappingAssembler(valueMappingBuilder);
         this.enrichmentHelper  = new MappingEnrichmentHelper(
                 openMedTerminologyService,
                 terminologyLookupService, descriptionGenerator, mappingSettings);
@@ -78,18 +65,12 @@ public class MappingService {
         logger.info("[MappingService] Initialized.");
     }
 
-    // ------------------------------------------------------------------
-    // Public API
-    // ------------------------------------------------------------------
-
-    /** Creates suggested mappings for the columns and their values in the request. */
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
         List<ColumnInFileDTO> columnDTOs = (req == null || req.getElementFiles() == null)
                 ? Collections.emptyList() : req.getElementFiles();
         logger.info("[TRACE] suggestMappings: {} element files", columnDTOs.size());
         if (columnDTOs.isEmpty()) return Collections.emptyList();
 
-        // Build the column-name list used for noise learning.
         List<String> affectedColumnNames = new ArrayList<>(columnDTOs.size());
         for (ColumnInFileDTO dto : columnDTOs) {
             if (dto == null) continue;
@@ -113,8 +94,7 @@ public class MappingService {
                 logger.warn("[MappingService] embed failed for '{}' (skipping column)", colName);
                 return;
             }
-            // Compute a char-n-gram value vector for categorical columns so that the clusterer
-            // can use value-level character similarity as structural alignment evidence.
+            // Value vectors stay separate so domain similarity does not distort the main semantic embedding.
             float[] valueVec = ValueVectorUtil.build(rawValues);
             processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, valueVec, stats));
         });
@@ -129,7 +109,6 @@ public class MappingService {
         return out;
     }
 
-    /** Enriches an already-suggested hierarchy with terminology codes and descriptions. */
     public List<Map<String, SuggestedMappingDTO>> enrichHierarchy(
             List<Map<String, SuggestedMappingDTO>> hierarchy,
             String schema,
@@ -141,10 +120,6 @@ public class MappingService {
         enrichmentHelper.ensureNonEmptyMappingDescriptions(hierarchy);
         return hierarchy;
     }
-
-    // ------------------------------------------------------------------
-    // Schema-guided matching
-    // ------------------------------------------------------------------
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithSchema(
             List<EmbeddedSchemaField> schemaFields,
@@ -184,10 +159,6 @@ public class MappingService {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Schema-free clustering
-    // ------------------------------------------------------------------
-
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<EmbeddedColumn> allColumns) {
         List<ColCluster> clusters = columnClusterer.clusterColumns(allColumns);
 
@@ -223,10 +194,6 @@ public class MappingService {
         }
         return out;
     }
-
-    // ------------------------------------------------------------------
-    // Schema embedding
-    // ------------------------------------------------------------------
 
     private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
         List<JsonSchemaParsingUtil.SchemaFieldDef> defs =

@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -26,7 +27,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
-// All user related functionality goes here
+// All user-related functionality goes here
 @Service
 public class UserService implements UserDetailsService {
 
@@ -97,22 +98,38 @@ public class UserService implements UserDetailsService {
     }
 
     public LoginResponseDTO loginUser(String username, String password) {
+        logger.debug("Authenticating user: {}", username);
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(username, password));
 
         final UserDetails userDetails = loadUserByUsername(username);
         final String token = jwtTokenUtil.generateToken(userDetails.getUsername());
 
-        // IMPORTANT: use RAW password from login request
-        String tgtTicket = kerberosService.requestTgt(
-                kerberosService.getPrincipalName(username, kerberosService.getRealm()),
-                password
-        );
+        String principalName = kerberosService.getPrincipalName(username, kerberosService.getRealm());
+        String tgtTicket = kerberosService.requestTgt(principalName, password);
 
-        if (tgtTicket == null)
+        if (tgtTicket == null) {
+            logger.warn("Kerberos principal appears out of sync for user: {}. Attempting to recreate it.", username);
+            try {
+                kerberosService.deletePrincipal(principalName);
+                kerberosService.createPrincipal(principalName, password);
+                kerberosService.createKeytab(principalName);
+                tgtTicket = kerberosService.requestTgt(principalName, password);
+            } catch (KrbException e) {
+                logger.error("Failed to recreate Kerberos principal for user: {}", username, e);
+            }
+        }
+
+        if (isBlank(tgtTicket)) {
             logger.error("Kerberos TGT request failed for user: {}", username);
+            throw new AuthenticationServiceException("Kerberos TGT request failed");
+        }
 
         return new LoginResponseDTO(token, tgtTicket);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
 
