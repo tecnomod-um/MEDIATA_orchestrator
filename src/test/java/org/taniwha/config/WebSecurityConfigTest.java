@@ -56,7 +56,7 @@ class WebSecurityConfigTest {
                             "Kerberos-TGT",
                             "X-Node-Authorization");
             assertThat(cfg.getExposedHeaders())
-                    .containsExactly("Authorization");
+                    .containsExactly("Authorization", "X-Node-Proxy");
             assertThat(cfg.getAllowCredentials()).isTrue();
             CorsFilter filter = ctx.getBean(CorsFilter.class);
             Field configField = CorsFilter.class.getDeclaredField("configSource");
