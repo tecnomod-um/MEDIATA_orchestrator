@@ -1202,8 +1202,8 @@ public class OpenMedTerminologyReportTest {
                         "Stroke", List.of("stroke")
                 ),
                 "PatientGender", Map.of(
-                "Male", List.of("male", "man", "men"),
-                "Female", List.of("female", "woman", "women")
+                "Male", List.of("male", "man", "men", "gender"),
+                "Female", List.of("female", "woman", "women", "gender")
                 ),
                 "Toilet", Map.of(
                         "0", List.of("toilet"),

@@ -49,7 +49,12 @@ class WebSecurityConfigTest {
             assertThat(cfg.getAllowedMethods())
                     .containsExactlyInAnyOrder("GET", "POST", "PUT", "DELETE", "OPTIONS");
             assertThat(cfg.getAllowedHeaders())
-                    .containsExactlyInAnyOrder("Authorization", "Cache-Control", "Content-Type", "Kerberos-TGT");
+                    .containsExactlyInAnyOrder(
+                            "Authorization",
+                            "Cache-Control",
+                            "Content-Type",
+                            "Kerberos-TGT",
+                            "X-Node-Authorization");
             assertThat(cfg.getExposedHeaders())
                     .containsExactly("Authorization");
             assertThat(cfg.getAllowCredentials()).isTrue();
