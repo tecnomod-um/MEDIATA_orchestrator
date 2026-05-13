@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -109,7 +110,7 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
     @Test
     void testUnauthorizedAccessToNodes() throws Exception {
-        // No authentication - should be forbidden when accessing protected endpoints
+        // Node registration endpoints are open to remote nodes, but they still validate request bodies.
         Map<String, Object> deregisterRequest = new HashMap<>();
         deregisterRequest.put("ip", "192.168.1.1");
 
@@ -117,6 +118,10 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
+                .andExpect(status().isBadRequest());
+
+        // Node retrieval endpoints stay protected for authenticated orchestrator users only.
+        mockMvc.perform(get("/nodes/connect/list"))
                 .andExpect(status().isForbidden());
     }
 
