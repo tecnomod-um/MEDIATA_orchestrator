@@ -93,6 +93,7 @@ class NodeProxyControllerIT {
                         .content("{\"kerberosToken\":\"abc\"}"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Node-Proxy", "true"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
                 .andReturn();
 
         MockHttpServletResponse response = result.getResponse();
@@ -114,6 +115,7 @@ class NodeProxyControllerIT {
                         .header("X-Node-Authorization", "Bearer node-token"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Node-Proxy", "true"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
                 .andReturn();
 
         MockHttpServletResponse response = result.getResponse();
@@ -139,9 +141,11 @@ class NodeProxyControllerIT {
         if ("/taniwha/node/validate".equals(exchange.getRequestURI().getPath())) {
             responseBody = "{\"jwtNodeToken\":\"NODE\"}";
             exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "http://localhost:3000");
         } else {
             responseBody = "[{\"ok\":true}]";
             exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "http://localhost:3000");
         }
 
         byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);

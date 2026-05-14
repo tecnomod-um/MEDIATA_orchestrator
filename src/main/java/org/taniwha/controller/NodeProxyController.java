@@ -38,6 +38,7 @@ public class NodeProxyController {
             "host",
             "transfer-encoding"
     );
+    private static final String ACCESS_CONTROL_HEADER_PREFIX = "access-control-";
 
     private final NodeService nodeService;
     private final TrustedNodeProxyConfig trustedNodeProxyConfig;
@@ -160,7 +161,9 @@ public class NodeProxyController {
         HttpHeaders headers = new HttpHeaders();
         if (upstreamHeaders != null) {
             upstreamHeaders.forEach((name, values) -> {
-                if (!HOP_BY_HOP_HEADERS.contains(name.toLowerCase())) {
+                String normalizedName = name.toLowerCase();
+                if (!HOP_BY_HOP_HEADERS.contains(normalizedName)
+                        && !normalizedName.startsWith(ACCESS_CONTROL_HEADER_PREFIX)) {
                     headers.put(name, values);
                 }
             });
