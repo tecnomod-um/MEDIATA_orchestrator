@@ -205,6 +205,7 @@ services:
       - SNOWSTORM_HOST_PORT=${SNOWSTORM_HOST_PORT:-9100}
       - SNOWSTORM_ES_HOST_PORT=${SNOWSTORM_ES_HOST_PORT:-9200}
       - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
+      - TRUSTED_SERVERS_CONFIG_PATH=/app/trusted-servers.config
 
     extra_hosts:
       - "localhost:host-gateway"
@@ -212,6 +213,7 @@ services:
       
     volumes:
       - kerby-data:/app/kerby
+      - ./trusted-servers.config:/app/trusted-servers.config:ro
     networks:
       - mediata-network
     healthcheck:
