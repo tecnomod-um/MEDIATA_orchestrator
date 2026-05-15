@@ -42,6 +42,7 @@ class NodeProxyControllerIT {
 
     private HttpServer httpServer;
     private MockMvc mockMvc;
+    private NodeService nodeService;
     private NodeInfo nodeInfo;
     private final List<CapturedRequest> capturedRequests = new ArrayList<>();
 
@@ -58,7 +59,7 @@ class NodeProxyControllerIT {
         Path configFile = tempDir.resolve("trusted-servers.config");
         Files.writeString(configFile, serviceUrl + System.lineSeparator(), StandardCharsets.UTF_8);
 
-        NodeService nodeService = mock(NodeService.class);
+        nodeService = mock(NodeService.class);
         when(nodeService.findNodeById("node1")).thenReturn(nodeInfo);
 
         TrustedNodeProxyConfig trustedNodeConfigService = new TrustedNodeProxyConfig(configFile.toString());
@@ -126,6 +127,31 @@ class NodeProxyControllerIT {
         assertEquals(HttpMethod.GET.name(), request.method());
         assertEquals("/taniwha/api/files/datasets?limit=5", request.path());
         assertEquals("Bearer node-token", request.authorization());
+    }
+
+    @Test
+    void proxyNodeRequest_returnsNotFoundWhenNodeDoesNotExist() throws Exception {
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/missing/taniwha/api/files/datasets"))
+                .andExpect(status().isNotFound())
+                .andExpect(header().string("X-Node-Proxy", "true"))
+                .andReturn();
+
+        assertEquals("Node not found", result.getResponse().getContentAsString());
+        assertTrue(capturedRequests.isEmpty());
+    }
+
+    @Test
+    void proxyNodeRequest_returnsForbiddenWhenHttpNodeIsNotTrusted() throws Exception {
+        when(nodeService.findNodeById("untrusted"))
+                .thenReturn(new NodeInfo("untrusted", "http://untrusted.example:8080", "Node", null, "", "#fff", null));
+
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/untrusted/taniwha/api/files/datasets"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string("X-Node-Proxy", "true"))
+                .andReturn();
+
+        assertEquals("Proxying is not enabled for this node", result.getResponse().getContentAsString());
+        assertTrue(capturedRequests.isEmpty());
     }
 
     private void handleRequest(HttpExchange exchange) throws IOException {

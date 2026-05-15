@@ -49,7 +49,7 @@ Given the column name: "{columnName}" and these sample numeric/categorical value
 
 Infer short semantic label phrases (3 words or less) that describe what each value represents in context.
 Return ONLY a valid JSON object mapping each value (as string key) to its label (as string value).
-Example: {"0":"no ability","5":"partial ability","10":"full ability"}
+Example entries: key "0" maps to "no ability", key "5" maps to "partial ability", key "10" maps to "full ability".
 
 Respond with ONLY the JSON object and no other text.""";
 

@@ -236,7 +236,7 @@ public class OpenMedTerminologyReportTest {
 
     private static final String ES_CONTAINER_NAME = "elasticsearch";
     private static final String SN_CONTAINER_NAME = "snowstorm";
-    private static final String DOCKER_NETWORK    = "bridge";
+    private static final String DOCKER_NETWORK    = "mediata-openmed-report-net";
 
     private static final int ES_STARTUP_TIMEOUT_S        = 90;
     private static final int SNOWSTORM_STARTUP_TIMEOUT_S = 180;

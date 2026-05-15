@@ -52,6 +52,10 @@ public class TrustedNodeProxyConfig {
     }
 
     public Optional<TrustedNodeRoute> resolveRoute(String serviceUrl) {
+        if (serviceUrl == null || serviceUrl.isBlank()) {
+            return Optional.empty();
+        }
+
         URI serviceUri = parseUri(serviceUrl);
         if (serviceUri == null || !"http".equalsIgnoreCase(serviceUri.getScheme())) {
             return Optional.empty();
@@ -166,7 +170,7 @@ public class TrustedNodeProxyConfig {
             }
             return uri;
         } catch (URISyntaxException e) {
-            logger.warn("Ignoring invalid trusted node entry: {}", value, e);
+            logger.warn("Ignoring invalid trusted node entry: {} ({})", value, e.getMessage());
             return null;
         }
     }
