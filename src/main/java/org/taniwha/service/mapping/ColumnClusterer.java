@@ -21,7 +21,8 @@ class ColumnClusterer {
     private static final Set<String> JACCARD_STOP_TOKENS =
             Set.of("date", "dt", "time", "day", "days", "week", "weeks", "month", "months",
                     "year", "years", "hour", "hours", "minute", "minutes", "total",
-                    "status", "state", "type", "code", "id", "value", "score", "scores");
+                    "status", "state", "type", "code", "id", "value", "score", "scores",
+                    "scale", "scales", "level", "levels");
 
     private static final Set<String> BOOLEAN_LIKE_VALUES = Set.of(
             "yes", "no", "true", "false", "y", "n", "0", "1",
@@ -92,7 +93,6 @@ class ColumnClusterer {
             double bestMatchSim = -1;
 
             for (ColCluster cl : merged) {
-                if (hasExclusiveLifeEventAnchor(col, cl)) continue;
                 if (!rolesCompatible(col, cl)) continue;
 
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
@@ -109,6 +109,8 @@ class ColumnClusterer {
                         }
                     }
                 }
+
+                if (hasExclusiveLifeEventAnchor(col, cl) && !hasAbbrevPair) continue;
 
                 boolean hasValueEvidence = false;
                 if (!hasTokenOverlap && !hasAbbrevPair) {
@@ -455,8 +457,8 @@ class ColumnClusterer {
     }
 
     private double conceptTokenJaccard(ColCluster a, ColCluster b) {
-        Set<String> sa = conceptTokens(a.representativeConcept);
-        Set<String> sb = conceptTokens(b.representativeConcept);
+        Set<String> sa = clusterConceptTokens(a);
+        Set<String> sb = clusterConceptTokens(b);
         if (sa.isEmpty() || sb.isEmpty()) return 0.0;
 
         int inter = 0;
@@ -464,6 +466,19 @@ class ColumnClusterer {
         int union = sa.size() + sb.size() - inter;
         if (union <= 0) return 0.0;
         return inter / (double) union;
+    }
+
+    private Set<String> clusterConceptTokens(ColCluster cluster) {
+        Set<String> out = new LinkedHashSet<>();
+        if (cluster == null) return out;
+        out.addAll(conceptTokens(cluster.representativeConcept));
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                out.addAll(conceptTokens(col == null ? "" : col.column));
+                out.addAll(conceptTokens(col == null ? "" : col.concept));
+            }
+        }
+        return out;
     }
 
     private Set<String> conceptTokens(String concept) {
