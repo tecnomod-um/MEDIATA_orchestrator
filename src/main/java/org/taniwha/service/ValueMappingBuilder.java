@@ -7,6 +7,8 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.model.EmbeddedColumn;
 import org.taniwha.model.EmbeddedSchemaField;
+import org.taniwha.service.ClinicalScaleCatalog.ScaleDomain;
+import org.taniwha.service.ClinicalScaleCatalog.ScaleKind;
 import org.taniwha.util.MappingMathUtil;
 import org.taniwha.util.NormalizationUtil;
 import org.taniwha.util.StringUtil;
@@ -27,7 +29,7 @@ public class ValueMappingBuilder {
     private static final double THRESH_TOKEN_ALIAS = 0.72;
 
     private static final int MAX_VALUES_PER_UNION = 220;
-    private static final int MAX_ORDINAL_CATEGORIES = 60;
+    private static final int MAX_ORDINAL_CATEGORIES = 80;
 
     private static final int MAX_DOMAIN_UNIQUE = 25;
     private static final int MIN_DOMAIN_UNIQUE = 2;
@@ -106,7 +108,14 @@ public class ValueMappingBuilder {
             log.info("[VMB] decision: closed-domain harmonization SUCCESS -> emitted {} buckets", harmonized.size());
             return harmonized;
         }
-        log.info("[VMB] decision: closed-domain harmonization empty -> fallback to clustered value mappings");
+        log.info("[VMB] decision: closed-domain harmonization empty -> fallback to identity-safe categorical mappings");
+
+        List<SuggestedValueDTO> identity = buildIdentityCategoricalMappings(uk, picked);
+        if (!identity.isEmpty()) {
+            log.info("[VMB] decision: identity categorical fallback SUCCESS -> emitted {} buckets", identity.size());
+            return identity;
+        }
+        log.info("[VMB] decision: identity categorical fallback empty -> fallback to clustered value mappings");
 
         List<SuggestedValueDTO> clustered = buildClusteredValueMappings(uk, picked);
         log.info("[VMB] decision: clustering emitted {} buckets", clustered.size());
@@ -170,6 +179,12 @@ public class ValueMappingBuilder {
             }
         }
 
+        if (domains.size() != sources.size()) {
+            log.info("[VMB] ordinalCrosswalk: inferred domains for {}/{} sources -> empty",
+                    domains.size(), sources.size());
+            return Collections.emptyList();
+        }
+
         if (log.isDebugEnabled()) {
             log.debug("[VMB] ordinalCrosswalk: inferred domains count={} (need >=2). union='{}'", domains.size(), unionKey);
             debugDomains(domBySource);
@@ -177,6 +192,11 @@ public class ValueMappingBuilder {
 
         if (domains.size() < 2) {
             log.info("[VMB] ordinalCrosswalk: not enough inferred scale domains ({} < 2) -> empty", domains.size());
+            return Collections.emptyList();
+        }
+
+        if (domains.stream().allMatch(d -> d.kind == ScaleKind.GENERIC)) {
+            log.info("[VMB] ordinalCrosswalk: all domains are generic observed integer ranges -> empty");
             return Collections.emptyList();
         }
 
@@ -308,35 +328,7 @@ public class ValueMappingBuilder {
 
     // Prefer well-known integer instruments before falling back to generic narrow spans.
     private ScaleDomain inferScaleDomain(EmbeddedColumn src) {
-        if (src == null || src.stats == null) return null;
-        if (!src.stats.isHasIntegerMarker()) return null;
-        if (src.stats.getNumMin() == null || src.stats.getNumMax() == null) return null;
-
-        int min = (int) Math.round(src.stats.getNumMin());
-        int max = (int) Math.round(src.stats.getNumMax());
-        if (max < min) return null;
-
-        Integer hintStep = src.stats.getStepHint();
-
-        if (min == 1 && max == 7) {
-            return ScaleDomain.linear(min, max, 1, ScaleKind.FIM);
-        }
-
-        if (min == 0 && (max == 5 || max == 10 || max == 15)) {
-            return ScaleDomain.linear(0, max, 5, ScaleKind.BARTHEL_ITEM);
-        }
-
-        if (min == 0 && max == 100) {
-            int step = (hintStep != null && hintStep > 0) ? hintStep : 5;
-            return ScaleDomain.linear(0, 100, step, ScaleKind.BARTHEL_TOTAL);
-        }
-
-        int span = max - min;
-        if (span >= 1 && span <= 20) {
-            return ScaleDomain.linear(min, max, 1, ScaleKind.GENERIC);
-        }
-
-        return null;
+        return ClinicalScaleCatalog.infer(src);
     }
 
     private Map<String, Object> idxRangeToNumericInterval(List<Integer> cats, int loIdx, int hiIdx) {
@@ -386,25 +378,6 @@ public class ValueMappingBuilder {
         if (k == ScaleKind.FIM) return 3;
         if (k == ScaleKind.BARTHEL_TOTAL) return 2;
         return 1;
-    }
-
-    private enum ScaleKind { FIM, BARTHEL_ITEM, BARTHEL_TOTAL, GENERIC }
-
-    private static final class ScaleDomain {
-        final ScaleKind kind;
-        final List<Integer> categories;
-
-        private ScaleDomain(ScaleKind kind, List<Integer> categories) {
-            this.kind = kind;
-            this.categories = categories;
-        }
-
-        static ScaleDomain linear(int min, int max, int step, ScaleKind kind) {
-            List<Integer> cats = new ArrayList<>();
-            int st = Math.max(step, 1);
-            for (int v = min; v <= max; v += st) cats.add(v);
-            return new ScaleDomain(kind, cats);
-        }
     }
 
     private List<SuggestedValueDTO> buildEnumValueMappings(EmbeddedSchemaField field, List<EmbeddedColumn> sources) {
@@ -723,8 +696,18 @@ public class ValueMappingBuilder {
         if (x.isEmpty() || y.isEmpty()) return false;
         if (x.length() == 1 && y.length() >= 3) return y.charAt(0) == x.charAt(0);
         if (y.length() == 1 && x.length() >= 3) return x.charAt(0) == y.charAt(0);
+        if (isPrefixAbbreviation(x, y) || isPrefixAbbreviation(y, x)) return true;
 
         return (x.equals("unk") && y.startsWith("unk")) || (y.equals("unk") && x.startsWith("unk"));
+    }
+
+    private boolean isPrefixAbbreviation(String shortToken, String longToken) {
+        String s = StringUtil.safe(shortToken).trim();
+        String l = StringUtil.safe(longToken).trim();
+        return s.length() >= 3
+                && s.length() <= 5
+                && l.length() >= s.length() + 2
+                && l.startsWith(s);
     }
 
     private String pickCanonicalToken(List<String> tokens, Map<String, Integer> globalFreq) {
@@ -906,6 +889,74 @@ public class ValueMappingBuilder {
         ));
 
         return out;
+    }
+
+    private List<SuggestedValueDTO> buildIdentityCategoricalMappings(String unionName, List<EmbeddedColumn> sources) {
+        if (sources == null || sources.isEmpty()) return Collections.emptyList();
+
+        Map<String, List<SuggestedRefDTO>> byValue = new LinkedHashMap<>();
+        Map<String, Integer> freq = new HashMap<>();
+        int valuesSeen = 0;
+
+        for (EmbeddedColumn src : sources) {
+            List<String> rawVals = StringUtil.safeList(src.rawValues);
+            int used = 0;
+            for (String rv : rawVals) {
+                if (used >= MAX_VALUES) break;
+                String nv = NormalizationUtil.normalizeValue(rv);
+                used++;
+                if (nv.isEmpty() || isSummaryMarker(nv)) continue;
+
+                SuggestedRefDTO ref = new SuggestedRefDTO();
+                ref.setNodeId(src.nodeId);
+                ref.setFileName(src.fileName);
+                ref.setGroupColumn(src.column);
+                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
+                ref.setValue(rv);
+
+                byValue.computeIfAbsent(nv, k -> new ArrayList<>()).add(ref);
+                freq.put(nv, freq.getOrDefault(nv, 0) + 1);
+                valuesSeen++;
+            }
+        }
+
+        int uniq = byValue.size();
+        if (valuesSeen == 0 || uniq < MIN_DOMAIN_UNIQUE || uniq > MAX_DOMAIN_UNIQUE) {
+            log.info("[VMB] identityCategorical: skip union='{}' uniqueTokens={} valuesSeen={}",
+                    unionName, uniq, valuesSeen);
+            return Collections.emptyList();
+        }
+
+        List<Map.Entry<String, List<SuggestedRefDTO>>> entries = new ArrayList<>(byValue.entrySet());
+        entries.sort((a, b) -> {
+            int diff = Integer.compare(freq.getOrDefault(b.getKey(), 0), freq.getOrDefault(a.getKey(), 0));
+            if (diff != 0) return diff;
+            return a.getKey().compareToIgnoreCase(b.getKey());
+        });
+
+        List<SuggestedValueDTO> out = new ArrayList<>();
+        for (Map.Entry<String, List<SuggestedRefDTO>> entry : entries) {
+            SuggestedValueDTO vd = new SuggestedValueDTO();
+            vd.setName(entry.getKey());
+            vd.setMapping(entry.getValue());
+            out.add(vd);
+        }
+        return out;
+    }
+
+    private boolean isSummaryMarker(String value) {
+        String v = StringUtil.safe(value).trim().toLowerCase(Locale.ROOT);
+        return v.equals("integer")
+                || v.equals("double")
+                || v.equals("float")
+                || v.equals("number")
+                || v.equals("date")
+                || v.equals("datetime")
+                || v.startsWith("min:")
+                || v.startsWith("max:")
+                || v.startsWith("earliest:")
+                || v.startsWith("latest:")
+                || v.startsWith("step:");
     }
 
     private String pickRepresentative(Cluster c, Map<String, Integer> freq) {

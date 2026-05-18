@@ -112,6 +112,10 @@ public class EmbeddingService {
     }
 
     public float[] embedSchemaField(String fieldName, String type, List<String> enumVals) {
+        return embedSchemaField(fieldName, type, enumVals, "");
+    }
+
+    public float[] embedSchemaField(String fieldName, String type, List<String> enumVals, String description) {
         StringBuilder prompt = new StringBuilder();
 
         String fn = safe(fieldName).trim();
@@ -121,6 +125,12 @@ public class EmbeddingService {
         if (!ty.isEmpty()) {
             if (prompt.length() > 0) prompt.append(" (").append(ty).append(")");
             else prompt.append(ty);
+        }
+
+        String desc = safe(description).trim();
+        if (!desc.isEmpty()) {
+            if (prompt.length() > 0) prompt.append(" | ");
+            prompt.append(desc);
         }
 
         List<String> kept = new ArrayList<>();

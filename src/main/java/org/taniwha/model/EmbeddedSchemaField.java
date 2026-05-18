@@ -6,12 +6,18 @@ import java.util.List;
 public final class EmbeddedSchemaField {
     public final String name;
     public final String type;
+    public final String description;
     public final List<String> enumValues;
     public final float[] vec;
 
     public EmbeddedSchemaField(String name, String type, List<String> enumValues, float[] vec) {
+        this(name, type, "", enumValues, vec);
+    }
+
+    public EmbeddedSchemaField(String name, String type, String description, List<String> enumValues, float[] vec) {
         this.name = name;
         this.type = type;
+        this.description = description == null ? "" : description;
         this.enumValues = (enumValues == null) ? Collections.emptyList() : enumValues;
         this.vec = vec;
     }

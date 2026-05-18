@@ -59,7 +59,9 @@ class ColumnPicker {
         for (int round = 0; round < maxRounds; round++) {
             List<EmbeddedColumn> batch = new ArrayList<>(byFile.size());
             for (List<EmbeddedColumn> grp : byFile.values()) {
-                batch.add(grp.get(Math.min(round, grp.size() - 1)));
+                if (round < grp.size()) {
+                    batch.add(grp.get(round));
+                }
             }
             batches.add(batch);
         }

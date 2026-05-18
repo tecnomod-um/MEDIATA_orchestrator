@@ -33,6 +33,16 @@ public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
 
+    private static final Set<String> CONTEXT_TOKEN_EXCLUSIONS = Set.of(
+            "admission", "admit", "discharge", "assessment", "visit", "birth", "death",
+            "date", "time", "year", "years", "age"
+    );
+
+    private static final Set<String> GENERIC_CONTEXT_REMAINDERS = Set.of(
+            "total", "tot", "sum", "score", "scores", "index", "value", "values",
+            "status", "state", "type", "code", "flag", "indicator"
+    );
+
     private final EmbeddingService embeddingService;
     private final ObjectMapper objectMapper;
     private final MappingServiceSettings mappingSettings;
@@ -42,6 +52,7 @@ public class MappingService {
     private final ColumnPicker columnPicker;
     private final MappingAssembler mappingAssembler;
     private final MappingEnrichmentHelper enrichmentHelper;
+    private final SchemaColumnMatchGuard schemaColumnMatchGuard;
 
     public MappingService(EmbeddingService embeddingService,
                           TerminologyLookupService terminologyLookupService,
@@ -58,6 +69,7 @@ public class MappingService {
         this.columnClusterer   = new ColumnClusterer(mappingSettings);
         this.columnPicker      = new ColumnPicker();
         this.mappingAssembler  = new MappingAssembler(valueMappingBuilder);
+        this.schemaColumnMatchGuard = new SchemaColumnMatchGuard();
         this.enrichmentHelper  = new MappingEnrichmentHelper(
                 openMedTerminologyService,
                 terminologyLookupService, descriptionGenerator, mappingSettings);
@@ -101,11 +113,13 @@ public class MappingService {
         if (processedColumns.isEmpty()) return Collections.emptyList();
 
         List<EmbeddedSchemaField> schemaFields = embedSchemaFields(req.getSchema());
-        List<Map<String, SuggestedMappingDTO>> out = schemaFields.isEmpty()
-                ? suggestWithoutSchema(processedColumns)
-                : suggestWithSchema(schemaFields, processedColumns);
-
-        mappingAssembler.ensureAllColumnsCovered(processedColumns, out);
+        List<Map<String, SuggestedMappingDTO>> out;
+        if (schemaFields.isEmpty()) {
+            out = suggestWithoutSchema(processedColumns);
+            mappingAssembler.ensureAllColumnsCovered(processedColumns, out);
+        } else {
+            out = suggestWithSchema(schemaFields, processedColumns);
+        }
         return out;
     }
 
@@ -125,11 +139,14 @@ public class MappingService {
             List<EmbeddedSchemaField> schemaFields,
             List<EmbeddedColumn> allColumns
     ) {
+        Set<String> sourceContextTokens = learnLeadingContextTokens(allColumns);
+        List<EmbeddedColumn> schemaColumns = stripLeadingContextFromColumns(allColumns, sourceContextTokens);
         Map<String, List<SimilarityScore<EmbeddedColumn>>> colsBySchema = new HashMap<>();
 
-        for (EmbeddedColumn src : allColumns) {
-            SimilarityScore<EmbeddedSchemaField> best = columnPicker.bestSchemaMatch(src, schemaFields);
-            if (best == null || best.sim() < mappingSettings.schemaToColumnThreshold()) continue;
+        for (EmbeddedColumn src : schemaColumns) {
+            SimilarityScore<EmbeddedSchemaField> best =
+                    bestSchemaMatchWithStructuralEvidence(src, schemaFields, sourceContextTokens);
+            if (best == null) continue;
             colsBySchema.computeIfAbsent(best.item().name, k -> new ArrayList<>())
                     .add(new SimilarityScore<>(src, best.sim()));
         }
@@ -142,25 +159,76 @@ public class MappingService {
             if (candidates == null || candidates.isEmpty()) continue;
 
             candidates.sort((a, b) -> Double.compare(b.sim(), a.sim()));
-            String detectedType = mappingAssembler.detectTypeFromSourcesOrSchema(
-                    columnPicker.topCols(candidates), StringUtil.safe(field.type));
+            List<EmbeddedColumn> picked = columnPicker.topCols(candidates);
+            String detectedType = mappingAssembler.detectTypeFromSourcesOrSchema(picked, StringUtil.safe(field.type));
 
-            List<List<EmbeddedColumn>> batches =
-                    columnPicker.partitionMembersByFile(columnPicker.topCols(candidates), null);
+            mappingAssembler.addSuggestedMapping(out, usedUnionKeys, field.name, detectedType, field, picked);
+        }
+        return out;
+    }
 
-            int emitted = 0;
-            for (List<EmbeddedColumn> batch : batches) {
-                if (emitted >= mappingSettings.maxSuggestionsPerSchemaField()) break;
-                if (batch.isEmpty()) continue;
-                mappingAssembler.addSuggestedMapping(out, usedUnionKeys, field.name, detectedType, field, batch);
-                emitted++;
+    private SimilarityScore<EmbeddedSchemaField> bestSchemaMatchWithStructuralEvidence(
+            EmbeddedColumn src,
+            List<EmbeddedSchemaField> schemaFields,
+            Set<String> sourceContextTokens
+    ) {
+        EmbeddedSchemaField bestField = null;
+        double bestSim = -1.0;
+        int bestQuality = 0;
+
+        for (EmbeddedSchemaField field : schemaFields) {
+            double sim = org.taniwha.util.MappingMathUtil.cosine(src.vec, field.vec);
+            int quality = schemaColumnMatchGuard.matchQuality(field, src, sim, sourceContextTokens);
+            if (quality <= 0) continue;
+
+            if (quality > bestQuality || (quality == bestQuality && sim > bestSim)) {
+                bestQuality = quality;
+                bestSim = sim;
+                bestField = field;
             }
+        }
+
+        if (bestField == null) return null;
+        return new SimilarityScore<>(bestField, bestSim);
+    }
+
+    private Set<String> learnLeadingContextTokens(List<EmbeddedColumn> columns) {
+        Map<String, Set<String>> followers = new HashMap<>();
+        if (columns == null) return Collections.emptySet();
+
+        for (EmbeddedColumn col : columns) {
+            List<String> tokens = tokenizeForContext(col == null ? "" : col.column);
+            if (tokens.size() < 2) continue;
+            followers.computeIfAbsent(tokens.get(0), k -> new HashSet<>()).add(tokens.get(1));
+        }
+
+        Set<String> out = new HashSet<>();
+        for (Map.Entry<String, Set<String>> e : followers.entrySet()) {
+            String token = e.getKey();
+            if (token.length() < 3) continue;
+            if (CONTEXT_TOKEN_EXCLUSIONS.contains(token)) continue;
+            if (e.getValue().size() >= 2) out.add(token);
+        }
+        return out;
+    }
+
+    private List<String> tokenizeForContext(String raw) {
+        String prepared = StringUtil.safe(raw)
+                .replaceAll("([a-z])([A-Z])", "$1 $2")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ");
+        List<String> out = new ArrayList<>();
+        for (String part : prepared.split("\\s+")) {
+            String token = part.trim();
+            if (token.isEmpty() || token.matches("\\d+") || token.length() == 1) continue;
+            out.add(token);
         }
         return out;
     }
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<EmbeddedColumn> allColumns) {
-        List<ColCluster> clusters = columnClusterer.clusterColumns(allColumns);
+        List<EmbeddedColumn> normalizedColumns = stripLeadingContextFromColumns(allColumns, learnLeadingContextTokens(allColumns));
+        List<ColCluster> clusters = columnClusterer.clusterColumns(normalizedColumns);
 
         clusters.sort((a, b) -> {
             int diff = Integer.compare(b.cols.size(), a.cols.size());
@@ -195,6 +263,44 @@ public class MappingService {
         return out;
     }
 
+    private List<EmbeddedColumn> stripLeadingContextFromColumns(List<EmbeddedColumn> columns, Set<String> contextTokens) {
+        if (columns == null || columns.isEmpty() || contextTokens == null || contextTokens.isEmpty()) {
+            return columns == null ? Collections.emptyList() : columns;
+        }
+
+        List<EmbeddedColumn> out = new ArrayList<>(columns.size());
+        for (EmbeddedColumn col : columns) {
+            if (col == null) continue;
+            String concept = stripLeadingContext(col.concept, contextTokens);
+            float[] vec = concept.equals(StringUtil.safe(col.concept))
+                    ? col.vec
+                    : embeddingService.embedColumnWithValues(concept, col.rawValues);
+            out.add(new EmbeddedColumn(
+                    col.nodeId,
+                    col.fileName,
+                    col.column,
+                    concept,
+                    col.rawValues,
+                    vec,
+                    col.valueVec,
+                    col.stats
+            ));
+        }
+        return out;
+    }
+
+    private String stripLeadingContext(String concept, Set<String> contextTokens) {
+        List<String> tokens = tokenizeForContext(concept);
+        if (tokens.size() < 2 || !contextTokens.contains(tokens.get(0))) {
+            return StringUtil.safe(concept);
+        }
+        List<String> remaining = tokens.subList(1, tokens.size());
+        if (remaining.stream().allMatch(GENERIC_CONTEXT_REMAINDERS::contains)) {
+            return StringUtil.safe(concept);
+        }
+        return String.join(" ", remaining);
+    }
+
     private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
         List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
                 JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schemaJson, mappingSettings.maxEnum());
@@ -202,8 +308,9 @@ public class MappingService {
 
         List<EmbeddedSchemaField> out = new ArrayList<>();
         for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
-            float[] combined = embeddingService.embedSchemaField(d.getName(), d.getType(), d.getEnumValues());
-            out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getEnumValues(), combined));
+            float[] combined = embeddingService.embedSchemaField(
+                    d.getName(), d.getType(), d.getEnumValues(), d.getDescription());
+            out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getDescription(), d.getEnumValues(), combined));
         }
         return out;
     }

@@ -19,12 +19,51 @@ class ColumnClusterer {
 
     // High-frequency temporal/count words inflate overlap without helping semantic grouping.
     private static final Set<String> JACCARD_STOP_TOKENS =
-            Set.of("total", "days", "weeks", "months", "years", "hours", "minutes");
+            Set.of("date", "dt", "time", "day", "days", "week", "weeks", "month", "months",
+                    "year", "years", "hour", "hours", "minute", "minutes", "total",
+                    "status", "state", "type", "code", "id", "value", "score", "scores");
+
+    private static final Set<String> BOOLEAN_LIKE_VALUES = Set.of(
+            "yes", "no", "true", "false", "y", "n", "0", "1",
+            "positive", "negative", "present", "absent"
+    );
 
     // Value evidence is weaker than name similarity, so the merge threshold stays deliberately conservative.
     private static final double VALUE_EMBEDDING_THRESHOLD = 0.30;
 
     private static final double VALUE_EMBEDDING_IDENTICAL = 0.99;
+
+    private static final double MUTUAL_SEMANTIC_SCORE_THRESHOLD = 0.82;
+
+    private static final Set<String> SEMANTIC_FALLBACK_EXCLUDED_TOKENS = Set.of(
+            "id", "identifier", "code", "status", "state", "type", "category",
+            "date", "dt", "time", "day", "days", "year", "years", "age",
+            "sex", "gender", "diagnosis", "outcome", "event", "note", "notes",
+            "total", "tot", "sum", "index", "score", "scores"
+    );
+
+    private static final Set<String> VALUE_EVIDENCE_EXCLUDED_TOKENS = Set.of(
+            "id", "identifier", "date", "dt", "time", "day", "days", "year", "years", "age",
+            "total", "tot", "sum", "index",
+            "outcome", "event", "note", "notes", "diagnosis", "admission", "discharge"
+    );
+
+    private enum ColumnRole {
+        IDENTIFIER,
+        DATE,
+        DURATION,
+        AGE,
+        LIFE_EVENT_YEAR,
+        TOTAL_SCORE,
+        ITEM_SCORE,
+        NUMERIC_MEASURE,
+        BOOLEAN_FLAG,
+        OUTCOME,
+        DIAGNOSIS,
+        FREE_TEXT,
+        CATEGORICAL,
+        UNKNOWN
+    }
 
     private final MappingServiceSettings settings;
 
@@ -37,6 +76,7 @@ class ColumnClusterer {
         for (EmbeddedColumn c : all) {
             String key = sanitizeUnionName(StringUtil.safeTrim(c.concept).toLowerCase(Locale.ROOT));
             if (key.isEmpty()) key = "__empty__";
+            key = key + "__role_" + initialRoleKey(inferRole(c));
             byConcept.computeIfAbsent(key, k -> new ColCluster()).add(c);
         }
 
@@ -52,6 +92,9 @@ class ColumnClusterer {
             double bestMatchSim = -1;
 
             for (ColCluster cl : merged) {
+                if (hasExclusiveLifeEventAnchor(col, cl)) continue;
+                if (!rolesCompatible(col, cl)) continue;
+
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
 
                 double jac = conceptTokenJaccard(col, cl);
@@ -70,16 +113,30 @@ class ColumnClusterer {
                 boolean hasValueEvidence = false;
                 if (!hasTokenOverlap && !hasAbbrevPair) {
                     // Value-domain similarity only acts as a fallback when names provide no usable structure.
-                    hasValueEvidence = hasValueEmbeddingSimilarity(col, cl);
+                    hasValueEvidence = hasValueEmbeddingSimilarity(col, cl)
+                            && !isScoreLikeCluster(col)
+                            && !isScoreLikeCluster(cl)
+                            && !isBooleanLikeCluster(col)
+                            && !isBooleanLikeCluster(cl)
+                            && !containsExcludedValueToken(col)
+                            && !containsExcludedValueToken(cl);
                 }
 
-                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence)) continue;
+                boolean hasMutualSemanticEvidence = false;
+                if (!hasTokenOverlap && !hasAbbrevPair && !hasValueEvidence) {
+                    hasMutualSemanticEvidence = hasMutualSemanticScoreEvidence(col, cl, clusters, sim);
+                }
 
-                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}",
-                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence);
+                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence || hasMutualSemanticEvidence)) continue;
 
-                if (sim >= settings.columnClusterThreshold() && sim > bestMatchSim) {
-                    bestMatchSim = sim;
+                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}, mutualSemantic={}",
+                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence,
+                        hasMutualSemanticEvidence);
+
+                double ensembleScore = ensembleScore(col, cl, sim, jac, hasAbbrevPair, hasValueEvidence,
+                        hasMutualSemanticEvidence);
+                if (ensembleScore >= settings.columnClusterThreshold() && ensembleScore > bestMatchSim) {
+                    bestMatchSim = ensembleScore;
                     bestMatch = cl;
                 }
             }
@@ -101,11 +158,263 @@ class ColumnClusterer {
         return merged;
     }
 
+    private String initialRoleKey(ColumnRole role) {
+        if (role == null || role == ColumnRole.UNKNOWN) return "unknown";
+        return role.name().toLowerCase(Locale.ROOT);
+    }
+
+    private double ensembleScore(
+            ColCluster a,
+            ColCluster b,
+            double semanticSimilarity,
+            double tokenJaccard,
+            boolean hasAbbrevPair,
+            boolean hasValueEvidence,
+            boolean hasMutualSemanticEvidence
+    ) {
+        // COMA-style lightweight ensemble: embeddings stay primary, while lexical,
+        // value-profile and inferred-role evidence nudge borderline decisions.
+        double lexicalEvidence = Math.max(tokenJaccard, hasAbbrevPair ? 0.45 : 0.0);
+        double valueEvidence = hasValueEvidence ? 0.25 : 0.0;
+        double mutualEvidence = hasMutualSemanticEvidence ? 0.20 : 0.0;
+        double roleEvidence = roleEvidence(a, b);
+
+        double score = semanticSimilarity
+                + 0.16 * lexicalEvidence
+                + 0.08 * valueEvidence
+                + 0.06 * mutualEvidence
+                + 0.08 * roleEvidence;
+        return Math.min(1.0, score);
+    }
+
+    private double roleEvidence(ColCluster a, ColCluster b) {
+        ColumnRole ra = inferRole(a);
+        ColumnRole rb = inferRole(b);
+        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN) return 0.0;
+        if (ra == rb) return 1.0;
+        if (isNumericAssessmentRole(ra) && isNumericAssessmentRole(rb)) return 0.45;
+        if (isTemporalRole(ra) && isTemporalRole(rb)) return 0.35;
+        return 0.0;
+    }
+
+    private boolean rolesCompatible(ColCluster a, ColCluster b) {
+        ColumnRole ra = inferRole(a);
+        ColumnRole rb = inferRole(b);
+        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN || ra == rb) return true;
+
+        if (ra == ColumnRole.IDENTIFIER || rb == ColumnRole.IDENTIFIER) return false;
+        if (ra == ColumnRole.FREE_TEXT || rb == ColumnRole.FREE_TEXT) return false;
+        if (ra == ColumnRole.DIAGNOSIS || rb == ColumnRole.DIAGNOSIS) return false;
+        if (ra == ColumnRole.OUTCOME || rb == ColumnRole.OUTCOME) return false;
+        if (ra == ColumnRole.BOOLEAN_FLAG || rb == ColumnRole.BOOLEAN_FLAG) return false;
+        if (isTemporalRole(ra) || isTemporalRole(rb)) return isTemporalRole(ra) && isTemporalRole(rb);
+        if (ra == ColumnRole.AGE || rb == ColumnRole.AGE) return false;
+        if (ra == ColumnRole.LIFE_EVENT_YEAR || rb == ColumnRole.LIFE_EVENT_YEAR) return false;
+
+        // A scale total/subscale score and an individual item score can be close in
+        // embedding space, but they answer different harmonization questions.
+        if ((ra == ColumnRole.TOTAL_SCORE && rb == ColumnRole.ITEM_SCORE)
+                || (ra == ColumnRole.ITEM_SCORE && rb == ColumnRole.TOTAL_SCORE)) {
+            return false;
+        }
+
+        if (isNumericAssessmentRole(ra) && isNumericAssessmentRole(rb)) return true;
+        return false;
+    }
+
+    private boolean isNumericAssessmentRole(ColumnRole role) {
+        return role == ColumnRole.TOTAL_SCORE
+                || role == ColumnRole.ITEM_SCORE
+                || role == ColumnRole.NUMERIC_MEASURE;
+    }
+
+    private boolean isTemporalRole(ColumnRole role) {
+        return role == ColumnRole.DATE || role == ColumnRole.DURATION;
+    }
+
+    private ColumnRole inferRole(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return ColumnRole.UNKNOWN;
+
+        EnumMap<ColumnRole, Integer> votes = new EnumMap<>(ColumnRole.class);
+        for (EmbeddedColumn col : cluster.cols) {
+            ColumnRole role = inferRole(col);
+            votes.merge(role, 1, Integer::sum);
+        }
+
+        List<ColumnRole> priority = List.of(
+                ColumnRole.IDENTIFIER,
+                ColumnRole.DATE,
+                ColumnRole.DURATION,
+                ColumnRole.LIFE_EVENT_YEAR,
+                ColumnRole.AGE,
+                ColumnRole.TOTAL_SCORE,
+                ColumnRole.ITEM_SCORE,
+                ColumnRole.BOOLEAN_FLAG,
+                ColumnRole.OUTCOME,
+                ColumnRole.DIAGNOSIS,
+                ColumnRole.FREE_TEXT,
+                ColumnRole.NUMERIC_MEASURE,
+                ColumnRole.CATEGORICAL,
+                ColumnRole.UNKNOWN
+        );
+
+        ColumnRole best = ColumnRole.UNKNOWN;
+        int bestVotes = -1;
+        for (ColumnRole role : priority) {
+            int voteCount = votes.getOrDefault(role, 0);
+            if (voteCount > bestVotes) {
+                best = role;
+                bestVotes = voteCount;
+            }
+        }
+        return best;
+    }
+
+    private ColumnRole inferRole(EmbeddedColumn col) {
+        String label = StringUtil.safe(col == null ? "" : col.column);
+        Set<String> tokens = roleTokens(label);
+        Set<String> conceptTokens = roleTokens(col == null ? "" : col.concept);
+        tokens.addAll(conceptTokens);
+
+        boolean numeric = isNumericColumn(col);
+        boolean date = col != null && col.stats != null
+                && (col.stats.isHasDateMarker()
+                || col.stats.getDateMinMs() != null
+                || col.stats.getDateMaxMs() != null);
+
+        if (containsAny(tokens, "id", "identifier", "subject", "patientid", "recordid")) return ColumnRole.IDENTIFIER;
+        if (date || containsAny(tokens, "date", "dt", "timestamp")) return ColumnRole.DATE;
+        if (containsAny(tokens, "duration", "los", "tsi", "elapsed")
+                || (numeric && containsAny(tokens, "day", "days", "week", "weeks", "month", "months"))) {
+            return ColumnRole.DURATION;
+        }
+        if (containsAny(tokens, "birth", "born", "death", "deceased")) return ColumnRole.LIFE_EVENT_YEAR;
+        if (containsAny(tokens, "age", "ageinjury")) return ColumnRole.AGE;
+        if (containsAny(tokens, "diagnosis", "diagnostic", "dx", "icd", "snomed")) return ColumnRole.DIAGNOSIS;
+        if (isBooleanLikeColumn(col) || containsAny(tokens, "flag", "indicator", "yesno")) return ColumnRole.BOOLEAN_FLAG;
+        if (containsAny(tokens, "note", "notes", "comment", "comments", "text", "description")) return ColumnRole.FREE_TEXT;
+        if (containsAny(tokens, "outcome", "event", "status", "state")) return ColumnRole.OUTCOME;
+
+        if (numeric && (containsAny(tokens, "total", "tot", "sum", "index", "subscale")
+                || containsTokenPrefix(tokens, "total", "tot")
+                || containsTokenSuffix(tokens, "total", "index"))) {
+            return ColumnRole.TOTAL_SCORE;
+        }
+        if (numeric && looksLikeAssessmentItem(tokens)) return ColumnRole.ITEM_SCORE;
+        if (numeric) return ColumnRole.NUMERIC_MEASURE;
+        if (hasCategoricalValues(col)) return ColumnRole.CATEGORICAL;
+        return ColumnRole.UNKNOWN;
+    }
+
+    private boolean looksLikeAssessmentItem(Set<String> tokens) {
+        return containsAny(tokens,
+                "eating", "eat", "feeding", "feed", "bath", "bathing", "groom", "grooming",
+                "toilet", "toileting", "transfer", "transfers", "mobility", "locomotion",
+                "stairs", "dressing", "dress", "bowel", "bladder", "memory", "comprehension",
+                "expression", "interaction", "problem", "solving", "walking", "ambulation")
+                || containsTokenSuffix(tokens,
+                "eating", "feeding", "bath", "bathing", "grooming", "toilet", "toileting",
+                "transfer", "transfers", "mobility", "stairs", "dressing", "bowel", "bladder");
+    }
+
+    private boolean isNumericColumn(EmbeddedColumn col) {
+        return col != null && col.stats != null
+                && (col.stats.isHasIntegerMarker()
+                || col.stats.isHasDoubleMarker()
+                || col.stats.getNumMin() != null
+                || col.stats.getNumMax() != null);
+    }
+
+    private boolean hasCategoricalValues(EmbeddedColumn col) {
+        if (col == null || col.rawValues == null) return false;
+        for (String raw : col.rawValues) {
+            String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+            if (value.isEmpty()
+                    || "integer".equals(value)
+                    || "double".equals(value)
+                    || "date".equals(value)
+                    || value.startsWith("min:")
+                    || value.startsWith("max:")
+                    || value.startsWith("earliest:")
+                    || value.startsWith("latest:")
+                    || value.startsWith("step:")) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isBooleanLikeColumn(EmbeddedColumn col) {
+        if (col == null || col.rawValues == null) return false;
+        Set<String> values = new LinkedHashSet<>();
+        for (String raw : col.rawValues) {
+            String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+            if (value.isEmpty()
+                    || "integer".equals(value)
+                    || "double".equals(value)
+                    || "date".equals(value)
+                    || value.startsWith("min:")
+                    || value.startsWith("max:")
+                    || value.startsWith("earliest:")
+                    || value.startsWith("latest:")
+                    || value.startsWith("step:")) {
+                continue;
+            }
+            values.add(value);
+            if (values.size() > 3) return false;
+        }
+        if (values.isEmpty()) return false;
+        long booleanLike = values.stream().filter(BOOLEAN_LIKE_VALUES::contains).count();
+        return booleanLike >= 2 || (values.size() <= 2 && booleanLike >= 1);
+    }
+
+    private boolean containsAny(Set<String> tokens, String... candidates) {
+        for (String candidate : candidates) {
+            if (tokens.contains(candidate)) return true;
+        }
+        return false;
+    }
+
+    private boolean containsTokenPrefix(Set<String> tokens, String... prefixes) {
+        for (String token : tokens) {
+            for (String prefix : prefixes) {
+                if (token.startsWith(prefix)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsTokenSuffix(Set<String> tokens, String... suffixes) {
+        for (String token : tokens) {
+            for (String suffix : suffixes) {
+                if (token.endsWith(suffix)) return true;
+            }
+        }
+        return false;
+    }
+
+    private Set<String> roleTokens(String label) {
+        String prepared = StringUtil.safe(label)
+                .replaceAll("([a-z])([A-Z])", "$1 $2")
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
+                .toLowerCase(Locale.ROOT);
+        String[] parts = prepared.split("[^a-z0-9]+");
+        Set<String> out = new LinkedHashSet<>();
+        for (String part : parts) {
+            if (part == null) continue;
+            String token = part.trim();
+            if (token.isEmpty() || token.matches("\\d+") || token.length() <= 1) continue;
+            out.add(token);
+        }
+        return out;
+    }
+
     private static final Set<String> STRUCTURAL_CONCEPT_WORDS =
             Set.of("id", "code", "name", "value", "flag", "indicator", "status", "type");
 
     private boolean isStructuralSingleTokenConcept(String concept) {
-        Set<String> tokens = conceptTokens(concept);
+        Set<String> tokens = rawConceptTokens(concept);
         return tokens.size() == 1 && STRUCTURAL_CONCEPT_WORDS.contains(tokens.iterator().next());
     }
 
@@ -303,6 +612,126 @@ class ColumnClusterer {
         logger.debug("[CLUSTER] value-ngram sim '{}' vs '{}': {}", a.representativeConcept, b.representativeConcept, sim);
         if (sim >= VALUE_EMBEDDING_IDENTICAL) return false;
         return sim >= VALUE_EMBEDDING_THRESHOLD;
+    }
+
+    private boolean hasMutualSemanticScoreEvidence(
+            ColCluster a,
+            ColCluster b,
+            List<ColCluster> candidates,
+            double similarity
+    ) {
+        double threshold = Math.max(settings.columnClusterThreshold(), MUTUAL_SEMANTIC_SCORE_THRESHOLD);
+        if (similarity < threshold) return false;
+        if (!isScoreLikeCluster(a) || !isScoreLikeCluster(b)) return false;
+        if (containsExcludedSemanticToken(a) || containsExcludedSemanticToken(b)) return false;
+
+        ColCluster nearestToA = nearestSemanticScoreCluster(a, candidates);
+        ColCluster nearestToB = nearestSemanticScoreCluster(b, candidates);
+        return nearestToA == b && nearestToB == a;
+    }
+
+    private ColCluster nearestSemanticScoreCluster(ColCluster target, List<ColCluster> candidates) {
+        ColCluster best = null;
+        double bestSim = -1.0;
+        for (ColCluster candidate : candidates) {
+            if (candidate == target) continue;
+            if (!isScoreLikeCluster(candidate) || containsExcludedSemanticToken(candidate)) continue;
+            double sim = MappingMathUtil.cosine(target.centroid, candidate.centroid);
+            if (sim > bestSim) {
+                bestSim = sim;
+                best = candidate;
+            }
+        }
+        return bestSim >= Math.max(settings.columnClusterThreshold(), MUTUAL_SEMANTIC_SCORE_THRESHOLD) ? best : null;
+    }
+
+    private boolean isScoreLikeCluster(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return false;
+        for (EmbeddedColumn col : cluster.cols) {
+            if (col.stats == null) return false;
+            boolean numeric = col.stats.isHasIntegerMarker()
+                    || col.stats.isHasDoubleMarker()
+                    || col.stats.getNumMin() != null
+                    || col.stats.getNumMax() != null;
+            boolean date = col.stats.isHasDateMarker()
+                    || col.stats.getDateMinMs() != null
+                    || col.stats.getDateMaxMs() != null;
+            if (!numeric || date) return false;
+        }
+        return true;
+    }
+
+    private boolean containsExcludedSemanticToken(ColCluster cluster) {
+        Set<String> tokens = rawConceptTokens(cluster.representativeConcept);
+        for (String token : tokens) {
+            if (SEMANTIC_FALLBACK_EXCLUDED_TOKENS.contains(token)) return true;
+        }
+        return tokens.isEmpty();
+    }
+
+    private boolean containsExcludedValueToken(ColCluster cluster) {
+        Set<String> tokens = rawConceptTokens(cluster.representativeConcept);
+        for (String token : tokens) {
+            if (VALUE_EVIDENCE_EXCLUDED_TOKENS.contains(token)) return true;
+        }
+        return tokens.isEmpty();
+    }
+
+    private boolean isBooleanLikeCluster(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return false;
+        Set<String> values = new LinkedHashSet<>();
+        for (EmbeddedColumn col : cluster.cols) {
+            if (col.rawValues == null) continue;
+            for (String raw : col.rawValues) {
+                String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+                if (value.isEmpty()
+                        || "integer".equals(value)
+                        || "double".equals(value)
+                        || "date".equals(value)
+                        || value.startsWith("min:")
+                        || value.startsWith("max:")
+                        || value.startsWith("earliest:")
+                        || value.startsWith("latest:")
+                        || value.startsWith("step:")) {
+                    continue;
+                }
+                values.add(value);
+                if (values.size() > 2) return false;
+            }
+        }
+        if (values.isEmpty()) return false;
+        long booleanLike = values.stream().filter(BOOLEAN_LIKE_VALUES::contains).count();
+        return booleanLike >= 2 || (values.size() <= 2 && booleanLike >= 1);
+    }
+
+    private Set<String> rawConceptTokens(String concept) {
+        String s = StringUtil.safeTrim(concept).toLowerCase(Locale.ROOT);
+        if (s.isEmpty()) return Collections.emptySet();
+        String[] parts = s.split("[^a-z0-9]+");
+        Set<String> out = new LinkedHashSet<>();
+        for (String p : parts) {
+            if (p == null) continue;
+            String t = p.trim();
+            if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1) continue;
+            out.add(t);
+        }
+        return out;
+    }
+
+    private boolean hasExclusiveLifeEventAnchor(ColCluster a, ColCluster b) {
+        return hasLifeEventAnchor(a) != hasLifeEventAnchor(b);
+    }
+
+    private boolean hasLifeEventAnchor(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null) return false;
+        for (EmbeddedColumn col : cluster.cols) {
+            Set<String> tokens = rawConceptTokens(col == null ? "" : col.concept);
+            if (tokens.contains("birth") || tokens.contains("born")
+                    || tokens.contains("death") || tokens.contains("deceased")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String sanitizeUnionName(String raw) {
