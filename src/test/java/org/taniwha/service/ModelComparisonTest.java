@@ -14,7 +14,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedDescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.taniwha.service.mapping.MappingService;
 import org.taniwha.dto.SuggestedMappingDTO;
 
@@ -81,8 +86,8 @@ public class ModelComparisonTest {
         }
 
         @Bean
-        public org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings() {
-            return new org.taniwha.config.MappingConfig.MappingServiceSettings(
+        public MappingServiceSettings mappingSettings() {
+            return new MappingServiceSettings(
                     60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
             );
         }
@@ -90,19 +95,19 @@ public class ModelComparisonTest {
         @Bean
         public MappingService mappingService(EmbeddingService embeddingService,
                                              TerminologyLookupService terminologyService,
-                                             org.taniwha.service.OpenMedTerminologyService openMedTerminologyService,
+                                             OpenMedTerminologyService openMedTerminologyService,
                                              DescriptionService descriptionGenerator,
                                              ValueMappingBuilder valueMappingBuilder,
                                              ObjectMapper objectMapper,
-                                             org.taniwha.config.MappingConfig.MappingServiceSettings mappingSettings) {
+                                             MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyService,
                     openMedTerminologyService, descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
         }
 
         @Bean
-        public org.taniwha.service.OpenMedTerminologyService openMedTerminologyService() {
-            org.taniwha.service.OpenMedTerminologyService mock =
-                    Mockito.mock(org.taniwha.service.OpenMedTerminologyService.class);
+        public OpenMedTerminologyService openMedTerminologyService() {
+            OpenMedTerminologyService mock =
+                Mockito.mock(OpenMedTerminologyService.class);
             Mockito.when(mock.batchSize()).thenReturn(5);
             Mockito.when(mock.inferBatch(Mockito.any())).thenReturn(java.util.List.of());
             return mock;

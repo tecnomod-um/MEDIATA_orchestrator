@@ -21,6 +21,7 @@ import org.taniwha.kerberos.CustomKdcServer;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,6 +32,7 @@ import java.util.Base64;
 public class KerberosService {
 
     private static final Logger logger = LoggerFactory.getLogger(KerberosService.class);
+    private final Object krbClientLock = new Object();
 
     private final CustomKdcServer kdcServer;
 
@@ -97,7 +99,10 @@ public class KerberosService {
     public String requestTgt(String userPrincipal, String password) {
         try {
             logger.debug("Requesting TGT for user principal: {} with password {}", userPrincipal, password);
-            TgtTicket tgtTicket = krbClient.requestTgt(userPrincipal, password);
+            TgtTicket tgtTicket;
+            synchronized (krbClientLock) {
+                tgtTicket = krbClient.requestTgt(userPrincipal, password);
+            }
             logger.debug("TGT acquired for user principal: {}", userPrincipal);
             return encodeKrbTicket(tgtTicket);
         } catch (KrbException | IOException e) {
@@ -109,7 +114,10 @@ public class KerberosService {
     public String requestSgt(String userTgtToken, String servicePrincipal) throws IOException, KrbException {
         logger.debug("Requesting SGT ticket");
         TgtTicket tgtTicket = (TgtTicket) decodeKrbTicket(userTgtToken, true);
-        SgtTicket sgtTicket = krbClient.requestSgt(tgtTicket, servicePrincipal);
+        SgtTicket sgtTicket;
+        synchronized (krbClientLock) {
+            sgtTicket = krbClient.requestSgt(tgtTicket, servicePrincipal);
+        }
         return encodeKrbTicket(sgtTicket);
     }
 
@@ -137,12 +145,12 @@ public class KerberosService {
 
             if (krbTicket instanceof TgtTicket) {
                 TgtTicket tgtTicket = (TgtTicket) krbTicket;
-                byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes();
+                byte[] clientPrincipalBytes = tgtTicket.getClientPrincipal().getName().getBytes(StandardCharsets.UTF_8);
                 objStream.writeInt(clientPrincipalBytes.length);
                 objStream.write(clientPrincipalBytes);
             } else if (krbTicket instanceof SgtTicket) {
                 SgtTicket sgtTicket = (SgtTicket) krbTicket;
-                byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes();
+                byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes(StandardCharsets.UTF_8);
                 objStream.writeInt(clientPrincipalBytes.length);
                 objStream.write(clientPrincipalBytes);
             }
@@ -172,7 +180,7 @@ public class KerberosService {
             int clientPrincipalLength = objStream.readInt();
             byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
             objStream.readFully(clientPrincipalBytes);
-            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
+            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes, StandardCharsets.UTF_8));
 
             if (isTgt) {
                 return new TgtTicket(ticket, (EncAsRepPart) encKdcRepPart, clientPrincipal);

@@ -10,16 +10,19 @@ public final class JsonSchemaParsingUtil {
     public static final class SchemaFieldDef {
         private final String name;
         private final String type;
+        private final String description;
         private final List<String> enumValues;
 
-        public SchemaFieldDef(String name, String type, List<String> enumValues) {
+        public SchemaFieldDef(String name, String type, String description, List<String> enumValues) {
             this.name = name == null ? "" : name;
             this.type = type == null ? "" : type;
+            this.description = description == null ? "" : description;
             this.enumValues = enumValues == null ? Collections.emptyList() : enumValues;
         }
 
         public String getName() { return name; }
         public String getType() { return type; }
+        public String getDescription() { return description; }
         public List<String> getEnumValues() { return enumValues; }
     }
 
@@ -51,9 +54,10 @@ public final class JsonSchemaParsingUtil {
                 JsonNode def = props.get(fieldName);
 
                 String type = extractTypeExtended(def);
+                String description = extractDescription(def);
                 List<String> enumVals = extractEnum(def, maxEnum);
 
-                out.add(new SchemaFieldDef(fieldName, type, enumVals));
+                out.add(new SchemaFieldDef(fieldName, type, description, enumVals));
             }
 
             return out;
@@ -181,5 +185,12 @@ public final class JsonSchemaParsingUtil {
             if (!s.isEmpty()) out.add(s);
         }
         return out;
+    }
+
+    public static String extractDescription(JsonNode def) {
+        if (def == null) return "";
+        JsonNode desc = def.get("description");
+        if (desc == null || !desc.isTextual()) return "";
+        return desc.asText("").trim();
     }
 }

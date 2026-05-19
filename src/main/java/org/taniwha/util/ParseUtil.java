@@ -59,25 +59,25 @@ public final class ParseUtil {
 
             String low = t.toLowerCase(java.util.Locale.ROOT);
 
-            if ("integer".equals(low)) s.hasIntegerMarker = true;
-            if ("double".equals(low)) s.hasDoubleMarker = true;
-            if ("date".equals(low)) s.hasDateMarker = true;
+            if ("integer".equals(low)) s.setHasIntegerMarker(true);
+            if ("double".equals(low)) s.setHasDoubleMarker(true);
+            if ("date".equals(low)) s.setHasDateMarker(true);
 
             if (low.startsWith("min:")) {
                 Double v = tryParseDouble(low.substring("min:".length()));
-                if (v != null) s.numMin = v;
+                if (v != null) s.setNumMin(v);
             } else if (low.startsWith("max:")) {
                 Double v = tryParseDouble(low.substring("max:".length()));
-                if (v != null) s.numMax = v;
+                if (v != null) s.setNumMax(v);
             } else if (low.startsWith("earliest:")) {
                 Long ms = tryParseDateMs(low.substring("earliest:".length()));
-                if (ms != null) s.dateMinMs = ms;
+                if (ms != null) s.setDateMinMs(ms);
             } else if (low.startsWith("latest:")) {
                 Long ms = tryParseDateMs(low.substring("latest:".length()));
-                if (ms != null) s.dateMaxMs = ms;
+                if (ms != null) s.setDateMaxMs(ms);
             } else if (low.startsWith("step:")) {
                 Integer step = tryParseInt(low.substring("step:".length()));
-                if (step != null && step > 0) s.stepHint = step;
+                if (step != null && step > 0) s.setStepHint(step);
             }
         }
         return s;

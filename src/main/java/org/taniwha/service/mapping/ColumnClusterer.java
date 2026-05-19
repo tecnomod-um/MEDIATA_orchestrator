@@ -10,58 +10,61 @@ import org.taniwha.util.StringUtil;
 
 import java.util.*;
 
-/**
- * Groups {@link EmbeddedColumn} instances into conceptually similar clusters using cosine
- * similarity with structural-evidence guards (token Jaccard + abbreviation detection +
- * value-embedding similarity).
- * <p>
- * Pure domain-level semantic similarity alone is <em>not</em> sufficient for a merge —
- * structural evidence (shared tokens, abbreviation pair, or similar value embeddings) is
- * required to prevent distinct clinical concepts from collapsing into one cluster.
- * </p>
- * <p>
- * Extracted from {@link MappingService} for maintainability.
- * </p>
- */
+// Groups semantically similar source columns into shared mapping concepts.
 class ColumnClusterer {
 
     private static final Logger logger = LoggerFactory.getLogger(ColumnClusterer.class);
 
-    /**
-     * Grammatical inflection suffixes used in the single-token abbreviation check.
-     * When a candidate token is a strict prefix of a single-token full concept we only
-     * recognise it as an abbreviation when the remainder is a standard English morphological
-     * suffix, NOT a compound-word second part (e.g. "fim" in "totalfim").
-     */
     private static final Set<String> GRAMMATICAL_SUFFIXES = Set.of("ing", "ed", "er", "ers", "s", "es", "age");
 
-    /**
-     * Generic temporal/unit/qualifier tokens that should not contribute to Jaccard token overlap.
-     * <ul>
-     *   <li>Time-unit tokens (e.g. {@code "days"}): two columns sharing only {@code "days"}
-     *       (e.g. {@code "LOS (days)"} range 2-56 vs {@code "TSI to admission (days)"} range
-     *       203-7726) measure entirely different durations and must not merge on that alone.</li>
-     *   <li>{@code "total"}: a generic measurement qualifier that appears in many unrelated
-     *       clinical scales (e.g. {@code "TOTAL MOTOR"} and {@code "TOTAL COGNITIU"} are
-     *       different FIM subscales; they must not merge just because both names start with
-     *       {@code "total"}).</li>
-     * </ul>
-     */
+    // High-frequency temporal/count words inflate overlap without helping semantic grouping.
     private static final Set<String> JACCARD_STOP_TOKENS =
-            Set.of("total", "days", "weeks", "months", "years", "hours", "minutes");
+            Set.of("date", "dt", "time", "day", "days", "week", "weeks", "month", "months",
+                    "year", "years", "hour", "hours", "minute", "minutes", "total",
+                    "status", "state", "type", "code", "id", "value", "score", "scores",
+                    "scale", "scales", "level", "levels", "management", "control", "controls");
 
-    /**
-     * Minimum cosine similarity between two clusters' char-n-gram value centroids required to
-     * treat value-level character similarity as structural alignment evidence.
-     */
+    private static final Set<String> BOOLEAN_LIKE_VALUES = Set.of(
+            "yes", "no", "true", "false", "y", "n", "0", "1",
+            "positive", "negative", "present", "absent"
+    );
+
+    // Value evidence is weaker than name similarity, so the merge threshold stays deliberately conservative.
     private static final double VALUE_EMBEDDING_THRESHOLD = 0.30;
 
-    /**
-     * When two clusters' value centroids have cosine similarity at or above this bound their
-     * value distributions are considered <em>identical</em> (e.g. two different binary
-     * {@code "yes/no"} columns) and value-level evidence is suppressed to avoid spurious merges.
-     */
     private static final double VALUE_EMBEDDING_IDENTICAL = 0.99;
+
+    private static final double MUTUAL_SEMANTIC_SCORE_THRESHOLD = 0.82;
+
+    private static final Set<String> SEMANTIC_FALLBACK_EXCLUDED_TOKENS = Set.of(
+            "id", "identifier", "code", "status", "state", "type", "category",
+            "date", "dt", "time", "day", "days", "year", "years", "age",
+            "sex", "gender", "diagnosis", "outcome", "event", "note", "notes",
+            "total", "tot", "sum", "index", "score", "scores"
+    );
+
+    private static final Set<String> VALUE_EVIDENCE_EXCLUDED_TOKENS = Set.of(
+            "id", "identifier", "date", "dt", "time", "day", "days", "year", "years", "age",
+            "total", "tot", "sum", "index",
+            "outcome", "event", "note", "notes", "diagnosis", "admission", "discharge"
+    );
+
+    private enum ColumnRole {
+        IDENTIFIER,
+        DATE,
+        DURATION,
+        AGE,
+        LIFE_EVENT_YEAR,
+        TOTAL_SCORE,
+        ITEM_SCORE,
+        NUMERIC_MEASURE,
+        BOOLEAN_FLAG,
+        OUTCOME,
+        DIAGNOSIS,
+        FREE_TEXT,
+        CATEGORICAL,
+        UNKNOWN
+    }
 
     private final MappingServiceSettings settings;
 
@@ -69,20 +72,17 @@ class ColumnClusterer {
         this.settings = settings;
     }
 
-    // ------------------------------------------------------------------
-    // Clustering
-    // ------------------------------------------------------------------
-
-    /**
-     * Clusters the given columns so that conceptually synonymous columns (from different files)
-     * end up in the same {@link ColCluster}.
-     */
     List<ColCluster> clusterColumns(List<EmbeddedColumn> all) {
-        // Initial grouping by normalised concept key
+        return clusterColumns(all, Collections.emptySet());
+    }
+
+    List<ColCluster> clusterColumns(List<EmbeddedColumn> all, Set<String> requestContextTokens) {
+        Set<String> tokenOverlapExclusions = normalizedTokenSet(requestContextTokens);
         Map<String, ColCluster> byConcept = new LinkedHashMap<>();
         for (EmbeddedColumn c : all) {
             String key = sanitizeUnionName(StringUtil.safeTrim(c.concept).toLowerCase(Locale.ROOT));
             if (key.isEmpty()) key = "__empty__";
+            key = key + "__role_" + initialRoleKey(inferRole(c));
             byConcept.computeIfAbsent(key, k -> new ColCluster()).add(c);
         }
 
@@ -90,8 +90,7 @@ class ColumnClusterer {
         List<ColCluster> merged = new ArrayList<>();
 
         for (ColCluster col : clusters) {
-            // Set the representative concept before the inner loop so conceptTokenJaccard
-            // has a non-empty string to work with for this cluster.
+            // Every cluster keeps one stable human-readable concept for later mapping and enrichment stages.
             col.representativeConcept = pickClusterRepresentativeConcept(col.cols);
             String colConcept = col.representativeConcept;
 
@@ -99,12 +98,13 @@ class ColumnClusterer {
             double bestMatchSim = -1;
 
             for (ColCluster cl : merged) {
+                if (!rolesCompatible(col, cl)) continue;
+
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
 
-                double jac = conceptTokenJaccard(col, cl);
+                double jac = conceptTokenJaccard(col, cl, tokenOverlapExclusions);
                 boolean hasTokenOverlap = jac >= 0.15;
 
-                // Abbreviation check — only when token overlap is absent (avoids redundant work).
                 boolean hasAbbrevPair = false;
                 if (!hasTokenOverlap) {
                     for (EmbeddedColumn clCol : cl.cols) {
@@ -115,37 +115,44 @@ class ColumnClusterer {
                     }
                 }
 
-                // Value-embedding similarity check — catches columns whose concept names are too
-                // generic (e.g. "Type") but whose categorical values embed close to another
-                // cluster's values (e.g. "Ischemic"/"Hemorrhagic" ≈ "Isch"/"Hem").
+                if (hasExclusiveLifeEventAnchor(col, cl) && !hasAbbrevPair) continue;
+
                 boolean hasValueEvidence = false;
                 if (!hasTokenOverlap && !hasAbbrevPair) {
-                    hasValueEvidence = hasValueEmbeddingSimilarity(col, cl);
+                    // Value-domain similarity only acts as a fallback when names provide no usable structure.
+                    hasValueEvidence = hasValueEmbeddingSimilarity(col, cl)
+                            && !isScoreLikeCluster(col)
+                            && !isScoreLikeCluster(cl)
+                            && !isBooleanLikeCluster(col)
+                            && !isBooleanLikeCluster(cl)
+                            && !containsExcludedValueToken(col)
+                            && !containsExcludedValueToken(cl);
                 }
 
-                // Require structural evidence to prevent pure domain-level PubMedBERT similarity
-                // from merging distinct clinical concepts like "toilet" and "bowel".
-                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence)) continue;
+                boolean hasMutualSemanticEvidence = false;
 
-                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}",
-                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence);
+                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence || hasMutualSemanticEvidence)) continue;
 
-                if (sim >= settings.columnClusterThreshold() && sim > bestMatchSim) {
-                    bestMatchSim = sim;
+                logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}, mutualSemantic={}",
+                        colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence,
+                        hasMutualSemanticEvidence);
+
+                double ensembleScore = ensembleScore(col, cl, sim, jac, hasAbbrevPair, hasValueEvidence,
+                        hasMutualSemanticEvidence);
+                if (ensembleScore >= settings.columnClusterThreshold() && ensembleScore > bestMatchSim) {
+                    bestMatchSim = ensembleScore;
                     bestMatch = cl;
                 }
             }
 
             if (bestMatch != null) {
                 for (EmbeddedColumn r : col.cols) bestMatch.add(r);
-                // Keep the representative concept current after the cluster grows.
                 bestMatch.representativeConcept = pickClusterRepresentativeConcept(bestMatch.cols);
             } else {
                 merged.add(col);
             }
         }
 
-        // Final pass — safety net to ensure every cluster has a representative concept set.
         for (ColCluster c : merged) {
             if (c.representativeConcept == null || c.representativeConcept.isEmpty()) {
                 c.representativeConcept = pickClusterRepresentativeConcept(c.cols);
@@ -155,41 +162,272 @@ class ColumnClusterer {
         return merged;
     }
 
-    // ------------------------------------------------------------------
-    // Representative-concept selection
-    // ------------------------------------------------------------------
+    private String initialRoleKey(ColumnRole role) {
+        if (role == null || role == ColumnRole.UNKNOWN) return "unknown";
+        return role.name().toLowerCase(Locale.ROOT);
+    }
 
-    /**
-     * Structural single-word concepts that carry no domain semantics and should be
-     * deprioritised when selecting a cluster's representative concept.
-     * Matches the explicit structural-word list in {@link ColumnNormalizer#isStructuralToken}.
-     */
+    private double ensembleScore(
+            ColCluster a,
+            ColCluster b,
+            double semanticSimilarity,
+            double tokenJaccard,
+            boolean hasAbbrevPair,
+            boolean hasValueEvidence,
+            boolean hasMutualSemanticEvidence
+    ) {
+        // COMA-style lightweight ensemble: embeddings stay primary, while lexical,
+        // value-profile and inferred-role evidence nudge borderline decisions.
+        double lexicalEvidence = Math.max(tokenJaccard, hasAbbrevPair ? 0.45 : 0.0);
+        double valueEvidence = hasValueEvidence ? 0.25 : 0.0;
+        double mutualEvidence = hasMutualSemanticEvidence ? 0.20 : 0.0;
+        double roleEvidence = roleEvidence(a, b);
+
+        double score = semanticSimilarity
+                + 0.16 * lexicalEvidence
+                + 0.08 * valueEvidence
+                + 0.06 * mutualEvidence
+                + 0.08 * roleEvidence;
+        return Math.min(1.0, score);
+    }
+
+    private double roleEvidence(ColCluster a, ColCluster b) {
+        ColumnRole ra = inferRole(a);
+        ColumnRole rb = inferRole(b);
+        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN) return 0.0;
+        if (ra == rb) return 1.0;
+        if (isNumericAssessmentRole(ra) && isNumericAssessmentRole(rb)) return 0.45;
+        if (isTemporalRole(ra) && isTemporalRole(rb)) return 0.35;
+        return 0.0;
+    }
+
+    private boolean rolesCompatible(ColCluster a, ColCluster b) {
+        if (hasUncoveredCompositeLabel(a, b) || hasUncoveredCompositeLabel(b, a)) return false;
+
+        ColumnRole ra = inferRole(a);
+        ColumnRole rb = inferRole(b);
+
+        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN) return true;
+        if (ra == rb) return true;
+
+        if (ra == ColumnRole.IDENTIFIER || rb == ColumnRole.IDENTIFIER) return false;
+        if (ra == ColumnRole.FREE_TEXT || rb == ColumnRole.FREE_TEXT) return false;
+        if (ra == ColumnRole.DIAGNOSIS || rb == ColumnRole.DIAGNOSIS) return false;
+        if (ra == ColumnRole.OUTCOME || rb == ColumnRole.OUTCOME) return false;
+        if (ra == ColumnRole.BOOLEAN_FLAG || rb == ColumnRole.BOOLEAN_FLAG) return false;
+        if (isTemporalRole(ra) || isTemporalRole(rb)) return ra == rb;
+        if (ra == ColumnRole.AGE || rb == ColumnRole.AGE) return false;
+        if (ra == ColumnRole.LIFE_EVENT_YEAR || rb == ColumnRole.LIFE_EVENT_YEAR) return false;
+
+        // A scale total/subscale score and an individual item score can be close in
+        // embedding space, but they answer different harmonization questions.
+        if ((ra == ColumnRole.TOTAL_SCORE && rb == ColumnRole.ITEM_SCORE)
+                || (ra == ColumnRole.ITEM_SCORE && rb == ColumnRole.TOTAL_SCORE)) {
+            return false;
+        }
+
+        if (isNumericAssessmentRole(ra) && isNumericAssessmentRole(rb)) return true;
+        return false;
+    }
+
+    private boolean isNumericAssessmentRole(ColumnRole role) {
+        return role == ColumnRole.TOTAL_SCORE
+                || role == ColumnRole.ITEM_SCORE
+                || role == ColumnRole.NUMERIC_MEASURE;
+    }
+
+    private boolean isTemporalRole(ColumnRole role) {
+        return role == ColumnRole.DATE || role == ColumnRole.DURATION;
+    }
+
+    private ColumnRole inferRole(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return ColumnRole.UNKNOWN;
+
+        EnumMap<ColumnRole, Integer> votes = new EnumMap<>(ColumnRole.class);
+        for (EmbeddedColumn col : cluster.cols) {
+            ColumnRole role = inferRole(col);
+            votes.merge(role, 1, Integer::sum);
+        }
+
+        List<ColumnRole> priority = List.of(
+                ColumnRole.IDENTIFIER,
+                ColumnRole.DATE,
+                ColumnRole.DURATION,
+                ColumnRole.LIFE_EVENT_YEAR,
+                ColumnRole.AGE,
+                ColumnRole.TOTAL_SCORE,
+                ColumnRole.ITEM_SCORE,
+                ColumnRole.BOOLEAN_FLAG,
+                ColumnRole.OUTCOME,
+                ColumnRole.DIAGNOSIS,
+                ColumnRole.FREE_TEXT,
+                ColumnRole.NUMERIC_MEASURE,
+                ColumnRole.CATEGORICAL,
+                ColumnRole.UNKNOWN
+        );
+
+        ColumnRole best = ColumnRole.UNKNOWN;
+        int bestVotes = -1;
+        for (ColumnRole role : priority) {
+            int voteCount = votes.getOrDefault(role, 0);
+            if (voteCount > bestVotes) {
+                best = role;
+                bestVotes = voteCount;
+            }
+        }
+        return best;
+    }
+
+    private ColumnRole inferRole(EmbeddedColumn col) {
+        String label = StringUtil.safe(col == null ? "" : col.column);
+        Set<String> tokens = roleTokens(label);
+        Set<String> conceptTokens = roleTokens(col == null ? "" : col.concept);
+        tokens.addAll(conceptTokens);
+
+        boolean numeric = isNumericColumn(col);
+        boolean date = col != null && col.stats != null
+                && (col.stats.isHasDateMarker()
+                || col.stats.getDateMinMs() != null
+                || col.stats.getDateMaxMs() != null);
+
+        if (containsAny(tokens, "id", "identifier", "subject", "patientid", "recordid")) return ColumnRole.IDENTIFIER;
+        if (date || containsAny(tokens, "date", "dt", "timestamp")) return ColumnRole.DATE;
+        if (containsAny(tokens, "duration", "los", "tsi", "elapsed")
+                || (numeric && containsAny(tokens, "day", "days", "week", "weeks", "month", "months"))) {
+            return ColumnRole.DURATION;
+        }
+        if (containsAny(tokens, "birth", "born", "death", "deceased")) return ColumnRole.LIFE_EVENT_YEAR;
+        if (containsAny(tokens, "age", "ageinjury")) return ColumnRole.AGE;
+        if (containsAny(tokens, "diagnosis", "diagnostic", "dx", "icd", "snomed")) return ColumnRole.DIAGNOSIS;
+        if (isBooleanLikeColumn(col) || containsAny(tokens, "flag", "indicator", "yesno")) return ColumnRole.BOOLEAN_FLAG;
+        if (containsAny(tokens, "note", "notes", "comment", "comments", "text", "description")) return ColumnRole.FREE_TEXT;
+        if (containsAny(tokens, "outcome", "event", "status", "state")) return ColumnRole.OUTCOME;
+
+        if (numeric && (containsAny(tokens, "total", "tot", "sum", "index", "subscale")
+                || containsTokenPrefix(tokens, "total", "tot")
+                || containsTokenSuffix(tokens, "total", "index"))) {
+            return ColumnRole.TOTAL_SCORE;
+        }
+        if (numeric && looksLikeAssessmentItem(tokens)) return ColumnRole.ITEM_SCORE;
+        if (numeric) return ColumnRole.NUMERIC_MEASURE;
+        if (hasCategoricalValues(col)) return ColumnRole.CATEGORICAL;
+        return ColumnRole.UNKNOWN;
+    }
+
+    private boolean looksLikeAssessmentItem(Set<String> tokens) {
+        return containsAny(tokens,
+                "eating", "eat", "feeding", "feed", "bath", "bathing", "groom", "grooming",
+                "toilet", "toileting", "transfer", "transfers", "mobility", "locomotion",
+                "stairs", "dressing", "dress", "bowel", "bladder", "memory", "comprehension",
+                "expression", "interaction", "problem", "solving", "walking", "ambulation")
+                || containsTokenSuffix(tokens,
+                "eating", "feeding", "bath", "bathing", "grooming", "toilet", "toileting",
+                "transfer", "transfers", "mobility", "stairs", "dressing", "bowel", "bladder");
+    }
+
+    private boolean isNumericColumn(EmbeddedColumn col) {
+        return col != null && col.stats != null
+                && (col.stats.isHasIntegerMarker()
+                || col.stats.isHasDoubleMarker()
+                || col.stats.getNumMin() != null
+                || col.stats.getNumMax() != null);
+    }
+
+    private boolean hasCategoricalValues(EmbeddedColumn col) {
+        if (col == null || col.rawValues == null) return false;
+        for (String raw : col.rawValues) {
+            String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+            if (value.isEmpty()
+                    || "integer".equals(value)
+                    || "double".equals(value)
+                    || "date".equals(value)
+                    || value.startsWith("min:")
+                    || value.startsWith("max:")
+                    || value.startsWith("earliest:")
+                    || value.startsWith("latest:")
+                    || value.startsWith("step:")) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isBooleanLikeColumn(EmbeddedColumn col) {
+        if (col == null || col.rawValues == null) return false;
+        Set<String> values = new LinkedHashSet<>();
+        for (String raw : col.rawValues) {
+            String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+            if (value.isEmpty()
+                    || "integer".equals(value)
+                    || "double".equals(value)
+                    || "date".equals(value)
+                    || value.startsWith("min:")
+                    || value.startsWith("max:")
+                    || value.startsWith("earliest:")
+                    || value.startsWith("latest:")
+                    || value.startsWith("step:")) {
+                continue;
+            }
+            values.add(value);
+            if (values.size() > 3) return false;
+        }
+        if (values.isEmpty()) return false;
+        long booleanLike = values.stream().filter(BOOLEAN_LIKE_VALUES::contains).count();
+        return booleanLike >= 2 || (values.size() <= 2 && booleanLike >= 1);
+    }
+
+    private boolean containsAny(Set<String> tokens, String... candidates) {
+        for (String candidate : candidates) {
+            if (tokens.contains(candidate)) return true;
+        }
+        return false;
+    }
+
+    private boolean containsTokenPrefix(Set<String> tokens, String... prefixes) {
+        for (String token : tokens) {
+            for (String prefix : prefixes) {
+                if (token.startsWith(prefix)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsTokenSuffix(Set<String> tokens, String... suffixes) {
+        for (String token : tokens) {
+            for (String suffix : suffixes) {
+                if (token.endsWith(suffix)) return true;
+            }
+        }
+        return false;
+    }
+
+    private Set<String> roleTokens(String label) {
+        String prepared = StringUtil.safe(label)
+                .replaceAll("([a-z])([A-Z])", "$1 $2")
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
+                .toLowerCase(Locale.ROOT);
+        String[] parts = prepared.split("[^a-z0-9]+");
+        Set<String> out = new LinkedHashSet<>();
+        for (String part : parts) {
+            if (part == null) continue;
+            String token = part.trim();
+            if (token.isEmpty() || token.matches("\\d+") || token.length() <= 1) continue;
+            out.add(token);
+        }
+        return out;
+    }
+
     private static final Set<String> STRUCTURAL_CONCEPT_WORDS =
             Set.of("id", "code", "name", "value", "flag", "indicator", "status", "type");
 
-    /**
-     * Returns {@code true} when {@code concept} is a single generic structural token
-     * (e.g. {@code "type"}, {@code "value"}) that carries no domain semantics.
-     * Such concepts are deprioritised in {@link #pickClusterRepresentativeConcept}.
-     */
     private boolean isStructuralSingleTokenConcept(String concept) {
-        Set<String> tokens = conceptTokens(concept);
+        Set<String> tokens = rawConceptTokens(concept);
         return tokens.size() == 1 && STRUCTURAL_CONCEPT_WORDS.contains(tokens.iterator().next());
     }
 
-    /**
-     * Picks the most informative (and shortest on a tie) non-empty concept string among
-     * the cluster members as the cluster's representative concept.
-     * <p>
-     * Generic structural single-token concepts (e.g. {@code "type"}) are skipped in the
-     * first pass and only used as a fallback when every member concept is structural.
-     * This ensures that when a column named {@code "Type"} merges with one named
-     * {@code "Etiology (Isch/Hem)"}, the representative is {@code "etiology isch hem"}
-     * rather than the uninformative {@code "type"}.
-     * </p>
-     */
     String pickClusterRepresentativeConcept(List<EmbeddedColumn> cols) {
-        // First pass: prefer the shortest non-structural concept.
+        // Prefer the shortest non-structural label so abbreviations do not dominate the published concept.
         String best = null;
         int bestLen = Integer.MAX_VALUE;
 
@@ -205,7 +443,6 @@ class ColumnClusterer {
             }
         }
 
-        // Second pass: if every concept is structural, fall back to shortest overall.
         if (best == null) {
             bestLen = Integer.MAX_VALUE;
             for (EmbeddedColumn c : cols) {
@@ -225,13 +462,9 @@ class ColumnClusterer {
         return best;
     }
 
-    // ------------------------------------------------------------------
-    // Token Jaccard
-    // ------------------------------------------------------------------
-
-    private double conceptTokenJaccard(ColCluster a, ColCluster b) {
-        Set<String> sa = conceptTokens(a.representativeConcept);
-        Set<String> sb = conceptTokens(b.representativeConcept);
+    private double conceptTokenJaccard(ColCluster a, ColCluster b, Set<String> tokenOverlapExclusions) {
+        Set<String> sa = clusterConceptTokens(a, tokenOverlapExclusions);
+        Set<String> sb = clusterConceptTokens(b, tokenOverlapExclusions);
         if (sa.isEmpty() || sb.isEmpty()) return 0.0;
 
         int inter = 0;
@@ -241,7 +474,24 @@ class ColumnClusterer {
         return inter / (double) union;
     }
 
+    private Set<String> clusterConceptTokens(ColCluster cluster, Set<String> tokenOverlapExclusions) {
+        Set<String> out = new LinkedHashSet<>();
+        if (cluster == null) return out;
+        out.addAll(conceptTokens(cluster.representativeConcept));
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                out.addAll(conceptTokens(col == null ? "" : col.column, tokenOverlapExclusions));
+                out.addAll(conceptTokens(col == null ? "" : col.concept));
+            }
+        }
+        return out;
+    }
+
     private Set<String> conceptTokens(String concept) {
+        return conceptTokens(concept, Collections.emptySet());
+    }
+
+    private Set<String> conceptTokens(String concept, Set<String> tokenOverlapExclusions) {
         String s = StringUtil.safeTrim(concept).toLowerCase(Locale.ROOT);
         if (s.isEmpty()) return Collections.emptySet();
         String[] parts = s.split("[^a-z0-9]+");
@@ -250,25 +500,23 @@ class ColumnClusterer {
             if (p == null) continue;
             String t = p.trim();
             if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1
-                    || JACCARD_STOP_TOKENS.contains(t)) continue;
+                    || JACCARD_STOP_TOKENS.contains(t)
+                    || tokenOverlapExclusions.contains(t)) continue;
             out.add(t);
         }
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Abbreviation detection
-    // ------------------------------------------------------------------
+    private Set<String> normalizedTokenSet(Set<String> tokens) {
+        if (tokens == null || tokens.isEmpty()) return Collections.emptySet();
+        Set<String> out = new HashSet<>();
+        for (String token : tokens) {
+            String t = StringUtil.safeTrim(token).toLowerCase(Locale.ROOT);
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
 
-    /**
-     * Returns {@code true} if one concept appears to be an abbreviation or acronym of the other.
-     * Handles three cases:
-     * <ol>
-     *   <li>Initialism (order-insensitive): {@code "sbp"} ↔ {@code "blood pressure systolic"}</li>
-     *   <li>Prefix: {@code "cr"} ↔ {@code "serum creatinine"}</li>
-     *   <li>Suffix-initialism: {@code "egfr"} ↔ {@code "glomerular filtration rate"}</li>
-     * </ol>
-     */
     private boolean isAbbreviationPair(String conceptA, String conceptB) {
         if (conceptA == null || conceptB == null) return false;
         return looksLikeAbbreviationOf(conceptA, conceptB)
@@ -279,23 +527,27 @@ class ColumnClusterer {
         String[] candidateTokens = candidate.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
         String[] fullTokensArr = fullConcept.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
 
+        if (hasCompositeJoiner(fullConcept)
+                && !hasCompositeJoiner(candidate)
+                && !candidateCoversCompositeHeads(candidateTokens, fullConcept)) {
+            return false;
+        }
+
         List<String> fullParts = new ArrayList<>();
         for (String t : fullTokensArr) { if (t != null && !t.isEmpty()) fullParts.add(t); }
 
-        // Single-token full concept (e.g. "grooming", "toileting", "dressing"):
-        // detect when any candidate token is a strict prefix of that token.
         if (fullParts.size() == 1) {
             String singleToken = fullParts.get(0);
             if (singleToken.length() < 4) return false;
             for (String abbrev : candidateTokens) {
                 if (abbrev == null || abbrev.length() < 3) continue;
+                // Single-word concepts often surface as clipped stems like "mobil" for "mobility".
                 if (singleToken.length() > abbrev.length() && singleToken.startsWith(abbrev)) {
                     String remainder = singleToken.substring(abbrev.length());
                     if (GRAMMATICAL_SUFFIXES.contains(remainder)) return true;
                 }
-                // English silent-e elision: "dose" → "dos" + "age" = "dosage".
-                // When the candidate ends in 'e', also check the stem (without the 'e').
                 if (abbrev.endsWith("e") && abbrev.length() > 3) {
+                    // Allow the common silent-e drop before checking grammatical suffix leftovers.
                     String stem = abbrev.substring(0, abbrev.length() - 1);
                     if (singleToken.length() > stem.length() && singleToken.startsWith(stem)) {
                         String remainder = singleToken.substring(stem.length());
@@ -307,50 +559,22 @@ class ColumnClusterer {
         }
         if (fullParts.size() < 2) return false;
 
-        // Build initials multiset: char → how many full-concept tokens start with that char
-        Map<Character, Integer> initialsMultiset = new LinkedHashMap<>();
-        for (String token : fullParts) initialsMultiset.merge(token.charAt(0), 1, Integer::sum);
+        String initials = initialsOf(fullParts);
 
         for (String abbrev : candidateTokens) {
             if (abbrev == null || abbrev.isEmpty()) continue;
+            // Two-character multi-token abbreviations collide too often unless they match the full token count.
             if (abbrev.length() < 2 || abbrev.length() > 6) continue;
 
-            // Multi-token guard for Case 1 (initialism): in a multi-token → multi-token
-            // context, tokens shorter than 3 characters are typically prepositions or articles
-            // ("at", "to", "by") and must not act as initialism abbreviations.  Without this
-            // guard "at" in "age at injury" would incorrectly match the initials of
-            // "tsi to admission days" (which share 'a' and 't').
-            // Exception: allow 2-char abbreviations when the abbreviation length equals the
-            // number of full-concept tokens exactly (perfect initialism, e.g. "HR" ↔ "Heart Rate").
             if (candidateTokens.length > 1 && fullParts.size() > 1
                     && abbrev.length() < 3 && abbrev.length() != fullParts.size()) continue;
 
-            Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
-            for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
+            if (orderedInitialsMatch(abbrev, initials)) return true;
 
-            // Case 1: Initialism — every char in the abbreviation must appear at least as often
-            // in the initials multiset. Using multiset prevents LDL from matching HDL's initials
-            // {h,d,l} even though both share {d,l}.
-            boolean initialsMatch = true;
-            for (Map.Entry<Character, Integer> e : abbrevMultiset.entrySet()) {
-                if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
-                    initialsMatch = false;
-                    break;
-                }
-            }
-            if (initialsMatch) return true;
-
-            // Case 2: Prefix — abbreviation is a STRICT prefix of a full-concept token.
-            // Multi-token guard: when BOTH concepts have more than one token, every OTHER
-            // candidate token must also match some remaining full token (by equality or prefix).
-            // This prevents "tot barthel" from abbreviating "total motor" just because "tot" is
-            // a strict prefix of "total" — "barthel" has no match in ["motor"].
-            // Exception: when the full-concept token being prefix-matched looks like an acronym
-            // (≤ 1 vowel, 3-6 chars) the prefix is treated as a named-entity stem and the
-            // remaining-token guard is skipped (e.g. "NIH" prefix of "NIHSS").
             for (String token : fullParts) {
                 if (token.length() > abbrev.length() && token.startsWith(abbrev)) {
                     if (candidateTokens.length > 1 && fullParts.size() > 1) {
+                        // Acronym-like tokens can stand in for a remaining stem when other parts already align.
                         if (isAcronymLike(token)) return true;
                         if (remainingTokensMatch(abbrev, candidateTokens, token, fullParts)) return true;
                     } else {
@@ -359,43 +583,121 @@ class ColumnClusterer {
                 }
             }
 
-            // Case 3: Suffix-initialism — for prefixed abbreviations like eGFR → GFR.
-            // Minimum suffix length is 2 so that common 2-char acronym tails (e.g. "SS" in
-            // "NIHSS" ↔ "NIH Stroke Scale") are also recognised.
             for (int start = 1; start <= abbrev.length() - 2; start++) {
+                // Suffix initialisms cover exports that drop leading context before keeping initials.
                 String suffix = abbrev.substring(start);
                 if (suffix.length() < 2) continue;
-                Map<Character, Integer> suffixMultiset = new LinkedHashMap<>();
-                for (char c : suffix.toCharArray()) suffixMultiset.merge(c, 1, Integer::sum);
-                boolean suffixMatch = true;
-                for (Map.Entry<Character, Integer> e : suffixMultiset.entrySet()) {
-                    if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
-                        suffixMatch = false;
-                        break;
-                    }
-                }
-                if (suffixMatch) return true;
+                if (orderedInitialsMatch(suffix, initials)) return true;
             }
         }
         return false;
     }
 
-    /**
-     * Returns {@code true} when every candidate token other than {@code matchedCandidateToken}
-     * has a matching counterpart among the full-concept tokens other than
-     * {@code matchedFullToken}. Matching is by equality or strict prefix relationship in either
-     * direction.
-     * <p>
-     * Used by the Case 2 (prefix) multi-token guard in
-     * {@link #looksLikeAbbreviationOf(String, String)} to prevent {@code "tot barthel"} from
-     * abbreviating {@code "total motor"} just because {@code "tot"} is a prefix of
-     * {@code "total"} — the other token {@code "barthel"} has no match in {@code ["motor"]}.
-     * </p>
-     */
+    private static String initialsOf(List<String> parts) {
+        StringBuilder initials = new StringBuilder();
+        for (String part : parts) {
+            if (part != null && !part.isEmpty()) initials.append(part.charAt(0));
+        }
+        return initials.toString();
+    }
+
+    private static boolean orderedInitialsMatch(String abbreviation, String initials) {
+        if (abbreviation == null || initials == null || abbreviation.length() < 2 || initials.length() < 2) {
+            return false;
+        }
+        return initials.startsWith(abbreviation)
+                || abbreviation.startsWith(initials)
+                || (initials.length() > 2 && initials.substring(1).equals(abbreviation));
+    }
+
+    private boolean hasUncoveredCompositeLabel(ColCluster composite, ColCluster other) {
+        List<String> heads = compositeHeads(composite);
+        if (heads.size() < 2) return false;
+        String otherText = clusterSearchText(other);
+        if (otherText.isEmpty()) return false;
+        for (String head : heads) {
+            if (!otherText.contains(head)) return true;
+        }
+        return false;
+    }
+
+    private List<String> compositeHeads(ColCluster cluster) {
+        if (cluster == null) return Collections.emptyList();
+        List<String> labels = new ArrayList<>();
+        labels.add(StringUtil.safe(cluster.representativeConcept));
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                labels.add(StringUtil.safe(col == null ? "" : col.column));
+                labels.add(StringUtil.safe(col == null ? "" : col.concept));
+            }
+        }
+
+        for (String label : labels) {
+            if (!hasCompositeJoiner(label)) continue;
+            List<String> heads = new ArrayList<>();
+            for (String segment : label.toLowerCase(Locale.ROOT).split("\\+")) {
+                String[] tokens = segment.split("[^a-z0-9]+");
+                for (String token : tokens) {
+                    if (token != null && token.length() >= 2) {
+                        heads.add(token);
+                        break;
+                    }
+                }
+            }
+            if (heads.size() >= 2) return heads;
+        }
+        return Collections.emptyList();
+    }
+
+    private String clusterSearchText(ColCluster cluster) {
+        if (cluster == null) return "";
+        StringBuilder sb = new StringBuilder();
+        appendSearchText(sb, cluster.representativeConcept);
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                appendSearchText(sb, col == null ? "" : col.column);
+                appendSearchText(sb, col == null ? "" : col.concept);
+            }
+        }
+        return sb.toString();
+    }
+
+    private void appendSearchText(StringBuilder sb, String value) {
+        if (value == null || value.isBlank()) return;
+        sb.append(' ')
+                .append(value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", ""));
+    }
+
+    private static boolean hasCompositeJoiner(String value) {
+        return value != null && value.contains("+");
+    }
+
+    private static boolean candidateCoversCompositeHeads(String[] candidateTokens, String fullConcept) {
+        if (candidateTokens == null || fullConcept == null) return false;
+        String candidate = String.join("", candidateTokens).toLowerCase(Locale.ROOT);
+        if (candidate.isEmpty()) return false;
+
+        List<String> heads = new ArrayList<>();
+        for (String segment : fullConcept.toLowerCase(Locale.ROOT).split("\\+")) {
+            String[] tokens = segment.split("[^a-z0-9]+");
+            for (String token : tokens) {
+                if (token != null && token.length() >= 2) {
+                    heads.add(token);
+                    break;
+                }
+            }
+        }
+        if (heads.size() < 2) return true;
+        for (String head : heads) {
+            if (!candidate.contains(head)) return false;
+        }
+        return true;
+    }
+
     private static boolean remainingTokensMatch(
             String matchedCandidateToken, String[] candidateTokens,
             String matchedFullToken,      List<String> fullParts) {
-        // Build the set of remaining full tokens (exclude the already-matched full token).
+        // Once one token is explained as a stem, the rest still need to align to avoid accidental merges.
         List<String> remaining = new ArrayList<>(fullParts.size());
         boolean excluded = false;
         for (String ft : fullParts) {
@@ -416,17 +718,6 @@ class ColumnClusterer {
         return true;
     }
 
-    // ------------------------------------------------------------------
-    // Value-embedding evidence
-    // ------------------------------------------------------------------
-
-    /**
-     * Returns {@code true} when {@code token} appears to be an acronym or abbreviation
-     * rather than a regular English word.  Heuristic: at most one vowel and length in [3, 6].
-     * Used by the Case 2 prefix check to skip the remaining-token guard when the matched
-     * full-concept token is itself an acronym (e.g. {@code "nihss"} in
-     * {@code "nihss score"} being prefix-matched by {@code "nih"}).
-     */
     private static boolean isAcronymLike(String token) {
         if (token == null || token.length() < 3 || token.length() > 6) return false;
         long vowels = 0;
@@ -436,42 +727,137 @@ class ColumnClusterer {
         return vowels <= 1;
     }
 
-    /**
-     * Returns {@code true} when the char-n-gram value centroids of the two clusters have
-     * sufficient similarity to serve as structural alignment evidence, but are not identical.
-     * <p>
-     * <strong>Similarity ≥ {@link #VALUE_EMBEDDING_THRESHOLD} (0.30)</strong>: the clusters'
-     * value domains share enough character-level features to suggest the same underlying concept
-     * encoded differently — e.g. {@code "Ischemic"/"Hemorrhagic"} vs {@code "Hem"/"Isch"}.
-     * The 3-gram {@code "hem"} appears in {@code "ischemic"} (positions 3-5) and in
-     * {@code "hemorrhagic"}, and is also the full word in the second column; similarly
-     * {@code "isc"}/{@code "sch"} appear in both sides.
-     * </p>
-     * <p>
-     * <strong>Similarity &lt; {@link #VALUE_EMBEDDING_IDENTICAL} (0.99)</strong>: vectors that
-     * are practically identical indicate two columns with the <em>same</em> value distribution
-     * (e.g. two separate binary {@code "yes/no"} clinical variables such as
-     * {@code "diabetes"} and {@code "hypertension"}).  Those must not be merged even when their
-     * PubMedBERT combined-embedding similarity is high.
-     * </p>
-     * <p>
-     * Only clusters where at least one member carries a non-null {@link EmbeddedColumn#valueVec}
-     * participate; numeric/date columns return {@code null} from {@link org.taniwha.util.ValueVectorUtil}
-     * and are therefore excluded via {@code valueCentroid == null}.
-     * </p>
-     */
     private boolean hasValueEmbeddingSimilarity(ColCluster a, ColCluster b) {
         if (a.valueCentroid == null || b.valueCentroid == null) return false;
+        // Value vectors only help when both sides have enough non-empty domain evidence to compare.
         double sim = MappingMathUtil.cosine(a.valueCentroid, b.valueCentroid);
         logger.debug("[CLUSTER] value-ngram sim '{}' vs '{}': {}", a.representativeConcept, b.representativeConcept, sim);
         if (sim >= VALUE_EMBEDDING_IDENTICAL) return false;
         return sim >= VALUE_EMBEDDING_THRESHOLD;
     }
 
-    // ------------------------------------------------------------------
-    // Utility — intentionally duplicated from MappingAssembler to avoid a
-    // cross-dependency between two package-private classes.
-    // ------------------------------------------------------------------
+    private boolean hasMutualSemanticScoreEvidence(
+            ColCluster a,
+            ColCluster b,
+            List<ColCluster> candidates,
+            double similarity
+    ) {
+        double threshold = Math.max(settings.columnClusterThreshold(), MUTUAL_SEMANTIC_SCORE_THRESHOLD);
+        if (similarity < threshold) return false;
+        if (!isScoreLikeCluster(a) || !isScoreLikeCluster(b)) return false;
+        if (containsExcludedSemanticToken(a) || containsExcludedSemanticToken(b)) return false;
+
+        ColCluster nearestToA = nearestSemanticScoreCluster(a, candidates);
+        ColCluster nearestToB = nearestSemanticScoreCluster(b, candidates);
+        return nearestToA == b && nearestToB == a;
+    }
+
+    private ColCluster nearestSemanticScoreCluster(ColCluster target, List<ColCluster> candidates) {
+        ColCluster best = null;
+        double bestSim = -1.0;
+        for (ColCluster candidate : candidates) {
+            if (candidate == target) continue;
+            if (!isScoreLikeCluster(candidate) || containsExcludedSemanticToken(candidate)) continue;
+            double sim = MappingMathUtil.cosine(target.centroid, candidate.centroid);
+            if (sim > bestSim) {
+                bestSim = sim;
+                best = candidate;
+            }
+        }
+        return bestSim >= Math.max(settings.columnClusterThreshold(), MUTUAL_SEMANTIC_SCORE_THRESHOLD) ? best : null;
+    }
+
+    private boolean isScoreLikeCluster(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return false;
+        for (EmbeddedColumn col : cluster.cols) {
+            if (col.stats == null) return false;
+            boolean numeric = col.stats.isHasIntegerMarker()
+                    || col.stats.isHasDoubleMarker()
+                    || col.stats.getNumMin() != null
+                    || col.stats.getNumMax() != null;
+            boolean date = col.stats.isHasDateMarker()
+                    || col.stats.getDateMinMs() != null
+                    || col.stats.getDateMaxMs() != null;
+            if (!numeric || date) return false;
+        }
+        return true;
+    }
+
+    private boolean containsExcludedSemanticToken(ColCluster cluster) {
+        Set<String> tokens = rawConceptTokens(cluster.representativeConcept);
+        for (String token : tokens) {
+            if (SEMANTIC_FALLBACK_EXCLUDED_TOKENS.contains(token)) return true;
+        }
+        return tokens.isEmpty();
+    }
+
+    private boolean containsExcludedValueToken(ColCluster cluster) {
+        Set<String> tokens = rawConceptTokens(cluster.representativeConcept);
+        for (String token : tokens) {
+            if (VALUE_EVIDENCE_EXCLUDED_TOKENS.contains(token)) return true;
+        }
+        return tokens.isEmpty();
+    }
+
+    private boolean isBooleanLikeCluster(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null || cluster.cols.isEmpty()) return false;
+        Set<String> values = new LinkedHashSet<>();
+        for (EmbeddedColumn col : cluster.cols) {
+            if (col.rawValues == null) continue;
+            for (String raw : col.rawValues) {
+                String value = StringUtil.safeTrim(raw).toLowerCase(Locale.ROOT);
+                if (value.isEmpty()
+                        || "integer".equals(value)
+                        || "double".equals(value)
+                        || "date".equals(value)
+                        || value.startsWith("min:")
+                        || value.startsWith("max:")
+                        || value.startsWith("earliest:")
+                        || value.startsWith("latest:")
+                        || value.startsWith("step:")) {
+                    continue;
+                }
+                values.add(value);
+                if (values.size() > 2) return false;
+            }
+        }
+        if (values.isEmpty()) return false;
+        long booleanLike = values.stream().filter(BOOLEAN_LIKE_VALUES::contains).count();
+        return booleanLike >= 2 || (values.size() <= 2 && booleanLike >= 1);
+    }
+
+    private Set<String> rawConceptTokens(String concept) {
+        String s = org.taniwha.util.NormalizationUtil.splitCamelStrong(StringUtil.safeTrim(concept));
+        s = s.replaceAll("([a-zA-Z])([0-9])", "$1 $2");
+        s = s.replaceAll("([0-9])([a-zA-Z])", "$1 $2");
+        s = s.toLowerCase(Locale.ROOT);
+        if (s.isEmpty()) return Collections.emptySet();
+        String[] parts = s.split("[^a-z0-9]+");
+        Set<String> out = new LinkedHashSet<>();
+        for (String p : parts) {
+            if (p == null) continue;
+            String t = p.trim();
+            if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1) continue;
+            out.add(t);
+        }
+        return out;
+    }
+
+    private boolean hasExclusiveLifeEventAnchor(ColCluster a, ColCluster b) {
+        return hasLifeEventAnchor(a) != hasLifeEventAnchor(b);
+    }
+
+    private boolean hasLifeEventAnchor(ColCluster cluster) {
+        if (cluster == null || cluster.cols == null) return false;
+        for (EmbeddedColumn col : cluster.cols) {
+            Set<String> tokens = rawConceptTokens(col == null ? "" : col.concept);
+            if (tokens.contains("birth") || tokens.contains("born")
+                    || tokens.contains("death") || tokens.contains("deceased")) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private static String sanitizeUnionName(String raw) {
         String s = StringUtil.safeTrim(raw);

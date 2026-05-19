@@ -2,7 +2,6 @@ package org.taniwha.service.mapping;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
@@ -14,31 +13,17 @@ import org.taniwha.util.StringUtil;
 
 import java.util.*;
 
-/**
- * Assembles {@link SuggestedMappingDTO} instances from embedded column groups and manages
- * union-key uniqueness.
- * <p>
- * Extracted from {@link MappingService} for maintainability.
- * </p>
- */
+// Assembles suggested mapping DTOs from detected concepts, types, and source columns.
 class MappingAssembler {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingAssembler.class);
 
     private final ValueMappingBuilder valueMappingBuilder;
 
-    MappingAssembler(ValueMappingBuilder valueMappingBuilder, MappingServiceSettings settings) {
+    MappingAssembler(ValueMappingBuilder valueMappingBuilder) {
         this.valueMappingBuilder = valueMappingBuilder;
     }
 
-    // ------------------------------------------------------------------
-    // Mapping construction
-    // ------------------------------------------------------------------
-
-    /**
-     * Builds one mapping entry and appends it to {@code out}.
-     * A unique union key derived from {@code baseUnionKey} is registered in {@code usedUnionKeys}.
-     */
     void addSuggestedMapping(
             List<Map<String, SuggestedMappingDTO>> out,
             Set<String> usedUnionKeys,
@@ -48,8 +33,18 @@ class MappingAssembler {
             List<EmbeddedColumn> picked
     ) {
         if (out == null || usedUnionKeys == null || picked == null || picked.isEmpty()) return;
+        picked = keepOneColumnPerSourceFile(picked);
+        if (picked.isEmpty()) return;
 
-        String base = sanitizeUnionName(StringUtil.safe(baseUnionKey));
+        String baseLabel = StringUtil.safe(baseUnionKey);
+        if (schemaFieldOrNull == null) {
+            String sourceColumnLabel = sharedSourceColumnLabel(picked);
+            if (!sourceColumnLabel.isEmpty()) {
+                baseLabel = sourceColumnLabel;
+            }
+        }
+
+        String base = sanitizeUnionName(baseLabel);
         if (base.isEmpty()) base = "field";
         String unionKey = makeUnique(base, usedUnionKeys);
 
@@ -72,13 +67,10 @@ class MappingAssembler {
         out.add(one);
     }
 
-    /**
-     * Ensures that every column in {@code all} is referenced in at least one mapping in
-     * {@code out}; emits a singleton mapping for any column that was missed.
-     */
     void ensureAllColumnsCovered(List<EmbeddedColumn> all, List<Map<String, SuggestedMappingDTO>> out) {
         if (all == null || all.isEmpty() || out == null) return;
 
+        // Coverage is tracked from emitted source refs rather than top-level mapping keys.
         Set<String> usedSourceKeys = collectUsedSourceKeys(out);
         Set<String> usedUnionKeys = collectUsedUnionKeys(out);
 
@@ -94,28 +86,22 @@ class MappingAssembler {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Type detection
-    // ------------------------------------------------------------------
-
-    /**
-     * Infers the data type for a mapping from the source columns' parsed statistics, falling
-     * back to the schema-declared type when available.
-     */
     String detectTypeFromSourcesOrSchema(List<EmbeddedColumn> sources, String schemaType) {
         String st = StringUtil.safeTrim(schemaType).toLowerCase(Locale.ROOT);
         return switch (st) {
             case "integer" -> "integer";
             case "number", "double", "float" -> "double";
             case "date", "datetime" -> "date";
+            case "string", "boolean" -> "string";
             default -> {
                 boolean anyInt = false, anyDouble = false, anyDate = false;
                 if (sources != null) {
                     for (EmbeddedColumn s : sources) {
                         if (s == null || s.stats == null) continue;
-                        if (s.stats.hasIntegerMarker) anyInt = true;
-                        if (s.stats.hasDoubleMarker) anyDouble = true;
-                        if (s.stats.hasDateMarker) anyDate = true;
+                        if (s.stats.isHasIntegerMarker()) anyInt = true;
+                        // Any explicit floating marker should widen the merged type to double.
+                        if (s.stats.isHasDoubleMarker()) anyDouble = true;
+                        if (s.stats.isHasDateMarker()) anyDate = true;
                     }
                 }
                 if (anyDate) yield "date";
@@ -126,14 +112,6 @@ class MappingAssembler {
         };
     }
 
-    // ------------------------------------------------------------------
-    // Key utilities
-    // ------------------------------------------------------------------
-
-    /**
-     * Converts a raw string to a valid mapping identifier by replacing spaces with {@code _}
-     * and stripping non-alphanumeric characters.
-     */
     String sanitizeUnionName(String raw) {
         String s = StringUtil.safeTrim(raw);
         if (s.isEmpty()) return "";
@@ -143,7 +121,6 @@ class MappingAssembler {
         return s;
     }
 
-    /** Returns {@code base} if unused, otherwise appends {@code _2}, {@code _3}, … until unique. */
     String makeUnique(String base, Set<String> used) {
         String b = StringUtil.safeTrim(base);
         if (b.isEmpty()) b = "field";
@@ -154,7 +131,21 @@ class MappingAssembler {
         return out;
     }
 
-    /** Collects all union keys currently present in {@code out}. */
+    private String sharedSourceColumnLabel(List<EmbeddedColumn> picked) {
+        if (picked == null || picked.isEmpty()) return "";
+        String first = StringUtil.safeTrim(picked.get(0).column);
+        if (first.isEmpty()) return "";
+        if (picked.size() == 1) return first;
+
+        String firstKey = first.replaceAll("[^A-Za-z0-9]+", "").toLowerCase(Locale.ROOT);
+        for (EmbeddedColumn col : picked) {
+            String next = StringUtil.safeTrim(col == null ? "" : col.column);
+            String nextKey = next.replaceAll("[^A-Za-z0-9]+", "").toLowerCase(Locale.ROOT);
+            if (!firstKey.equals(nextKey)) return "";
+        }
+        return first;
+    }
+
     static Set<String> collectUsedUnionKeys(List<Map<String, SuggestedMappingDTO>> out) {
         Set<String> used = new HashSet<>();
         if (out == null) return used;
@@ -163,10 +154,6 @@ class MappingAssembler {
         }
         return used;
     }
-
-    // ------------------------------------------------------------------
-    // Private helpers
-    // ------------------------------------------------------------------
 
     private void emitSingletonMapping(
             List<Map<String, SuggestedMappingDTO>> out,
@@ -224,6 +211,19 @@ class MappingAssembler {
     private List<String> extractSourceColumnNames(List<EmbeddedColumn> cols) {
         List<String> out = new ArrayList<>();
         for (EmbeddedColumn c : cols) out.add(c.column);
+        return out;
+    }
+
+    private List<EmbeddedColumn> keepOneColumnPerSourceFile(List<EmbeddedColumn> cols) {
+        if (cols == null || cols.isEmpty()) return Collections.emptyList();
+        List<EmbeddedColumn> out = new ArrayList<>();
+        Set<String> seenFiles = new HashSet<>();
+        for (EmbeddedColumn c : cols) {
+            if (c == null) continue;
+            if (seenFiles.add(c.fileKey())) {
+                out.add(c);
+            }
+        }
         return out;
     }
 

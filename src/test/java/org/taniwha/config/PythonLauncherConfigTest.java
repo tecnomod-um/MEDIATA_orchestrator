@@ -9,6 +9,7 @@ import org.mockito.Mockito;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.taniwha.util.PythonLauncherUtil;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -43,27 +44,27 @@ class PythonLauncherConfigTest {
             CommandLineRunner runner = ctx.getBean(CommandLineRunner.class);
             assertThat(runner).isNotNull();
 
-            try (MockedStatic<org.taniwha.util.PythonLauncherUtil> util =
-                         Mockito.mockStatic(org.taniwha.util.PythonLauncherUtil.class)) {
-                util.when(() -> org.taniwha.util.PythonLauncherUtil.parseDeps("flask,requests"))
+            try (MockedStatic<PythonLauncherUtil> util =
+                         Mockito.mockStatic(PythonLauncherUtil.class)) {
+                util.when(() -> PythonLauncherUtil.parseDeps("flask,requests"))
                         .thenReturn(Arrays.asList("flask", "requests"));
-                util.when(() -> org.taniwha.util.PythonLauncherUtil.pickPython(venvDir.toFile()))
+                util.when(() -> PythonLauncherUtil.pickPython(venvDir.toFile()))
                         .thenReturn(pyExe.toFile());
-                util.when(() -> org.taniwha.util.PythonLauncherUtil.ensureVirtualEnv(
+                util.when(() -> PythonLauncherUtil.ensureVirtualEnv(
                                 any(Path.class), anyMap()))
                         .thenAnswer(i -> null);
-                util.when(() -> org.taniwha.util.PythonLauncherUtil.ensureDependencies(
+                util.when(() -> PythonLauncherUtil.ensureDependencies(
                                 any(File.class), anyMap(), any(File.class), anyList()))
                         .thenAnswer(i -> null);
-                util.when(() -> org.taniwha.util.PythonLauncherUtil.launchAsync(
+                util.when(() -> PythonLauncherUtil.launchAsync(
                                 any(File.class), anyMap(), anyString()))
                         .thenAnswer(i -> null);
                 runner.run();
-                util.verify(() -> org.taniwha.util.PythonLauncherUtil.pickPython(venvDir.toFile()));
-                util.verify(() -> org.taniwha.util.PythonLauncherUtil.ensureDependencies(
+                util.verify(() -> PythonLauncherUtil.pickPython(venvDir.toFile()));
+                util.verify(() -> PythonLauncherUtil.ensureDependencies(
                         eq(scriptDir.toFile()), anyMap(), eq(pyExe.toFile()), eq(Arrays.asList("flask", "requests"))));
                 ArgumentCaptor<String> cmdCap = ArgumentCaptor.forClass(String.class);
-                util.verify(() -> org.taniwha.util.PythonLauncherUtil.launchAsync(
+                util.verify(() -> PythonLauncherUtil.launchAsync(
                         eq(scriptDir.toFile()), any(Map.class), cmdCap.capture()));
                 String cmd = cmdCap.getValue();
                 assertThat(cmd).contains(pyExe.toString())

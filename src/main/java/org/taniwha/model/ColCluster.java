@@ -4,14 +4,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+// Stores a cluster of semantically similar columns and maintains centroids (average vector of all columns) for their embeddings.
 public final class ColCluster {
     public final List<EmbeddedColumn> cols = new ArrayList<>();
     public float[] centroid = null;
-    /**
-     * Running centroid of the values-only embeddings ({@link EmbeddedColumn#valueVec}) for
-     * categorical member columns.  {@code null} when no member carries a non-null
-     * {@code valueVec} (e.g. a cluster that contains only numeric columns).
-     */
     public float[] valueCentroid = null;
     public int count = 0;
     private int valueCentroidCount = 0;
@@ -20,7 +16,6 @@ public final class ColCluster {
     public void add(EmbeddedColumn col) {
         cols.add(col);
 
-        // Update the combined-embedding centroid.
         if (centroid == null) {
             centroid = Arrays.copyOf(col.vec, col.vec.length);
             count = 1;
@@ -32,7 +27,6 @@ public final class ColCluster {
             normalizeInPlace(centroid);
         }
 
-        // Update the values-only centroid (only for columns that carry one).
         if (col.valueVec != null) {
             if (valueCentroid == null) {
                 valueCentroid = Arrays.copyOf(col.valueVec, col.valueVec.length);

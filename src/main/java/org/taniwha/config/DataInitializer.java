@@ -17,7 +17,7 @@ import org.taniwha.service.KerberosService;
 
 import java.util.Collections;
 
-// Populates platform with default values
+// Populates the platform with default values
 @Configuration
 public class DataInitializer {
 

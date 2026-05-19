@@ -22,7 +22,7 @@ import static org.taniwha.util.PythonLauncherUtil.*;
  * process when running outside Docker.
  *
  * <p>The service is started on {@code openmed.port} (default 8002) and is used
- * by {@link org.taniwha.service.OpenMedTerminologyService} to infer
+ * by {@link org.taniwha.service.enrichment.OpenMedTerminologyService} to infer
  * SNOMED-searchable terminology terms for dataset columns and values.</p>
  *
  * <p>Disable by setting {@code openmed.launcher.enabled=false} in

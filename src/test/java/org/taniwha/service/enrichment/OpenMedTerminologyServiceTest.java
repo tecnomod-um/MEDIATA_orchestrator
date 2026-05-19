@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.enrichment;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -9,9 +9,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.model.ColumnRecord;
+import org.taniwha.service.RDFService;
 
 import java.util.List;
 import java.util.Map;
@@ -61,6 +63,9 @@ class OpenMedTerminologyServiceTest {
         ReflectionTestUtils.setField(service, "configuredBatchSize",  5);
         ReflectionTestUtils.setField(service, "timeoutMs",            5000);
         ReflectionTestUtils.setField(service, "snowstormEnabled",     true);
+        ObjectProvider<RDFService> rdfProvider = mock(ObjectProvider.class);
+        lenient().when(rdfProvider.getIfAvailable()).thenReturn(rdfService);
+        ReflectionTestUtils.setField(service, "rdfServiceProvider", rdfProvider);
         logger.info("[OpenMedTest] setUp – service ready");
     }
 

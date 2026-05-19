@@ -1,0 +1,102 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "severity001",
+      "fileName": "trauma_ed.csv",
+      "column": "Glasgow Coma Scale",
+      "values": ["integer", "min:3", "max:15"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "severity002",
+      "fileName": "icu_neuro.csv",
+      "column": "GCS Total",
+      "values": ["integer", "min:3", "max:15"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "severity003",
+      "fileName": "stroke_registry.csv",
+      "column": "NIHSS Score",
+      "values": ["integer", "min:0", "max:42"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "severity004",
+      "fileName": "stroke_followup.csv",
+      "column": "NIH Stroke Scale",
+      "values": ["integer", "min:0", "max:42"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "severity005",
+      "fileName": "stroke_registry.csv",
+      "column": "Modified Rankin Scale",
+      "values": ["integer", "min:0", "max:6"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "severity006",
+      "fileName": "stroke_followup.csv",
+      "column": "mRS",
+      "values": ["integer", "min:0", "max:6"],
+      "color": "#f38181"
+    },
+    {
+      "nodeId": "severity007",
+      "fileName": "nursing_observations.csv",
+      "column": "Pain Score",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "severity008",
+      "fileName": "pain_clinic.csv",
+      "column": "NRS Pain",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#f38181"
+    },
+    {
+      "nodeId": "severity009",
+      "fileName": "icu_day1.csv",
+      "column": "SOFA Score",
+      "values": ["integer", "min:0", "max:24"],
+      "color": "#ffd166"
+    },
+    {
+      "nodeId": "severity010",
+      "fileName": "icu_day2.csv",
+      "column": "Sequential Organ Failure Assessment",
+      "values": ["integer", "min:0", "max:24"],
+      "color": "#06d6a0"
+    },
+    {
+      "nodeId": "severity011",
+      "fileName": "icu_admission.csv",
+      "column": "APACHE II Score",
+      "values": ["integer", "min:0", "max:71"],
+      "color": "#118ab2"
+    },
+    {
+      "nodeId": "severity012",
+      "fileName": "critical_care.csv",
+      "column": "Apache 2 total",
+      "values": ["integer", "min:0", "max:71"],
+      "color": "#073b4c"
+    },
+    {
+      "nodeId": "severity013",
+      "fileName": "ward_obs.csv",
+      "column": "NEWS2 Score",
+      "values": ["integer", "min:0", "max:20"],
+      "color": "#cdb4db"
+    },
+    {
+      "nodeId": "severity014",
+      "fileName": "rapid_response.csv",
+      "column": "National Early Warning Score 2",
+      "values": ["integer", "min:0", "max:20"],
+      "color": "#bde0fe"
+    }
+  ]
+}

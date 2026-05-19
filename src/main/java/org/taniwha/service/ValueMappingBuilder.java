@@ -7,30 +7,16 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.model.EmbeddedColumn;
 import org.taniwha.model.EmbeddedSchemaField;
+import org.taniwha.service.ClinicalScaleCatalog.ScaleDomain;
+import org.taniwha.service.ClinicalScaleCatalog.ScaleKind;
 import org.taniwha.util.MappingMathUtil;
 import org.taniwha.util.NormalizationUtil;
 import org.taniwha.util.StringUtil;
 
 import java.util.*;
 
-/**
- * ValueMappingBuilder with diagnostic logging.
- *
- * What this logs (high-signal):
- * - Entry: unionKey, detectedType, #sources, schema enum presence
- * - Decision path: date/range vs numeric ordinal vs enum vs closed-domain vs clustering
- * - For numeric ordinal:
- *   - inferred domains per source (min/max/step/kind/categories)
- *   - canonical domain selection rationale
- *   - per canonical bucket: per source assigned index range + numeric interval
- * - For closed-domain:
- *   - domain size, skip reasons, alias unions, component canonical picks
- * - For clustering:
- *   - #items added, cluster merges, representatives
- *
- * NOTE: keep DEBUG enabled for deep traces.
- */
 @Component
+// Builds suggested value buckets for date, numeric, enum, and categorical mappings.
 public class ValueMappingBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(ValueMappingBuilder.class);
@@ -42,9 +28,8 @@ public class ValueMappingBuilder {
     private static final double THRESH_CLUSTER = 0.55;
     private static final double THRESH_TOKEN_ALIAS = 0.72;
 
-    // Caps / guards
     private static final int MAX_VALUES_PER_UNION = 220;
-    private static final int MAX_ORDINAL_CATEGORIES = 60;
+    private static final int MAX_ORDINAL_CATEGORIES = 80;
 
     private static final int MAX_DOMAIN_UNIQUE = 25;
     private static final int MIN_DOMAIN_UNIQUE = 2;
@@ -53,7 +38,6 @@ public class ValueMappingBuilder {
 
     private static final int MIN_LEN_FOR_EMBED_ALIAS = 3;
 
-    // Logging guards
     private static final int LOG_MAX_SOURCES_DETAIL = 16;
     private static final int LOG_MAX_VALUES_SAMPLE = 12;
     private static final int LOG_MAX_CLUSTERS_DETAIL = 24;
@@ -96,7 +80,7 @@ public class ValueMappingBuilder {
         }
 
         if ("integer".equals(dt) || "double".equals(dt)) {
-            // Only meaningful for integer scales; for double we fall back to range.
+            // Closed-domain crosswalks only make sense for compact integer scales; doubles stay range-based.
             log.info("[VMB] decision: detectedType numeric ('{}') -> attempt ordinal crosswalk (integer-only), else range", dt);
 
             List<SuggestedValueDTO> ordinal = buildOrdinalNumericCrosswalkAsNonOverlappingRanges(uk, dt, picked);
@@ -108,7 +92,6 @@ public class ValueMappingBuilder {
             return buildRangeValue(uk, dt, picked);
         }
 
-        // If schema provides enum, prefer enum mapping first.
         if (hasSchemaEnum) {
             log.info("[VMB] decision: schema enum present -> attempt enum value mapping");
             List<SuggestedValueDTO> ev = buildEnumValueMappings(schemaFieldOrNull, picked);
@@ -119,24 +102,25 @@ public class ValueMappingBuilder {
             log.info("[VMB] decision: enum mapping produced 0 -> continue");
         }
 
-        // Attempt closed-domain harmonization (small domains only).
         log.info("[VMB] decision: attempt closed-domain categorical harmonization");
         List<SuggestedValueDTO> harmonized = buildClosedDomainCategorical(uk, picked);
         if (!harmonized.isEmpty()) {
             log.info("[VMB] decision: closed-domain harmonization SUCCESS -> emitted {} buckets", harmonized.size());
             return harmonized;
         }
-        log.info("[VMB] decision: closed-domain harmonization empty -> fallback to clustered value mappings");
+        log.info("[VMB] decision: closed-domain harmonization empty -> fallback to identity-safe categorical mappings");
 
-        // Fallback: clustered value mappings.
+        List<SuggestedValueDTO> identity = buildIdentityCategoricalMappings(uk, picked);
+        if (!identity.isEmpty()) {
+            log.info("[VMB] decision: identity categorical fallback SUCCESS -> emitted {} buckets", identity.size());
+            return identity;
+        }
+        log.info("[VMB] decision: identity categorical fallback empty -> fallback to clustered value mappings");
+
         List<SuggestedValueDTO> clustered = buildClusteredValueMappings(uk, picked);
         log.info("[VMB] decision: clustering emitted {} buckets", clustered.size());
         return clustered;
     }
-
-    // ============================================================
-    // Range value (single "numeric" or "date" bucket)
-    // ============================================================
 
     private List<SuggestedValueDTO> buildRangeValue(String unionName, String type, List<EmbeddedColumn> sources) {
         SuggestedValueDTO v = new SuggestedValueDTO();
@@ -168,10 +152,6 @@ public class ValueMappingBuilder {
         return Collections.singletonList(v);
     }
 
-    // ============================================================
-    // Numeric ordinal crosswalk (NON-OVERLAPPING, FULL-COVERAGE integer intervals)
-    // ============================================================
-
     private List<SuggestedValueDTO> buildOrdinalNumericCrosswalkAsNonOverlappingRanges(
             String unionKey,
             String detectedType,
@@ -199,6 +179,12 @@ public class ValueMappingBuilder {
             }
         }
 
+        if (domains.size() != sources.size()) {
+            log.info("[VMB] ordinalCrosswalk: inferred domains for {}/{} sources -> empty",
+                    domains.size(), sources.size());
+            return Collections.emptyList();
+        }
+
         if (log.isDebugEnabled()) {
             log.debug("[VMB] ordinalCrosswalk: inferred domains count={} (need >=2). union='{}'", domains.size(), unionKey);
             debugDomains(domBySource);
@@ -206,6 +192,11 @@ public class ValueMappingBuilder {
 
         if (domains.size() < 2) {
             log.info("[VMB] ordinalCrosswalk: not enough inferred scale domains ({} < 2) -> empty", domains.size());
+            return Collections.emptyList();
+        }
+
+        if (domains.stream().allMatch(d -> d.kind == ScaleKind.GENERIC)) {
+            log.info("[VMB] ordinalCrosswalk: all domains are generic observed integer ranges -> empty");
             return Collections.emptyList();
         }
 
@@ -242,6 +233,7 @@ public class ValueMappingBuilder {
                 if (srcDom == null) continue;
                 if (srcDom.categories.size() < 2) continue;
 
+                // Map each canonical ordinal bucket back onto the corresponding source-scale partition.
                 RangeIdx r = mapCanonBucketToSourceIndexRangeByPartition(i, nCanon, srcDom.categories.size());
 
                 int loIdx = MappingMathUtil.clamp(r.lo, 0, srcDom.categories.size() - 1);
@@ -334,46 +326,9 @@ public class ValueMappingBuilder {
         return m;
     }
 
-    /**
-     * This is a common root cause for “wrong toileting”:
-     * any integer column with min=0 and max in {5,10,15} becomes BARTHEL_ITEM, regardless of what the concept is.
-     *
-     * Logging here will reveal when "Toileting" (FIM 1..7) or another scale is being interpreted as 0..10 etc.
-     */
+    // Prefer well-known integer instruments before falling back to generic narrow spans.
     private ScaleDomain inferScaleDomain(EmbeddedColumn src) {
-        if (src == null || src.stats == null) return null;
-        if (!src.stats.hasIntegerMarker) return null;
-        if (src.stats.numMin == null || src.stats.numMax == null) return null;
-
-        int min = (int) Math.round(src.stats.numMin);
-        int max = (int) Math.round(src.stats.numMax);
-        if (max < min) return null;
-
-        Integer hintStep = src.stats.stepHint;
-
-        // FIM: 1..7 step 1
-        if (min == 1 && max == 7) {
-            return ScaleDomain.linear(min, max, 1, ScaleKind.FIM);
-        }
-
-        // Barthel item: 0..5/10/15 step 5
-        if (min == 0 && (max == 5 || max == 10 || max == 15)) {
-            return ScaleDomain.linear(0, max, 5, ScaleKind.BARTHEL_ITEM);
-        }
-
-        // Barthel total: 0..100 step (hint or 5)
-        if (min == 0 && max == 100) {
-            int step = (hintStep != null && hintStep > 0) ? hintStep : 5;
-            return ScaleDomain.linear(0, 100, step, ScaleKind.BARTHEL_TOTAL);
-        }
-
-        // Generic small integer span
-        int span = max - min;
-        if (span >= 1 && span <= 20) {
-            return ScaleDomain.linear(min, max, 1, ScaleKind.GENERIC);
-        }
-
-        return null;
+        return ClinicalScaleCatalog.infer(src);
     }
 
     private Map<String, Object> idxRangeToNumericInterval(List<Integer> cats, int loIdx, int hiIdx) {
@@ -408,7 +363,6 @@ public class ValueMappingBuilder {
             int dc = d.categories.size();
             int bc = best.categories.size();
 
-            // Prefer fewer categories (as in your original code)
             if (dc < bc) best = d;
             else if (dc == bc && kindRank(d.kind) > kindRank(best.kind)) best = d;
         }
@@ -426,31 +380,7 @@ public class ValueMappingBuilder {
         return 1;
     }
 
-    private enum ScaleKind { FIM, BARTHEL_ITEM, BARTHEL_TOTAL, GENERIC }
-
-    private static final class ScaleDomain {
-        final ScaleKind kind;
-        final List<Integer> categories;
-
-        private ScaleDomain(ScaleKind kind, List<Integer> categories) {
-            this.kind = kind;
-            this.categories = categories;
-        }
-
-        static ScaleDomain linear(int min, int max, int step, ScaleKind kind) {
-            List<Integer> cats = new ArrayList<>();
-            int st = Math.max(step, 1);
-            for (int v = min; v <= max; v += st) cats.add(v);
-            return new ScaleDomain(kind, cats);
-        }
-    }
-
-    // ============================================================
-    // Enum mapping (schema provided)
-    // ============================================================
-
     private List<SuggestedValueDTO> buildEnumValueMappings(EmbeddedSchemaField field, List<EmbeddedColumn> sources) {
-        // Cache embeddings locally to avoid repeated network calls if EmbeddingsClient is remote.
         Map<String, float[]> vecCache = new HashMap<>();
 
         List<EnumRef> enums = new ArrayList<>();
@@ -469,6 +399,10 @@ public class ValueMappingBuilder {
 
         int totalConsidered = 0;
         int totalMapped = 0;
+
+        if (sources == null) {
+            return Collections.emptyList();
+        }
 
         for (EmbeddedColumn src : sources) {
             List<String> rawVals = StringUtil.safeList(src.rawValues);
@@ -544,15 +478,12 @@ public class ValueMappingBuilder {
         }
     }
 
-    // ============================================================
-    // Generic closed-domain categorical harmonizer
-    // ============================================================
-
     private List<SuggestedValueDTO> buildClosedDomainCategorical(String unionKey, List<EmbeddedColumn> sources) {
         if (sources == null || sources.isEmpty()) return Collections.emptyList();
 
         Map<String, Map<String, List<SuggestedRefDTO>>> bySource = new LinkedHashMap<>();
         Map<String, Integer> tokenGlobalFreq = new HashMap<>();
+        Map<String, Set<String>> tokenSourceKeys = new HashMap<>();
         Set<String> uniqueTokens = new LinkedHashSet<>();
 
         int valuesSeen = 0;
@@ -572,6 +503,7 @@ public class ValueMappingBuilder {
 
                 uniqueTokens.add(nv);
                 tokenGlobalFreq.put(nv, tokenGlobalFreq.getOrDefault(nv, 0) + 1);
+                tokenSourceKeys.computeIfAbsent(nv, k -> new HashSet<>()).add(srcKey);
 
                 SuggestedRefDTO ref = new SuggestedRefDTO();
                 ref.setNodeId(src.nodeId);
@@ -605,14 +537,7 @@ public class ValueMappingBuilder {
 
         boolean suppressEmbedAliasing = shouldSkipEmbeddingAliasing(uniqueTokens);
         if (suppressEmbedAliasing) {
-            // Many tokens are shorter than MIN_LEN_FOR_EMBED_ALIAS (e.g. single-character values
-            // like "Y"/"N" or abbreviation sets like "M"/"F"). Embedding vectors for such tokens
-            // carry almost no semantic signal and would cause unrelated values to be aliased
-            // together (e.g. "Y" and "N" collapsing into one bucket).
-            // Instead of aborting, we continue with identity-only grouping: the inner loop's
-            // shouldBlockEmbeddingAlias guard already suppresses embedding comparison for any
-            // short-token pair, so each short value stays in its own component. Longer tokens
-            // in the same domain are still aliased normally via embedding similarity.
+            // Short token domains like Y/N or M/F are safer with identity-only grouping.
             log.info("[VMB] closedDomain: many short tokens (MIN_LEN_FOR_EMBED_ALIAS={}); " +
                     "embedding aliasing suppressed – proceeding with identity grouping only",
                     MIN_LEN_FOR_EMBED_ALIAS);
@@ -620,8 +545,7 @@ public class ValueMappingBuilder {
 
         List<String> tokens = new ArrayList<>(uniqueTokens);
 
-        // Local cache for embeddings – only computed for tokens long enough to produce a
-        // meaningful vector; short tokens are blocked by shouldBlockEmbeddingAlias anyway.
+        // Only embed tokens that are long enough to carry semantic signal.
         Map<String, float[]> tokenVec = new HashMap<>();
         for (String t : tokens) {
             if (t.length() >= MIN_LEN_FOR_EMBED_ALIAS) {
@@ -637,6 +561,11 @@ public class ValueMappingBuilder {
             for (int j = i + 1; j < tokens.size(); j++) {
                 String a = tokens.get(i);
                 String b = tokens.get(j);
+
+                if (tokensShareSource(a, b, tokenSourceKeys)) {
+                    blockedPairs++;
+                    continue;
+                }
 
                 if (isObviousAlias(a, b)) {
                     uf.union(i, j);
@@ -732,6 +661,17 @@ public class ValueMappingBuilder {
         return out;
     }
 
+    private boolean tokensShareSource(String a, String b, Map<String, Set<String>> tokenSourceKeys) {
+        if (tokenSourceKeys == null || tokenSourceKeys.isEmpty()) return false;
+        Set<String> left = tokenSourceKeys.get(a);
+        Set<String> right = tokenSourceKeys.get(b);
+        if (left == null || right == null || left.isEmpty() || right.isEmpty()) return false;
+        for (String source : left) {
+            if (right.contains(source)) return true;
+        }
+        return false;
+    }
+
     private boolean shouldSkipEmbeddingAliasing(Set<String> uniqueTokens) {
         int shortCount = 0;
         int total = 0;
@@ -774,9 +714,18 @@ public class ValueMappingBuilder {
         if (x.isEmpty() || y.isEmpty()) return false;
         if (x.length() == 1 && y.length() >= 3) return y.charAt(0) == x.charAt(0);
         if (y.length() == 1 && x.length() >= 3) return x.charAt(0) == y.charAt(0);
+        if (isPrefixAbbreviation(x, y) || isPrefixAbbreviation(y, x)) return true;
 
-        if ((x.equals("unk") && y.startsWith("unk")) || (y.equals("unk") && x.startsWith("unk"))) return true;
-        return false;
+        return (x.equals("unk") && y.startsWith("unk")) || (y.equals("unk") && x.startsWith("unk"));
+    }
+
+    private boolean isPrefixAbbreviation(String shortToken, String longToken) {
+        String s = StringUtil.safe(shortToken).trim();
+        String l = StringUtil.safe(longToken).trim();
+        return s.length() >= 3
+                && s.length() <= 5
+                && l.length() >= s.length() + 2
+                && l.startsWith(s);
     }
 
     private String pickCanonicalToken(List<String> tokens, Map<String, Integer> globalFreq) {
@@ -793,7 +742,7 @@ public class ValueMappingBuilder {
             if (best == null || score > bestScore) {
                 best = t;
                 bestScore = score;
-            } else if (score == bestScore && best != null && t.compareToIgnoreCase(best) < 0) {
+            } else if (score == bestScore && t.compareToIgnoreCase(best) < 0) {
                 best = t;
             }
         }
@@ -829,10 +778,6 @@ public class ValueMappingBuilder {
         }
     }
 
-    // ============================================================
-    // Clustered fallback
-    // ============================================================
-
     private List<SuggestedValueDTO> buildClusteredValueMappings(String unionName, List<EmbeddedColumn> sources) {
         List<ValueItem> items = new ArrayList<>();
         Map<String, Integer> freq = new HashMap<>();
@@ -865,8 +810,9 @@ public class ValueMappingBuilder {
                     ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
                     ref.setValue(rv);
 
-                    float[] vec = vecCache.computeIfAbsent(nv, k -> embeddingService.embedSingleValue(k));
-                    items.add(new ValueItem(nv, vec, ref));
+                    float[] vec = vecCache.computeIfAbsent(nv, embeddingService::embedSingleValue);
+                    String sourceKey = src.fileKey() + "::" + StringUtil.safe(src.column);
+                    items.add(new ValueItem(nv, vec, ref, sourceKey));
                     used++;
                 }
             }
@@ -892,12 +838,7 @@ public class ValueMappingBuilder {
             }
 
             if (it.normalized.length() == 1) {
-                // Single-character values produce embedding vectors with almost no semantic
-                // information; cosine similarity between two unrelated chars (e.g. "Y" and "N")
-                // can easily exceed THRESH_CLUSTER and collapse distinct values into one bucket.
-                // Guard: for single-char values, first look for an existing cluster that already
-                // holds the identical character (identity match).  Only merge into that cluster;
-                // never merge into a cluster holding a different single character.
+                // Single-character values only merge by identity.
                 Cluster identityCluster = null;
                 for (Cluster c : clusters) {
                     if (c.normalizedValues.contains(it.normalized)) {
@@ -920,7 +861,9 @@ public class ValueMappingBuilder {
                         log.trace("[VMB] clustering: single-char '{}' -> new cluster", it.normalized);
                     }
                 }
-            } else if (best != null && bestSim >= THRESH_CLUSTER) {
+            } else if (best != null
+                    && bestSim >= THRESH_CLUSTER
+                    && !best.hasDifferentValueFromSource(it.sourceKey, it.normalized)) {
                 best.add(it);
                 merges++;
                 if (log.isTraceEnabled()) {
@@ -969,6 +912,74 @@ public class ValueMappingBuilder {
         return out;
     }
 
+    private List<SuggestedValueDTO> buildIdentityCategoricalMappings(String unionName, List<EmbeddedColumn> sources) {
+        if (sources == null || sources.isEmpty()) return Collections.emptyList();
+
+        Map<String, List<SuggestedRefDTO>> byValue = new LinkedHashMap<>();
+        Map<String, Integer> freq = new HashMap<>();
+        int valuesSeen = 0;
+
+        for (EmbeddedColumn src : sources) {
+            List<String> rawVals = StringUtil.safeList(src.rawValues);
+            int used = 0;
+            for (String rv : rawVals) {
+                if (used >= MAX_VALUES) break;
+                String nv = NormalizationUtil.normalizeValue(rv);
+                used++;
+                if (nv.isEmpty() || isSummaryMarker(nv)) continue;
+
+                SuggestedRefDTO ref = new SuggestedRefDTO();
+                ref.setNodeId(src.nodeId);
+                ref.setFileName(src.fileName);
+                ref.setGroupColumn(src.column);
+                ref.setGroupKey(StringUtil.groupKey(src.nodeId, src.fileName, src.column));
+                ref.setValue(rv);
+
+                byValue.computeIfAbsent(nv, k -> new ArrayList<>()).add(ref);
+                freq.put(nv, freq.getOrDefault(nv, 0) + 1);
+                valuesSeen++;
+            }
+        }
+
+        int uniq = byValue.size();
+        if (valuesSeen == 0 || uniq < MIN_DOMAIN_UNIQUE || uniq > MAX_DOMAIN_UNIQUE) {
+            log.info("[VMB] identityCategorical: skip union='{}' uniqueTokens={} valuesSeen={}",
+                    unionName, uniq, valuesSeen);
+            return Collections.emptyList();
+        }
+
+        List<Map.Entry<String, List<SuggestedRefDTO>>> entries = new ArrayList<>(byValue.entrySet());
+        entries.sort((a, b) -> {
+            int diff = Integer.compare(freq.getOrDefault(b.getKey(), 0), freq.getOrDefault(a.getKey(), 0));
+            if (diff != 0) return diff;
+            return a.getKey().compareToIgnoreCase(b.getKey());
+        });
+
+        List<SuggestedValueDTO> out = new ArrayList<>();
+        for (Map.Entry<String, List<SuggestedRefDTO>> entry : entries) {
+            SuggestedValueDTO vd = new SuggestedValueDTO();
+            vd.setName(entry.getKey());
+            vd.setMapping(entry.getValue());
+            out.add(vd);
+        }
+        return out;
+    }
+
+    private boolean isSummaryMarker(String value) {
+        String v = StringUtil.safe(value).trim().toLowerCase(Locale.ROOT);
+        return v.equals("integer")
+                || v.equals("double")
+                || v.equals("float")
+                || v.equals("number")
+                || v.equals("date")
+                || v.equals("datetime")
+                || v.startsWith("min:")
+                || v.startsWith("max:")
+                || v.startsWith("earliest:")
+                || v.startsWith("latest:")
+                || v.startsWith("step:");
+    }
+
     private String pickRepresentative(Cluster c, Map<String, Integer> freq) {
         String best = null;
         int bestFreq = -1;
@@ -987,23 +998,29 @@ public class ValueMappingBuilder {
         final String normalized;
         final float[] vec;
         final SuggestedRefDTO ref;
+        final String sourceKey;
 
-        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref) {
+        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref, String sourceKey) {
             this.normalized = normalized;
             this.vec = vec;
             this.ref = ref;
+            this.sourceKey = sourceKey;
         }
     }
 
     private static final class Cluster {
         final List<SuggestedRefDTO> refs = new ArrayList<>();
         final Set<String> normalizedValues = new LinkedHashSet<>();
+        final Map<String, Set<String>> normalizedValuesBySource = new HashMap<>();
         float[] centroid = null;
         int count = 0;
 
         void add(ValueItem it) {
             refs.add(it.ref);
             normalizedValues.add(it.normalized);
+            normalizedValuesBySource
+                    .computeIfAbsent(StringUtil.safe(it.sourceKey), k -> new HashSet<>())
+                    .add(it.normalized);
 
             if (centroid == null) {
                 centroid = Arrays.copyOf(it.vec, it.vec.length);
@@ -1029,6 +1046,12 @@ public class ValueMappingBuilder {
             return normalizedValues.iterator().next();
         }
 
+        boolean hasDifferentValueFromSource(String sourceKey, String normalized) {
+            Set<String> values = normalizedValuesBySource.get(StringUtil.safe(sourceKey));
+            if (values == null || values.isEmpty()) return false;
+            return !values.contains(normalized);
+        }
+
         List<String> sampleNormVals(int n) {
             List<String> out = new ArrayList<>();
             int k = 0;
@@ -1041,10 +1064,6 @@ public class ValueMappingBuilder {
         }
     }
 
-    // ============================================================
-    // Logging helpers
-    // ============================================================
-
     private void debugPickedSources(String stage, String unionKey, List<EmbeddedColumn> picked) {
         if (!log.isDebugEnabled()) return;
         if (picked == null || picked.isEmpty()) {
@@ -1055,8 +1074,9 @@ public class ValueMappingBuilder {
         for (int i = 0; i < lim; i++) {
             EmbeddedColumn c = picked.get(i);
             String stats = (c == null || c.stats == null) ? "stats=null" : statsSummary(c);
+            String concept = c == null ? "null" : StringUtil.safe(c.concept);
             log.debug("[VMB] {}: src[{}] {} concept='{}' {}",
-                    stage, i, sourceKey(c), StringUtil.safe(c.concept), stats);
+                    stage, i, sourceKey(c), concept, stats);
         }
         if (picked.size() > lim) {
             log.debug("[VMB] {}: ... {} more sources omitted", stage, picked.size() - lim);
@@ -1089,12 +1109,12 @@ public class ValueMappingBuilder {
         if (c == null || c.stats == null) return "stats=null";
         StringBuilder sb = new StringBuilder();
         sb.append("typeMarkers=");
-        sb.append(c.stats.hasIntegerMarker ? "int" : "");
-        sb.append(c.stats.hasDoubleMarker ? (sb.charAt(sb.length() - 1) == '=' ? "dbl" : ",dbl") : "");
-        sb.append(c.stats.hasDateMarker ? (sb.charAt(sb.length() - 1) == '=' ? "date" : ",date") : "");
-        sb.append(" min=").append(c.stats.numMin);
-        sb.append(" max=").append(c.stats.numMax);
-        sb.append(" stepHint=").append(c.stats.stepHint);
+        sb.append(c.stats.isHasIntegerMarker() ? "int" : "");
+        sb.append(c.stats.isHasDoubleMarker() ? (sb.charAt(sb.length() - 1) == '=' ? "dbl" : ",dbl") : "");
+        sb.append(c.stats.isHasDateMarker() ? (sb.charAt(sb.length() - 1) == '=' ? "date" : ",date") : "");
+        sb.append(" min=").append(c.stats.getNumMin());
+        sb.append(" max=").append(c.stats.getNumMax());
+        sb.append(" stepHint=").append(c.stats.getStepHint());
         return sb.toString();
     }
 

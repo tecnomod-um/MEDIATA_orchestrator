@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+// Checks the configured set-up params for the mapping service
 @Configuration
 @EnableConfigurationProperties(MappingConfig.MappingServiceSettings.class)
 public class MappingConfig {

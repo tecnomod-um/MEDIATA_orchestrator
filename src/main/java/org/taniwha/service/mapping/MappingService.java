@@ -14,10 +14,10 @@ import org.taniwha.model.EmbeddedColumn;
 import org.taniwha.model.EmbeddedSchemaField;
 import org.taniwha.model.LearnedNoise;
 import org.taniwha.model.SimilarityScore;
-import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.TerminologyLookupService;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.taniwha.service.ValueMappingBuilder;
 import org.taniwha.service.jobs.ProgressReporter;
 import org.taniwha.util.JsonSchemaParsingUtil;
@@ -27,34 +27,32 @@ import org.taniwha.util.ValueVectorUtil;
 
 import java.util.*;
 
-/**
- * Orchestrates column-concept matching and mapping suggestion.
- *
- * <p>This class is intentionally kept as a thin coordinator. All heavy logic has been
- * extracted into focused helpers in this package:</p>
- * <ul>
- *   <li>{@link ColumnNormalizer}  — tokenisation, noise learning, concept normalisation</li>
- *   <li>{@link ColumnClusterer}   — cosine-similarity clustering with structural guards</li>
- *   <li>{@link ColumnPicker}      — score-based column selection and batch partitioning</li>
- *   <li>{@link MappingAssembler}  — DTO assembly, union-key management, type detection</li>
- *   <li>{@link MappingEnrichmentHelper} — terminology lookup and description generation</li>
- * </ul>
- */
 @Service
+// Orchestrates column normalization, clustering, mapping assembly, and enrichment.
 public class MappingService {
 
     private static final Logger logger = LoggerFactory.getLogger(MappingService.class);
+
+    private static final Set<String> CONTEXT_TOKEN_EXCLUSIONS = Set.of(
+            "admission", "admit", "discharge", "assessment", "visit", "birth", "death",
+            "date", "time", "year", "years", "age"
+    );
+
+    private static final Set<String> GENERIC_CONTEXT_REMAINDERS = Set.of(
+            "total", "tot", "sum", "score", "scores", "index", "value", "values",
+            "status", "state", "type", "code", "flag", "indicator", "management"
+    );
 
     private final EmbeddingService embeddingService;
     private final ObjectMapper objectMapper;
     private final MappingServiceSettings mappingSettings;
 
-    // Package-private helpers — instantiated from the same injectable dependencies.
     private final ColumnNormalizer columnNormalizer;
     private final ColumnClusterer columnClusterer;
     private final ColumnPicker columnPicker;
     private final MappingAssembler mappingAssembler;
     private final MappingEnrichmentHelper enrichmentHelper;
+    private final SchemaColumnMatchGuard schemaColumnMatchGuard;
 
     public MappingService(EmbeddingService embeddingService,
                           TerminologyLookupService terminologyLookupService,
@@ -69,8 +67,9 @@ public class MappingService {
 
         this.columnNormalizer  = new ColumnNormalizer(mappingSettings);
         this.columnClusterer   = new ColumnClusterer(mappingSettings);
-        this.columnPicker      = new ColumnPicker(mappingSettings);
-        this.mappingAssembler  = new MappingAssembler(valueMappingBuilder, mappingSettings);
+        this.columnPicker      = new ColumnPicker();
+        this.mappingAssembler  = new MappingAssembler(valueMappingBuilder);
+        this.schemaColumnMatchGuard = new SchemaColumnMatchGuard();
         this.enrichmentHelper  = new MappingEnrichmentHelper(
                 openMedTerminologyService,
                 terminologyLookupService, descriptionGenerator, mappingSettings);
@@ -78,18 +77,12 @@ public class MappingService {
         logger.info("[MappingService] Initialized.");
     }
 
-    // ------------------------------------------------------------------
-    // Public API
-    // ------------------------------------------------------------------
-
-    /** Creates suggested mappings for the columns and their values in the request. */
     public List<Map<String, SuggestedMappingDTO>> suggestMappings(MappingSuggestRequestDTO req) {
         List<ColumnInFileDTO> columnDTOs = (req == null || req.getElementFiles() == null)
                 ? Collections.emptyList() : req.getElementFiles();
         logger.info("[TRACE] suggestMappings: {} element files", columnDTOs.size());
         if (columnDTOs.isEmpty()) return Collections.emptyList();
 
-        // Build the column-name list used for noise learning.
         List<String> affectedColumnNames = new ArrayList<>(columnDTOs.size());
         for (ColumnInFileDTO dto : columnDTOs) {
             if (dto == null) continue;
@@ -113,23 +106,23 @@ public class MappingService {
                 logger.warn("[MappingService] embed failed for '{}' (skipping column)", colName);
                 return;
             }
-            // Compute a char-n-gram value vector for categorical columns so that the clusterer
-            // can use value-level character similarity as structural alignment evidence.
+            // Value vectors stay separate so domain similarity does not distort the main semantic embedding.
             float[] valueVec = ValueVectorUtil.build(rawValues);
             processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, valueVec, stats));
         });
         if (processedColumns.isEmpty()) return Collections.emptyList();
 
         List<EmbeddedSchemaField> schemaFields = embedSchemaFields(req.getSchema());
-        List<Map<String, SuggestedMappingDTO>> out = schemaFields.isEmpty()
-                ? suggestWithoutSchema(processedColumns)
-                : suggestWithSchema(schemaFields, processedColumns);
-
-        mappingAssembler.ensureAllColumnsCovered(processedColumns, out);
+        List<Map<String, SuggestedMappingDTO>> out;
+        if (schemaFields.isEmpty()) {
+            out = suggestWithoutSchema(processedColumns);
+            mappingAssembler.ensureAllColumnsCovered(processedColumns, out);
+        } else {
+            out = suggestWithSchema(schemaFields, processedColumns);
+        }
         return out;
     }
 
-    /** Enriches an already-suggested hierarchy with terminology codes and descriptions. */
     public List<Map<String, SuggestedMappingDTO>> enrichHierarchy(
             List<Map<String, SuggestedMappingDTO>> hierarchy,
             String schema,
@@ -142,19 +135,18 @@ public class MappingService {
         return hierarchy;
     }
 
-    // ------------------------------------------------------------------
-    // Schema-guided matching
-    // ------------------------------------------------------------------
-
     private List<Map<String, SuggestedMappingDTO>> suggestWithSchema(
             List<EmbeddedSchemaField> schemaFields,
             List<EmbeddedColumn> allColumns
     ) {
+        Set<String> sourceContextTokens = learnLeadingContextTokens(allColumns);
+        List<EmbeddedColumn> schemaColumns = stripLeadingContextFromColumns(allColumns, sourceContextTokens);
         Map<String, List<SimilarityScore<EmbeddedColumn>>> colsBySchema = new HashMap<>();
 
-        for (EmbeddedColumn src : allColumns) {
-            SimilarityScore<EmbeddedSchemaField> best = columnPicker.bestSchemaMatch(src, schemaFields);
-            if (best == null || best.sim() < mappingSettings.schemaToColumnThreshold()) continue;
+        for (EmbeddedColumn src : schemaColumns) {
+            SimilarityScore<EmbeddedSchemaField> best =
+                    bestSchemaMatchWithStructuralEvidence(src, schemaFields, sourceContextTokens);
+            if (best == null) continue;
             colsBySchema.computeIfAbsent(best.item().name, k -> new ArrayList<>())
                     .add(new SimilarityScore<>(src, best.sim()));
         }
@@ -167,29 +159,77 @@ public class MappingService {
             if (candidates == null || candidates.isEmpty()) continue;
 
             candidates.sort((a, b) -> Double.compare(b.sim(), a.sim()));
-            String detectedType = mappingAssembler.detectTypeFromSourcesOrSchema(
-                    columnPicker.topCols(candidates), StringUtil.safe(field.type));
+            List<EmbeddedColumn> picked = columnPicker.topColsOnePerFile(candidates);
+            String detectedType = mappingAssembler.detectTypeFromSourcesOrSchema(picked, StringUtil.safe(field.type));
 
-            List<List<EmbeddedColumn>> batches =
-                    columnPicker.partitionMembersByFile(columnPicker.topCols(candidates), null);
-
-            int emitted = 0;
-            for (List<EmbeddedColumn> batch : batches) {
-                if (emitted >= mappingSettings.maxSuggestionsPerSchemaField()) break;
-                if (batch.isEmpty()) continue;
-                mappingAssembler.addSuggestedMapping(out, usedUnionKeys, field.name, detectedType, field, batch);
-                emitted++;
-            }
+            mappingAssembler.addSuggestedMapping(out, usedUnionKeys, field.name, detectedType, field, picked);
         }
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Schema-free clustering
-    // ------------------------------------------------------------------
+    private SimilarityScore<EmbeddedSchemaField> bestSchemaMatchWithStructuralEvidence(
+            EmbeddedColumn src,
+            List<EmbeddedSchemaField> schemaFields,
+            Set<String> sourceContextTokens
+    ) {
+        EmbeddedSchemaField bestField = null;
+        double bestSim = -1.0;
+        int bestQuality = 0;
+
+        for (EmbeddedSchemaField field : schemaFields) {
+            double sim = org.taniwha.util.MappingMathUtil.cosine(src.vec, field.vec);
+            int quality = schemaColumnMatchGuard.matchQuality(field, src, sim, sourceContextTokens);
+            if (quality <= 0) continue;
+
+            if (quality > bestQuality || (quality == bestQuality && sim > bestSim)) {
+                bestQuality = quality;
+                bestSim = sim;
+                bestField = field;
+            }
+        }
+
+        if (bestField == null) return null;
+        return new SimilarityScore<>(bestField, bestSim);
+    }
+
+    private Set<String> learnLeadingContextTokens(List<EmbeddedColumn> columns) {
+        Map<String, Set<String>> followers = new HashMap<>();
+        if (columns == null) return Collections.emptySet();
+
+        for (EmbeddedColumn col : columns) {
+            List<String> tokens = tokenizeForContext(col == null ? "" : col.column);
+            if (tokens.size() < 2) continue;
+            followers.computeIfAbsent(tokens.get(0), k -> new HashSet<>()).add(tokens.get(1));
+        }
+
+        Set<String> out = new HashSet<>();
+        for (Map.Entry<String, Set<String>> e : followers.entrySet()) {
+            String token = e.getKey();
+            if (token.length() < 3) continue;
+            if (CONTEXT_TOKEN_EXCLUSIONS.contains(token)) continue;
+            if (e.getValue().size() >= 3) out.add(token);
+        }
+        return out;
+    }
+
+    private List<String> tokenizeForContext(String raw) {
+        String prepared = StringUtil.safe(raw)
+                .replaceAll("([a-z])([A-Z])", "$1 $2")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ");
+        List<String> out = new ArrayList<>();
+        for (String part : prepared.split("\\s+")) {
+            String token = part.trim();
+            if (token.isEmpty() || token.matches("\\d+") || token.length() == 1) continue;
+            out.add(token);
+        }
+        return out;
+    }
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<EmbeddedColumn> allColumns) {
-        List<ColCluster> clusters = columnClusterer.clusterColumns(allColumns);
+        Set<String> sourceContextTokens = learnLeadingContextTokens(allColumns);
+        List<EmbeddedColumn> normalizedColumns = stripLeadingContextFromColumns(allColumns, sourceContextTokens);
+        List<ColCluster> clusters = columnClusterer.clusterColumns(normalizedColumns, sourceContextTokens);
 
         clusters.sort((a, b) -> {
             int diff = Integer.compare(b.cols.size(), a.cols.size());
@@ -224,9 +264,43 @@ public class MappingService {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Schema embedding
-    // ------------------------------------------------------------------
+    private List<EmbeddedColumn> stripLeadingContextFromColumns(List<EmbeddedColumn> columns, Set<String> contextTokens) {
+        if (columns == null || columns.isEmpty() || contextTokens == null || contextTokens.isEmpty()) {
+            return columns == null ? Collections.emptyList() : columns;
+        }
+
+        List<EmbeddedColumn> out = new ArrayList<>(columns.size());
+        for (EmbeddedColumn col : columns) {
+            if (col == null) continue;
+            String concept = stripLeadingContext(col.concept, contextTokens);
+            float[] vec = concept.equals(StringUtil.safe(col.concept))
+                    ? col.vec
+                    : embeddingService.embedColumnWithValues(concept, col.rawValues);
+            out.add(new EmbeddedColumn(
+                    col.nodeId,
+                    col.fileName,
+                    col.column,
+                    concept,
+                    col.rawValues,
+                    vec,
+                    col.valueVec,
+                    col.stats
+            ));
+        }
+        return out;
+    }
+
+    private String stripLeadingContext(String concept, Set<String> contextTokens) {
+        List<String> tokens = tokenizeForContext(concept);
+        if (tokens.size() < 2 || !contextTokens.contains(tokens.get(0))) {
+            return StringUtil.safe(concept);
+        }
+        List<String> remaining = tokens.subList(1, tokens.size());
+        if (remaining.stream().allMatch(GENERIC_CONTEXT_REMAINDERS::contains)) {
+            return StringUtil.safe(concept);
+        }
+        return String.join(" ", remaining);
+    }
 
     private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
         List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
@@ -235,8 +309,9 @@ public class MappingService {
 
         List<EmbeddedSchemaField> out = new ArrayList<>();
         for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
-            float[] combined = embeddingService.embedSchemaField(d.getName(), d.getType(), d.getEnumValues());
-            out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getEnumValues(), combined));
+            float[] combined = embeddingService.embedSchemaField(
+                    d.getName(), d.getType(), d.getEnumValues(), d.getDescription());
+            out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getDescription(), d.getEnumValues(), combined));
         }
         return out;
     }

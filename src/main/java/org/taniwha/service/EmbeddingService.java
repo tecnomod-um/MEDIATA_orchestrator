@@ -13,11 +13,8 @@ import java.util.Locale;
 public class EmbeddingService {
 
     private static final int MAX_VALUES_FOR_EMBEDDING = 15;
-    private static final int MAX_VALUES = 80;
-    private static final int MAX_ENUM = 120;
 
-    // Generic stem/prefix hints (no medical dictionary)
-    private static final int STEM_MIN_SRC_LEN = 6; // only stem words that are "long enough"
+    private static final int STEM_MIN_SRC_LEN = 6;
     private static final int STEM_LEN = 4;
     private static final int MAX_STEM_HINTS = 8;
 
@@ -76,8 +73,7 @@ public class EmbeddingService {
                 count++;
             }
         }
-
-        // Build stem hints from kept values (e.g., ischemic -> isch, hemorrhagic -> hemo)
+        
         LinkedHashSet<String> stemHints = collectStemHints(kept);
 
         StringBuilder prompt = new StringBuilder();
@@ -101,7 +97,6 @@ public class EmbeddingService {
             }
         }
 
-        // Add stem hints as an extra segment
         if (!stemHints.isEmpty()) {
             if (prompt.length() > 0) prompt.append(" | ");
             prompt.append("stem_hints ");
@@ -117,6 +112,10 @@ public class EmbeddingService {
     }
 
     public float[] embedSchemaField(String fieldName, String type, List<String> enumVals) {
+        return embedSchemaField(fieldName, type, enumVals, "");
+    }
+
+    public float[] embedSchemaField(String fieldName, String type, List<String> enumVals, String description) {
         StringBuilder prompt = new StringBuilder();
 
         String fn = safe(fieldName).trim();
@@ -126,6 +125,12 @@ public class EmbeddingService {
         if (!ty.isEmpty()) {
             if (prompt.length() > 0) prompt.append(" (").append(ty).append(")");
             else prompt.append(ty);
+        }
+
+        String desc = safe(description).trim();
+        if (!desc.isEmpty()) {
+            if (prompt.length() > 0) prompt.append(" | ");
+            prompt.append(desc);
         }
 
         List<String> kept = new ArrayList<>();
@@ -166,54 +171,6 @@ public class EmbeddingService {
         }
 
         return embeddingsClient.embed(prompt.toString());
-    }
-
-    public float[] embedName(String name) {
-        String s = safe(name).trim();
-        return embeddingsClient.embed(s);
-    }
-
-    public float[] embedValues(List<String> values) {
-        if (values == null || values.isEmpty()) return embeddingsClient.embed("");
-
-        StringBuilder sb = new StringBuilder();
-        int count = 0;
-
-        for (String raw : values) {
-            if (count >= MAX_VALUES) break;
-
-            String s = NormalizationUtil.normalizeValue(raw);
-            if (s.isEmpty()) { count++; continue; }
-
-            if (sb.length() > 0) sb.append(", ");
-            sb.append(s);
-            count++;
-        }
-
-        return embeddingsClient.embed(sb.toString());
-    }
-
-    public float[] embedEnum(List<String> enumVals, String typeHint) {
-        StringBuilder sb = new StringBuilder();
-
-        String th = safe(typeHint).trim();
-        if (!th.isEmpty()) sb.append(th).append(": ");
-
-        if (enumVals != null) {
-            int count = 0;
-            for (String raw : enumVals) {
-                if (count >= MAX_ENUM) break;
-
-                String s = NormalizationUtil.normalizeValue(raw);
-                if (s.isEmpty()) { count++; continue; }
-
-                if (count > 0) sb.append(", ");
-                sb.append(s);
-                count++;
-            }
-        }
-
-        return embeddingsClient.embed(sb.toString());
     }
 
     public float[] embedSingleValue(String raw) {

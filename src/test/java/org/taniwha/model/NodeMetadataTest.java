@@ -1,11 +1,13 @@
 package org.taniwha.model;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -16,6 +18,8 @@ class NodeMetadataTest {
         NodeMetadata metadata = new NodeMetadata();
         assertNotNull(metadata);
         assertNull(metadata.getContext());
+        assertNull(metadata.getType());
+        assertNull(metadata.getSourceFile());
         assertNull(metadata.getDataset());
     }
 
@@ -24,11 +28,15 @@ class NodeMetadataTest {
         NodeMetadata metadata = new NodeMetadata();
 
         metadata.setContext("https://www.w3.org/ns/dcat.jsonld");
+        metadata.setType("dcat:Catalog");
+        metadata.setSourceFile("catalog.ttl");
 
         List<NodeMetadata.Dataset> datasets = new ArrayList<>();
         metadata.setDataset(datasets);
 
         assertEquals("https://www.w3.org/ns/dcat.jsonld", metadata.getContext());
+        assertEquals("dcat:Catalog", metadata.getType());
+        assertEquals("catalog.ttl", metadata.getSourceFile());
         assertNotNull(metadata.getDataset());
         assertEquals(0, metadata.getDataset().size());
     }
@@ -64,9 +72,9 @@ class NodeMetadataTest {
     void testDatasetWithCollections() {
         NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
 
-        List<String> keywords = Arrays.asList("health", "data", "research");
-        List<String> themes = Arrays.asList("healthcare", "medicine");
-        List<String> languages = Arrays.asList("en", "es");
+        List<Object> keywords = Arrays.asList("health", "data", "research");
+        List<Object> themes = Arrays.asList("healthcare", "medicine");
+        List<Object> languages = Arrays.asList("en", "es");
 
         dataset.setKeyword(keywords);
         dataset.setTheme(themes);
@@ -122,6 +130,7 @@ class NodeMetadataTest {
     void testCompleteNodeMetadata() {
         NodeMetadata metadata = new NodeMetadata();
         metadata.setContext("https://www.w3.org/ns/dcat.jsonld");
+        metadata.setType("dcat:Catalog");
 
         NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
         dataset.setTitle("Health Records");
@@ -162,5 +171,56 @@ class NodeMetadataTest {
         assertNull(distribution.getFormat());
         assertNull(distribution.getLicense());
         assertNull(distribution.getDownloadURL());
+    }
+
+    @Test
+    void testRichMetadataDeserialization_acceptsNestedObjectsAndUnknownFields() throws Exception {
+        String json = """
+                {
+                  "@context": "https://www.w3.org/ns/dcat.jsonld",
+                  "@type": "dcat:Catalog",
+                  "sourceFile": "fairdatapoint-generated.ttl",
+                  "dataset": [
+                    {
+                      "title": "Parsed Fimbartheltodos",
+                      "publisher": {
+                        "foaf:name": "Guttmann",
+                        "type": "http://xmlns.com/foaf/0.1/Agent"
+                      },
+                      "distribution": [
+                        {
+                          "title": "Parsed Fimbartheltodos distribution",
+                          "accessURL": "https://stratif.guttmann.tech/taniwha/fdp/access/parsed-fimbartheltodos",
+                          "mediaType": "text/csv",
+                          "dct:accessRights": {
+                            "uri": "https://stratif.guttmann.tech/taniwha#authorized-node-access"
+                          }
+                        }
+                      ],
+                      "dct:isPartOf": {
+                        "uri": "https://stratif.guttmann.tech/taniwha/fdp/catalog/node-catalog"
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        NodeMetadata metadata = objectMapper.readValue(json, NodeMetadata.class);
+
+        assertEquals("https://www.w3.org/ns/dcat.jsonld", metadata.getContext());
+        assertEquals("dcat:Catalog", metadata.getType());
+        assertEquals("fairdatapoint-generated.ttl", metadata.getSourceFile());
+        assertNotNull(metadata.getDataset());
+        assertEquals(1, metadata.getDataset().size());
+
+        NodeMetadata.Dataset dataset = metadata.getDataset().get(0);
+        assertInstanceOf(Map.class, dataset.getPublisher());
+        assertEquals("Guttmann", ((Map<?, ?>) dataset.getPublisher()).get("foaf:name"));
+        assertTrue(dataset.getAdditionalProperties().containsKey("dct:isPartOf"));
+
+        NodeMetadata.Distribution distribution = dataset.getDistribution().get(0);
+        assertEquals("text/csv", distribution.getMediaType());
+        assertTrue(distribution.getAdditionalProperties().containsKey("dct:accessRights"));
     }
 }

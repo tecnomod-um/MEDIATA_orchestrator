@@ -20,9 +20,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 import org.taniwha.security.JwtRequestFilter;
 import org.taniwha.service.UserService;
-
 import java.util.Arrays;
-import java.util.Collections;
+
 
 // Filters and security config
 @Configuration
@@ -45,7 +44,7 @@ public class WebSecurityConfig {
                                 "/actuator/health/**", "/actuator/info/**",
                                 "/taniwha/actuator/health/**", "/taniwha/actuator/info/**"
                         ).permitAll()
-                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat").permitAll()
+                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/deregister").permitAll()
                         .requestMatchers("/**").authenticated()
                 )
                 .sessionManagement(session -> session
@@ -73,8 +72,14 @@ public class WebSecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList("https://semantics.inf.um.es", "http://localhost:3000"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Cache-Control", "Content-Type", "Kerberos-TGT"));
-        configuration.setExposedHeaders(Collections.singletonList("Authorization"));
+        configuration.setAllowedHeaders(Arrays.asList(
+                "Authorization",
+                "Cache-Control",
+                "Content-Type",
+                "Kerberos-TGT",
+                "X-Node-Authorization"
+        ));
+        configuration.setExposedHeaders(Arrays.asList("Authorization", "X-Node-Proxy"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

@@ -15,6 +15,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.service.UserService;
 import org.taniwha.util.JwtTokenUtil;
 
@@ -24,6 +25,7 @@ import java.util.Collections;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class JwtRequestFilterTest {
 
@@ -54,9 +56,18 @@ class JwtRequestFilterTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         jwtRequestFilter = new JwtRequestFilter(jwtTokenUtil, applicationContext);
-        // Set jwtFilterEnabled to true for unit tests (default production behavior)
-        org.springframework.test.util.ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", true);
+        ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", true);
         SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void testDoFilterInternal_FilterDisabledBypassesAuthentication() throws ServletException, IOException {
+        ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", false);
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verifyNoInteractions(jwtTokenUtil, applicationContext, userService);
     }
 
     @Test
@@ -82,6 +93,16 @@ class JwtRequestFilterTest {
     @Test
     void testDoFilterInternal_ExemptedErrorEndpoint() throws ServletException, IOException {
         when(request.getRequestURI()).thenReturn("/taniwha/api/error/logs");
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(request, never()).getHeader(anyString());
+    }
+
+    @Test
+    void testDoFilterInternal_ExemptedNodeDeregisterEndpoint() throws ServletException, IOException {
+        when(request.getRequestURI()).thenReturn("/taniwha/nodes/deregister");
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
@@ -130,6 +151,27 @@ class JwtRequestFilterTest {
         verify(filterChain).doFilter(request, response);
         verify(jwtTokenUtil).getUsernameFromToken(token);
         verify(jwtTokenUtil).validateToken(token, username);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getName()).isEqualTo(username);
+    }
+
+    @Test
+    void testDoFilterInternal_WhenAuthenticationAlreadyExists_skipsUserLookup() throws ServletException, IOException {
+        String token = "validToken";
+        String username = "testuser";
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("existing", null, Collections.emptyList())
+        );
+
+        when(request.getRequestURI()).thenReturn("/taniwha/api/nodes");
+        when(request.getHeader("Authorization")).thenReturn("Bearer " + token);
+        when(jwtTokenUtil.getUsernameFromToken(token)).thenReturn(username);
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(applicationContext, never()).getBean(UserService.class);
     }
 
     @Test

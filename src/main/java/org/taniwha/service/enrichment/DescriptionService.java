@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.enrichment;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,6 +7,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.taniwha.model.ColumnEnrichmentInput;
+import org.taniwha.model.EnrichmentResult;
+import org.taniwha.model.ValueSpec;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,13 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Generates plain-language descriptions for dataset columns and their values.
- *
- * <p>Delegates to the OpenMed Python microservice ({@link OpenMedDescriptionService}) as
- * the primary engine.  When OpenMed is unavailable or returns an empty result, a simple
- * text-normalisation fallback is used (no generative LLM required).</p>
- */
+// Generates column/value descriptions via OpenMed with a local text fallback.
 @Service
 public class DescriptionService {
 
@@ -42,7 +39,6 @@ public class DescriptionService {
     @Value("${description.timeoutSeconds:40}")
     private int timeoutSeconds;
 
-    /** Spring-managed constructor – wires OpenMed via {@link ObjectProvider}. */
     @Autowired
     public DescriptionService(ObjectProvider<OpenMedDescriptionService> openMedDescProvider,
                               @Qualifier("llmExecutor") ExecutorService descExecutor) {
@@ -50,38 +46,17 @@ public class DescriptionService {
         this.descExecutor = descExecutor;
     }
 
-    /**
-     * Test constructor – accepts an explicit (possibly {@Error fetching node metadata forcode null}) OpenMed service
-     * instance directly, avoiding the Spring {@link ObjectProvider} indirection.
-     * <p>Used only in unit tests that create {@link DescriptionService} with a mock or
-     * stub; Spring Boot always uses the {@code @Autowired} constructor above.</p>
-     */
+    // Test constructor.
     public DescriptionService(OpenMedDescriptionService openMedDescriptionService,
                               ExecutorService descExecutor) {
         this.openMedDescriptionService = openMedDescriptionService;
         this.descExecutor = descExecutor;
     }
 
-    public record ValueSpec(String v, String min, String max) {}
-
-    public record ColumnEnrichmentInput(
-            String colKey,
-            String terminology,
-            List<ValueSpec> values
-    ) {}
-
-    public record EnrichmentResult(
-            String colDesc,
-            Map<String, String> valueDescByValue
-    ) {}
-
     public int batchSize() {
         return Math.max(1, batchSize);
     }
 
-    /**
-     * Batch enrichment for multiple columns.  Returns a map keyed by colKey → EnrichmentResult.
-     */
     public CompletableFuture<Map<String, EnrichmentResult>> generateEnrichmentBatchAsync(
             List<ColumnEnrichmentInput> inputs) {
 
@@ -101,7 +76,6 @@ public class DescriptionService {
 
         if (inputs == null || inputs.isEmpty()) return Map.of();
 
-        // --- Primary: OpenMed description service ---
         if (openMedDescriptionService != null) {
             try {
                 Map<String, EnrichmentResult> openMedResult =
@@ -125,13 +99,8 @@ public class DescriptionService {
             }
         }
 
-        // --- Fallback: text normalisation (no external call) ---
         return fallbackResults(inputs);
     }
-
-    // ------------------------------------------------------------------
-    // Normalisation helpers
-    // ------------------------------------------------------------------
 
     private List<ColumnEnrichmentInput> normalizeInputs(List<ColumnEnrichmentInput> inputs) {
         if (inputs == null || inputs.isEmpty()) return List.of();
@@ -184,11 +153,7 @@ public class DescriptionService {
         return out;
     }
 
-    /**
-     * Produces sentence-formatted fallback descriptions for individual values.
-     * Uses the column key as a prefix so that numeric values like "0" become
-     * "Bathing 0." (uppercase start, sentence terminator) rather than just "0".
-     */
+    // Prefix the column key so bare numeric values still read like sentences.
     private Map<String, String> fallbackValueDescMap(String colKey, List<ValueSpec> values) {
         if (values == null || values.isEmpty()) return Map.of();
         Map<String, String> out = new LinkedHashMap<>();

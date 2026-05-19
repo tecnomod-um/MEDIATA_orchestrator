@@ -48,6 +48,11 @@ Services will be available at:
 - **Snowstorm**: http://localhost:9100
 - **RDF Builder**: http://localhost:8000
 - **FHIR API**: http://localhost:8001
+- **OpenMed**: http://localhost:8002
+
+The Docker compose file can also run partial stacks through profiles:
+`rdf` enables the RDF Builder service, `fhir` enables the FHIR API service,
+and the default stack starts MongoDB, Snowstorm, OpenMed, and the orchestrator.
 
 ### Option 2: Orchestrator with Cloud/Local MongoDB (No Docker)
 
@@ -107,8 +112,6 @@ docker compose logs -f orchestrator
 # For standalone
 # Check logs in logs/app.log
 ```
-
-See [DOCKER.md](DOCKER.md) for detailed setup and troubleshooting.
 
 ## License
 

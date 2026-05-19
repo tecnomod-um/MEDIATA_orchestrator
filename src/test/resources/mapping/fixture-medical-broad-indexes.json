@@ -1,0 +1,144 @@
+{
+  "elementFiles": [
+    {
+      "nodeId": "broad001",
+      "fileName": "primary_care.csv",
+      "column": "PHQ-9 Total",
+      "values": ["integer", "min:0", "max:27"],
+      "color": "#ff6b6b"
+    },
+    {
+      "nodeId": "broad002",
+      "fileName": "behavioral_health.csv",
+      "column": "Patient Health Questionnaire 9",
+      "values": ["integer", "min:0", "max:27"],
+      "color": "#4ecdc4"
+    },
+    {
+      "nodeId": "broad003",
+      "fileName": "primary_care.csv",
+      "column": "GAD-7 Score",
+      "values": ["integer", "min:0", "max:21"],
+      "color": "#95e1d3"
+    },
+    {
+      "nodeId": "broad004",
+      "fileName": "behavioral_health.csv",
+      "column": "Generalized Anxiety Disorder 7",
+      "values": ["integer", "min:0", "max:21"],
+      "color": "#f38181"
+    },
+    {
+      "nodeId": "broad005",
+      "fileName": "memory_clinic.csv",
+      "column": "MoCA Score",
+      "values": ["integer", "min:0", "max:30"],
+      "color": "#ffd166"
+    },
+    {
+      "nodeId": "broad006",
+      "fileName": "geriatrics.csv",
+      "column": "Montreal Cognitive Assessment",
+      "values": ["integer", "min:0", "max:30"],
+      "color": "#06d6a0"
+    },
+    {
+      "nodeId": "broad007",
+      "fileName": "memory_clinic.csv",
+      "column": "MMSE",
+      "values": ["integer", "min:0", "max:30"],
+      "color": "#118ab2"
+    },
+    {
+      "nodeId": "broad008",
+      "fileName": "geriatrics.csv",
+      "column": "Mini Mental State Examination",
+      "values": ["integer", "min:0", "max:30"],
+      "color": "#073b4c"
+    },
+    {
+      "nodeId": "broad009",
+      "fileName": "wound_care.csv",
+      "column": "Braden Scale",
+      "values": ["integer", "min:6", "max:23"],
+      "color": "#cdb4db"
+    },
+    {
+      "nodeId": "broad010",
+      "fileName": "nursing.csv",
+      "column": "Braden Risk Score",
+      "values": ["integer", "min:6", "max:23"],
+      "color": "#bde0fe"
+    },
+    {
+      "nodeId": "broad011",
+      "fileName": "falls.csv",
+      "column": "Morse Fall Scale",
+      "values": ["integer", "min:0", "max:125"],
+      "color": "#ffafcc"
+    },
+    {
+      "nodeId": "broad012",
+      "fileName": "nursing.csv",
+      "column": "Morse Fall Risk",
+      "values": ["integer", "min:0", "max:125"],
+      "color": "#a2d2ff"
+    },
+    {
+      "nodeId": "broad013",
+      "fileName": "cardiology.csv",
+      "column": "CHA2DS2-VASc Score",
+      "values": ["integer", "min:0", "max:9"],
+      "color": "#ffbe0b"
+    },
+    {
+      "nodeId": "broad014",
+      "fileName": "afib_registry.csv",
+      "column": "CHA2DS2VASc",
+      "values": ["integer", "min:0", "max:9"],
+      "color": "#fb5607"
+    },
+    {
+      "nodeId": "broad015",
+      "fileName": "cardiology.csv",
+      "column": "HAS-BLED Score",
+      "values": ["integer", "min:0", "max:9"],
+      "color": "#ff006e"
+    },
+    {
+      "nodeId": "broad016",
+      "fileName": "anticoag.csv",
+      "column": "HASBLED",
+      "values": ["integer", "min:0", "max:9"],
+      "color": "#8338ec"
+    },
+    {
+      "nodeId": "broad017",
+      "fileName": "ed.csv",
+      "column": "qSOFA",
+      "values": ["integer", "min:0", "max:3"],
+      "color": "#3a86ff"
+    },
+    {
+      "nodeId": "broad018",
+      "fileName": "sepsis.csv",
+      "column": "Quick SOFA Score",
+      "values": ["integer", "min:0", "max:3"],
+      "color": "#80ed99"
+    },
+    {
+      "nodeId": "broad019",
+      "fileName": "birth.csv",
+      "column": "Apgar Score",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#f15bb5"
+    },
+    {
+      "nodeId": "broad020",
+      "fileName": "neonatal.csv",
+      "column": "APGAR total",
+      "values": ["integer", "min:0", "max:10"],
+      "color": "#00bbf9"
+    }
+  ]
+}

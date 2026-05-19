@@ -147,6 +147,7 @@ class NodeServiceTest {
         a.setName("Name");
         a.setDescription("Desc");
         a.setColor("C");
+        a.setIp("https://alpha.example/taniwha");
         when(repo.findAll()).thenReturn(Collections.singletonList(a));
         assertThat(svc.getActiveNodes()).containsExactly(a);
 
@@ -157,9 +158,10 @@ class NodeServiceTest {
                         NodeSummary::getNodeId,
                         NodeSummary::getName,
                         NodeSummary::getDescription,
-                        NodeSummary::getColor
+                        NodeSummary::getColor,
+                        NodeSummary::getServiceUrl
                 )
-                .containsExactly("A", "Name", "Desc", "C");
+                .containsExactly("A", "Name", "Desc", "C", "https://alpha.example/taniwha");
     }
 
     @Test

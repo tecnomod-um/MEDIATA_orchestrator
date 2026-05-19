@@ -4,6 +4,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import java.util.concurrent.*;
 
+// Multithreading setup config
 @Configuration
 public class AsyncConfig {
 

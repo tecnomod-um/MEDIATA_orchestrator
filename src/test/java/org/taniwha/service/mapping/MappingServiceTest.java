@@ -8,17 +8,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.taniwha.config.MappingConfig.MappingServiceSettings;
-import org.taniwha.service.DescriptionService;
 import org.taniwha.service.EmbeddingService;
-import org.taniwha.service.OpenMedTerminologyService;
-import org.taniwha.service.TerminologyLookupService;
 import org.taniwha.service.ValueMappingBuilder;
+import org.taniwha.service.enrichment.DescriptionService;
+import org.taniwha.service.enrichment.OpenMedTerminologyService;
+import org.taniwha.service.enrichment.TerminologyLookupService;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
+import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
+import org.taniwha.dto.SuggestedValueDTO;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,11 +54,10 @@ class MappingServiceTest {
     private ValueMappingBuilder valueMappingBuilder;
 
     private MappingService mappingService;
-    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        objectMapper = new ObjectMapper();
+        ObjectMapper objectMapper = new ObjectMapper();
         MappingServiceSettings mappingSettings = new MappingServiceSettings(
                 60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 3, 2, 6
         );
@@ -65,6 +69,11 @@ class MappingServiceTest {
 
         // Setup default mock behavior - return deterministic embeddings (lenient for tests that don't use it)
         lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+            .thenAnswer(invocation -> {
+                String text = invocation.getArgument(0);
+                return createDeterministicEmbedding(text, 384);
+            });
+        lenient().when(embeddingService.embedSchemaField(any(String.class), any(String.class), any(), any(String.class)))
             .thenAnswer(invocation -> {
                 String text = invocation.getArgument(0);
                 return createDeterministicEmbedding(text, 384);
@@ -369,6 +378,236 @@ class MappingServiceTest {
     }
 
     @Test
+    @DisplayName("Schema suggestions should filter embedding-only column pairings")
+    void testSchemaSuggestionsRequireStructuralEvidence() {
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+        lenient().when(embeddingService.embedSchemaField(any(String.class), any(String.class), any(), any(String.class)))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setSchema("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "age": { "type": ["integer", "null"] },
+                    "outcome": { "type": ["string", "null"] },
+                    "discharge_status": { "type": ["string", "null"] },
+                    "admission_date": { "type": ["string", "null"], "description": "ISO date" },
+                    "discharge_date": { "type": ["string", "null"], "description": "ISO date" },
+                    "sex": { "type": ["string", "null"] },
+                    "eating": { "type": ["integer", "null"], "description": "Eating activity score" },
+                    "bathing": { "type": ["integer", "null"], "description": "Bathing activity score" },
+                    "toileting": { "type": ["integer", "null"], "description": "Toileting activity score" }
+                  }
+                }""");
+        req.setElementFiles(Arrays.asList(
+                createElementFile("age", Arrays.asList("integer", "min:18", "max:95"), "demographics.csv"),
+                createElementFile("years", Arrays.asList("integer", "min:18", "max:95"), "demographics_alt.csv"),
+                createElementFile("gender_code", Arrays.asList("integer", "min:0", "max:2"), "demographics_alt.csv"),
+                createElementFile("outcome_status", Arrays.asList("improved", "stable"), "outcomes.csv"),
+                createElementFile("adverse_event", Arrays.asList("fall", "infection"), "events.csv"),
+                createElementFile("discharge_status", Arrays.asList("home", "transfer"), "outcomes.csv"),
+                createElementFile("notes", Arrays.asList("good progress", "requires follow-up"), "notes.csv"),
+                createElementFile("admission_dt", Arrays.asList("date", "earliest:2024-01-01T00:00:00Z", "latest:2024-12-01T00:00:00Z"), "stays.csv"),
+                createElementFile("assessment_date", Arrays.asList("date", "earliest:2024-01-01T00:00:00Z", "latest:2024-12-01T00:00:00Z"), "assessments.csv"),
+                createElementFile("gender", Arrays.asList("male", "female"), "demographics.csv"),
+                createElementFile("fim_eating", Arrays.asList("integer", "min:1", "max:7"), "fim_a.csv"),
+                createElementFile("fim_eat_score", Arrays.asList("integer", "min:1", "max:7"), "fim.csv"),
+                createElementFile("barthel_feed", Arrays.asList("integer", "min:0", "max:10"), "barthel_feed.csv"),
+                createElementFile("barthel_bathing", Arrays.asList("integer", "min:0", "max:5"), "barthel_a.csv"),
+                createElementFile("barthel_bath", Arrays.asList("integer", "min:0", "max:5"), "barthel_b.csv"),
+                createElementFile("barthel_toilet", Arrays.asList("integer", "min:0", "max:10"), "barthel.csv"),
+                createElementFile("therapist", Arrays.asList("Ana", "Luis"), "staff.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+
+        assertTrue(sourcesByTarget.getOrDefault("age", Set.of()).contains("age"));
+        assertTrue(sourcesByTarget.getOrDefault("age", Set.of()).contains("years"));
+        assertFalse(sourcesByTarget.getOrDefault("age", Set.of()).contains("gender_code"),
+                "Numeric coded categories must not be pulled into age just because embeddings are close");
+
+        assertTrue(sourcesByTarget.getOrDefault("outcome", Set.of()).contains("outcome_status"));
+        assertFalse(sourcesByTarget.getOrDefault("outcome", Set.of()).contains("adverse_event"));
+
+        assertTrue(sourcesByTarget.getOrDefault("discharge_status", Set.of()).contains("discharge_status"));
+        assertFalse(sourcesByTarget.getOrDefault("discharge_status", Set.of()).contains("notes"));
+
+        assertTrue(sourcesByTarget.getOrDefault("admission_date", Set.of()).contains("admission_dt"));
+        assertFalse(sourcesByTarget.getOrDefault("discharge_date", Set.of()).contains("assessment_date"));
+
+        assertTrue(sourcesByTarget.getOrDefault("sex", Set.of()).contains("gender"));
+        assertFalse(sourcesByTarget.getOrDefault("sex", Set.of()).contains("gender_code"),
+                "Numeric coded category summaries must not be pulled into plain string targets without value detail");
+        assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("fim_eat_score"));
+        assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("fim_eating"));
+        assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("barthel_feed"));
+        assertTrue(sourcesByTarget.getOrDefault("bathing", Set.of()).contains("barthel_bathing"));
+        assertTrue(sourcesByTarget.getOrDefault("bathing", Set.of()).contains("barthel_bath"));
+        assertTrue(sourcesByTarget.getOrDefault("toileting", Set.of()).contains("barthel_toilet"));
+        assertFalse(sourcesByTarget.containsKey("fim_eating_2"));
+        assertFalse(sourcesByTarget.containsKey("eating_2"));
+        assertFalse(sourcesByTarget.containsKey("bathing_2"));
+        assertFalse(sourcesByTarget.containsKey("therapist"),
+                "Schema mode must not invent non-schema singleton targets for leftover columns");
+    }
+
+    @Test
+    @DisplayName("Schema suggestions should map at most one source column per dataset into each target")
+    void testSchemaSuggestionsKeepOneColumnPerDatasetPerTarget() {
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+        lenient().when(embeddingService.embedSchemaField(any(String.class), any(String.class), any(), any(String.class)))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setSchema("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "eating": { "type": ["integer", "null"], "description": "Eating activity score" }
+                  }
+                }""");
+
+        ColumnInFileDTO fimEating = createElementFile("fim_eating", Arrays.asList("integer", "min:1", "max:7"), "sample_a.csv");
+        fimEating.setNodeId("node-a");
+        ColumnInFileDTO fimEatScore = createElementFile("fim_eat_score", Arrays.asList("integer", "min:1", "max:7"), "sample_a.csv");
+        fimEatScore.setNodeId("node-a");
+        ColumnInFileDTO barthelFeed = createElementFile("barthel_feed", Arrays.asList("integer", "min:0", "max:15"), "sample_b.csv");
+        barthelFeed.setNodeId("node-a");
+
+        req.setElementFiles(Arrays.asList(fimEating, fimEatScore, barthelFeed));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+        Set<String> eatingSources = sourcesByTarget.getOrDefault("eating", Set.of());
+
+        assertEquals(2, eatingSources.size(), "The target should contain one source column from each dataset");
+        assertTrue(eatingSources.contains("fim_eating"),
+                "The best/first candidate from sample_a.csv should be retained");
+        assertFalse(eatingSources.contains("fim_eat_score"),
+                "A second column from the same dataset must not be mapped into the same target");
+        assertTrue(eatingSources.contains("barthel_feed"),
+                "A matching column from a different dataset should still be included");
+    }
+
+    @Test
+    @DisplayName("All mapping fixtures should produce valid suggestion shape")
+    void testMappingFixtureSuggestionShapes() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        Path fixtureDir = Path.of("src", "test", "resources", "mapping");
+
+        try (Stream<Path> paths = Files.list(fixtureDir)) {
+            List<Path> fixtures = paths
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .toList();
+
+            assertFalse(fixtures.isEmpty(), "Expected mapping fixtures under " + fixtureDir);
+
+            for (Path fixture : fixtures) {
+                MappingSuggestRequestDTO req = mapper.readValue(Files.readString(fixture), MappingSuggestRequestDTO.class);
+                List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+                assertNotNull(result, "Result should not be null for " + fixture);
+                assertFalse(result.isEmpty(), "Expected suggestions for " + fixture.getFileName());
+                assertValidSuggestionShape(result, fixture.getFileName().toString());
+
+                System.out.printf("[MappingFixtureShape] %s -> %d mappings %s%n",
+                        fixture.getFileName(), result.size(), result.stream()
+                                .flatMap(map -> map.keySet().stream())
+                                .toList());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Schemaless suggestions should cluster repeated-prefix assessment columns by activity")
+    void testSchemalessRepeatedPrefixAssessmentColumnsClusterByActivity() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("fim_eating", Arrays.asList("integer", "min:1", "max:7"), "fim_a.csv"),
+                createElementFile("fim_eat_score", Arrays.asList("integer", "min:1", "max:7"), "fim_b.csv"),
+                createElementFile("fim_grooming", Arrays.asList("integer", "min:1", "max:7"), "fim_c.csv"),
+                createElementFile("barthel_feed", Arrays.asList("integer", "min:0", "max:10"), "barthel_a.csv"),
+                createElementFile("barthel_bathing", Arrays.asList("integer", "min:0", "max:5"), "barthel_b.csv"),
+                createElementFile("barthel_bath", Arrays.asList("integer", "min:0", "max:5"), "barthel_c.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+
+        assertFalse(sourcesByTarget.containsKey("fim"),
+                "Repeated source prefixes should not become schemaless targets");
+        assertFalse(sourcesByTarget.containsKey("barthel"),
+                "Repeated source prefixes should not become schemaless targets");
+
+        assertTrue(sourcesByTarget.values().stream().anyMatch(cols ->
+                        cols.contains("fim_eating") && cols.contains("fim_eat_score")),
+                "Schemaless mode should merge equivalent eating columns under one activity concept");
+        assertFalse(sourcesByTarget.values().stream().anyMatch(cols ->
+                        cols.contains("fim_eat_score") && cols.contains("fim_toilet_score")),
+                "Generic score suffixes must not merge different activities");
+        assertTrue(sourcesByTarget.values().stream().anyMatch(cols ->
+                        cols.contains("barthel_bathing") && cols.contains("barthel_bath")),
+                "Schemaless mode should merge equivalent bathing columns under one activity concept");
+    }
+
+    @Test
+    @DisplayName("Schemaless suggestions should keep life-event years separate from age-like years")
+    void testSchemalessDoesNotMergeBirthYearWithAgeYears() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("age", Arrays.asList("integer", "min:18", "max:95"), "demographics.csv"),
+                createElementFile("years", Arrays.asList("integer", "min:18", "max:95"), "demographics_alt.csv"),
+                createElementFile("birth_year", Arrays.asList("integer", "min:1930", "max:2006"), "registry.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+
+        assertFalse(sourcesByTarget.values().stream().anyMatch(cols ->
+                        cols.contains("birth_year") && (cols.contains("age") || cols.contains("years"))),
+                "Birth year must not merge with age-like year columns");
+    }
+
+    @Test
+    @DisplayName("Schemaless suggestions should preserve prefixes for generic summary concepts")
+    void testSchemalessPreservesGenericSummaryPrefixes() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("fim_total", Arrays.asList("integer", "min:10", "max:30"), "fim_a.csv"),
+                createElementFile("fim_total", Arrays.asList("integer", "min:11", "max:31"), "fim_b.csv"),
+                createElementFile("barthel_total", Arrays.asList("integer", "min:10", "max:30"), "barthel_a.csv"),
+                createElementFile("barthel_total", Arrays.asList("integer", "min:5", "max:30"), "barthel_b.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+
+        assertTrue(sourcesByTarget.containsKey("fim_total"), "FIM total should keep its prefix");
+        assertTrue(sourcesByTarget.containsKey("barthel_total"), "Barthel total should keep its prefix");
+        assertFalse(sourcesByTarget.containsKey("total"), "Bare generic total should not be emitted");
+    }
+
+    @Test
     @DisplayName("Should handle invalid or malformed schema")
     void testMalformedSchema() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
@@ -510,6 +749,72 @@ class MappingServiceTest {
             "LOS (days) and TSI to admission (days) are completely different duration measures "
             + "and must remain separate clusters (sharing only the unit token 'days' is not "
             + "sufficient structural evidence)");
+    }
+
+    @Test
+    @DisplayName("Total scores should NOT cluster with individual assessment items")
+    void testTotalScoreShouldNotMergeWithIndividualAssessmentItem() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("TOTALBARTHEL", Arrays.asList("integer", "min:0", "max:100"), "summary.csv"),
+                createElementFile("Social Interaction", Arrays.asList("integer", "min:1", "max:7"), "items.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+                "A total/index score and a single functional item should remain separate even "
+                        + "when their embeddings are indistinguishable");
+    }
+
+    @Test
+    @DisplayName("Duration fields should NOT cluster with individual assessment items")
+    void testDurationShouldNotMergeWithIndividualAssessmentItem() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("TSI to admission (days)",
+                        Arrays.asList("integer", "min:203", "max:7726"), "timing.csv"),
+                createElementFile("Social Interaction", Arrays.asList("integer", "min:1", "max:7"), "items.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.size(),
+                "A duration/count-of-days variable and an individual functional item should not merge");
+    }
+
+    @Test
+    @DisplayName("Boolean-like outcome status should NOT cluster with descriptive outcome categories")
+    void testBooleanLikeOutcomeStatusShouldNotMergeWithDescriptiveOutcome() {
+        float[] sharedVec = new float[384];
+        sharedVec[0] = 1.0f;
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenReturn(sharedVec);
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(Arrays.asList(
+                createElementFile("outcome_status", Arrays.asList("No", "Partial", "Yes"), "sample_2.csv"),
+                createElementFile("outcome", Arrays.asList("Recovered", "Deceased", "Improved"), "sample_1.csv")
+        ));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+
+        assertFalse(sourcesByTarget.values().stream().anyMatch(cols ->
+                        cols.contains("outcome_status") && cols.contains("outcome")),
+                "A yes/no/partial status column should not merge with descriptive outcome categories");
     }
 
     // ==================== Value Mapping Tests ====================
@@ -802,6 +1107,72 @@ class MappingServiceTest {
         dto.setNodeId("node-" + UUID.randomUUID().toString());
         dto.setColor("#FFFFFF");
         return dto;
+    }
+
+    private Map<String, Set<String>> sourceColumnsByTarget(List<Map<String, SuggestedMappingDTO>> result) {
+        Map<String, Set<String>> out = new LinkedHashMap<>();
+        for (Map<String, SuggestedMappingDTO> mappingMap : result) {
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                Set<String> cols = out.computeIfAbsent(entry.getKey(), k -> new LinkedHashSet<>());
+                SuggestedMappingDTO mapping = entry.getValue();
+                if (mapping == null || mapping.getGroups() == null) continue;
+                for (SuggestedGroupDTO group : mapping.getGroups()) {
+                    if (group == null || group.getValues() == null) continue;
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        if (value == null || value.getMapping() == null) continue;
+                        value.getMapping().forEach(ref -> cols.add(ref.getGroupColumn()));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private void assertValidSuggestionShape(List<Map<String, SuggestedMappingDTO>> result, String fixtureName) {
+        for (Map<String, SuggestedMappingDTO> mappingMap : result) {
+            assertNotNull(mappingMap, "Mapping object should not be null in " + fixtureName);
+            assertEquals(1, mappingMap.size(), "Each suggestion object should contain exactly one target in " + fixtureName);
+            for (Map.Entry<String, SuggestedMappingDTO> entry : mappingMap.entrySet()) {
+                assertFalse(entry.getKey().isBlank(), "Target key should not be blank in " + fixtureName);
+                SuggestedMappingDTO mapping = entry.getValue();
+                assertNotNull(mapping, "Mapping DTO should not be null for " + entry.getKey());
+                assertNotNull(mapping.getMappingType(), "Mapping type should not be null for " + entry.getKey());
+                assertNotNull(mapping.getColumns(), "Columns should not be null for " + entry.getKey());
+                assertFalse(mapping.getColumns().isEmpty(), "Columns should not be empty for " + entry.getKey());
+                assertNotNull(mapping.getGroups(), "Groups should not be null for " + entry.getKey());
+                assertFalse(mapping.getGroups().isEmpty(), "Groups should not be empty for " + entry.getKey());
+                for (SuggestedGroupDTO group : mapping.getGroups()) {
+                    assertNotNull(group, "Group should not be null for " + entry.getKey());
+                    assertFalse(String.valueOf(group.getColumn()).isBlank(), "Group column should not be blank for " + entry.getKey());
+                    assertNotNull(group.getValues(), "Group values should not be null for " + entry.getKey());
+                    assertFalse(group.getValues().isEmpty(), "Group values should not be empty for " + entry.getKey());
+                    for (SuggestedValueDTO value : group.getValues()) {
+                        assertNotNull(value, "Value should not be null for " + entry.getKey());
+                        assertFalse(String.valueOf(value.getName()).isBlank(), "Value name should not be blank for " + entry.getKey());
+                        assertNotNull(value.getMapping(), "Value mappings should not be null for " + entry.getKey());
+                    }
+                }
+            }
+        }
+    }
+
+    private float[] schemaFixtureVector(String text) {
+        String t = String.valueOf(text).toLowerCase(Locale.ROOT);
+        int slot = 0;
+        if (t.contains("gender_code") || t.equals("age") || t.contains("years")) slot = 1;
+        else if (t.contains("adverse") || t.contains("outcome")) slot = 2;
+        else if (t.contains("notes") || t.contains("discharge_status")
+                || (t.contains("discharge") && t.contains("status"))) slot = 3;
+        else if (t.contains("admission")) slot = 4;
+        else if (t.contains("discharge_date")) slot = 5;
+        else if (t.contains("assessment_date")) slot = 9;
+        else if (t.contains("sex") || t.contains("gender")) slot = 6;
+        else if (t.contains("eating") || t.contains("eat") || t.contains("fim") || t.contains("feed")) slot = 7;
+        else if (t.contains("bathing") || t.contains("bath") || t.contains("barthel")) slot = 8;
+
+        float[] embedding = new float[16];
+        embedding[slot] = 1.0f;
+        return embedding;
     }
 
     /**

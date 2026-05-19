@@ -3,9 +3,12 @@
 
 ### Sensitive data ###
 .env
+trusted-servers.config
 /logs
 /kerby
 /csv_files
+*.log
+hs_err_pid*.log
 
 # Modules
 InteroperabilityFHIRAPI/
