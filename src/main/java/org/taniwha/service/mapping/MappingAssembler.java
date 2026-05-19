@@ -33,8 +33,18 @@ class MappingAssembler {
             List<EmbeddedColumn> picked
     ) {
         if (out == null || usedUnionKeys == null || picked == null || picked.isEmpty()) return;
+        picked = keepOneColumnPerSourceFile(picked);
+        if (picked.isEmpty()) return;
 
-        String base = sanitizeUnionName(StringUtil.safe(baseUnionKey));
+        String baseLabel = StringUtil.safe(baseUnionKey);
+        if (schemaFieldOrNull == null) {
+            String sourceColumnLabel = sharedSourceColumnLabel(picked);
+            if (!sourceColumnLabel.isEmpty()) {
+                baseLabel = sourceColumnLabel;
+            }
+        }
+
+        String base = sanitizeUnionName(baseLabel);
         if (base.isEmpty()) base = "field";
         String unionKey = makeUnique(base, usedUnionKeys);
 
@@ -82,6 +92,7 @@ class MappingAssembler {
             case "integer" -> "integer";
             case "number", "double", "float" -> "double";
             case "date", "datetime" -> "date";
+            case "string", "boolean" -> "string";
             default -> {
                 boolean anyInt = false, anyDouble = false, anyDate = false;
                 if (sources != null) {
@@ -118,6 +129,21 @@ class MappingAssembler {
         while (used.contains(out)) { out = b + "_" + i++; }
         used.add(out);
         return out;
+    }
+
+    private String sharedSourceColumnLabel(List<EmbeddedColumn> picked) {
+        if (picked == null || picked.isEmpty()) return "";
+        String first = StringUtil.safeTrim(picked.get(0).column);
+        if (first.isEmpty()) return "";
+        if (picked.size() == 1) return first;
+
+        String firstKey = first.replaceAll("[^A-Za-z0-9]+", "").toLowerCase(Locale.ROOT);
+        for (EmbeddedColumn col : picked) {
+            String next = StringUtil.safeTrim(col == null ? "" : col.column);
+            String nextKey = next.replaceAll("[^A-Za-z0-9]+", "").toLowerCase(Locale.ROOT);
+            if (!firstKey.equals(nextKey)) return "";
+        }
+        return first;
     }
 
     static Set<String> collectUsedUnionKeys(List<Map<String, SuggestedMappingDTO>> out) {
@@ -185,6 +211,19 @@ class MappingAssembler {
     private List<String> extractSourceColumnNames(List<EmbeddedColumn> cols) {
         List<String> out = new ArrayList<>();
         for (EmbeddedColumn c : cols) out.add(c.column);
+        return out;
+    }
+
+    private List<EmbeddedColumn> keepOneColumnPerSourceFile(List<EmbeddedColumn> cols) {
+        if (cols == null || cols.isEmpty()) return Collections.emptyList();
+        List<EmbeddedColumn> out = new ArrayList<>();
+        Set<String> seenFiles = new HashSet<>();
+        for (EmbeddedColumn c : cols) {
+            if (c == null) continue;
+            if (seenFiles.add(c.fileKey())) {
+                out.add(c);
+            }
+        }
         return out;
     }
 

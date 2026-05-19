@@ -17,6 +17,21 @@ class ColumnPicker {
         return out;
     }
 
+    List<EmbeddedColumn> topColsOnePerFile(List<SimilarityScore<EmbeddedColumn>> cs) {
+        List<EmbeddedColumn> out = new ArrayList<>();
+        Set<String> seenFiles = new HashSet<>();
+
+        for (SimilarityScore<EmbeddedColumn> score : cs) {
+            if (score == null || score.item() == null) continue;
+            EmbeddedColumn col = score.item();
+            if (!seenFiles.add(col.fileKey())) continue;
+            out.add(col);
+            if (out.size() >= 30) break;
+        }
+
+        return out;
+    }
+
     SimilarityScore<EmbeddedSchemaField> bestSchemaMatch(EmbeddedColumn src, List<EmbeddedSchemaField> fields) {
         EmbeddedSchemaField best = null;
         double bestSim = -1.0;

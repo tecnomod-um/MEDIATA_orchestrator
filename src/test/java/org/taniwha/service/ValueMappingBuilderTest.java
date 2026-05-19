@@ -12,6 +12,7 @@ import org.taniwha.model.EmbeddedColumn;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -274,6 +275,33 @@ class ValueMappingBuilderTest {
                 "Expected a bucket for 'y' but found: " + names);
         assertTrue(names.contains("n"),
                 "Expected a bucket for 'n' but found: " + names);
+    }
+
+    @Test
+    @DisplayName("Clustering fallback must not merge distinct values from the same source column")
+    void singleFile_manyDistinctValues_clusteringFallback_keepsSourceValuesSeparate() {
+        java.util.ArrayList<String> times = new java.util.ArrayList<>();
+        for (int i = 0; i < 26; i++) {
+            times.add(String.format(Locale.ROOT, "08:%02d", i));
+        }
+
+        List<EmbeddedColumn> sources = List.of(
+                col("node1", "assessments.csv", "assessment_time", "assessment time",
+                        times.toArray(String[]::new))
+        );
+
+        List<SuggestedValueDTO> result = builder.buildValuesForConcept("assessment_time", "string", null, sources);
+
+        assertEquals(26, result.size(),
+                "Embedding fallback should not fold distinct values from one column into one bucket");
+
+        for (SuggestedValueDTO bucket : result) {
+            Set<String> distinctValues = bucket.getMapping().stream()
+                    .map(ref -> String.valueOf(ref.getValue()))
+                    .collect(Collectors.toSet());
+            assertEquals(1, distinctValues.size(),
+                    "Bucket '" + bucket.getName() + "' merged distinct source values: " + distinctValues);
+        }
     }
 
     @Test
@@ -606,6 +634,25 @@ class ValueMappingBuilderTest {
                         .collect(Collectors.toSet())
                         .containsAll(Set.of("yes", "no"))),
                 "No bucket may contain both Yes and No");
+    }
+
+    @Test
+    @DisplayName("Closed-domain categorical harmonization must not merge different values from the same source column")
+    void closedDomainCategorical_keepsSameColumnCategoriesSeparate() {
+        lenient().when(embeddingService.embedSingleValue(anyString())).thenReturn(SAME_VEC);
+
+        List<EmbeddedColumn> sources = Arrays.asList(
+                col("node1", "education_a.csv", "education", "education", "High school", "Middle school", "Master degree"),
+                col("node2", "education_b.csv", "education", "education", "High school", "Middle school", "Masters degree")
+        );
+
+        List<SuggestedValueDTO> result = builder.buildValuesForConcept("education", "string", null, sources);
+
+        assertFalse(result.stream().anyMatch(v -> v.getMapping().stream()
+                        .map(r -> String.valueOf(r.getValue()).toLowerCase(Locale.ROOT))
+                        .collect(Collectors.toSet())
+                        .containsAll(Set.of("high school", "middle school"))),
+                "One education bucket must not contain both High school and Middle school from the same column");
     }
 
     private void assertExactScaleBuckets(String unionKey, List<EmbeddedColumn> sources, int min, int max) {

@@ -122,7 +122,15 @@ class SchemaColumnMatchGuard {
         }
 
         // String schema fields can legitimately receive coded categorical values
-        // (for example sex/gender codes), but only with lexical evidence.
+        // only when the target itself asks for a code-like field.  A numeric-only
+        // summary such as gender_code does not carry enough value detail to safely
+        // populate a plain categorical target such as sex.
+        if (sourceNumeric && hasCategoricalCodeShape(names.sourceTokens)
+                && !hasCategoricalCodeShape(names.targetTokens)) {
+            return false;
+        }
+
+        // Otherwise, string fields still require lexical evidence in matchQuality.
         return true;
     }
 

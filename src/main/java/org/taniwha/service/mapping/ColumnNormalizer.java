@@ -76,10 +76,6 @@ class ColumnNormalizer {
             if (isStructuralSuffixToken(t)) suffixStop.add(t);
         }
 
-        for (Map.Entry<String, Integer> e : suffixCount.entrySet()) {
-            if (e.getValue() >= 8 && e.getKey().length() <= 5) suffixStop.add(e.getKey());
-        }
-
         if (n <= 6 && globalStop.size() > 3) {
             List<Map.Entry<String, Integer>> entries = new ArrayList<>();
             for (String t : globalStop) {

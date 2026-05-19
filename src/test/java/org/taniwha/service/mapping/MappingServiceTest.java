@@ -439,6 +439,8 @@ class MappingServiceTest {
         assertFalse(sourcesByTarget.getOrDefault("discharge_date", Set.of()).contains("assessment_date"));
 
         assertTrue(sourcesByTarget.getOrDefault("sex", Set.of()).contains("gender"));
+        assertFalse(sourcesByTarget.getOrDefault("sex", Set.of()).contains("gender_code"),
+                "Numeric coded category summaries must not be pulled into plain string targets without value detail");
         assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("fim_eat_score"));
         assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("fim_eating"));
         assertTrue(sourcesByTarget.getOrDefault("eating", Set.of()).contains("barthel_feed"));
@@ -450,6 +452,45 @@ class MappingServiceTest {
         assertFalse(sourcesByTarget.containsKey("bathing_2"));
         assertFalse(sourcesByTarget.containsKey("therapist"),
                 "Schema mode must not invent non-schema singleton targets for leftover columns");
+    }
+
+    @Test
+    @DisplayName("Schema suggestions should map at most one source column per dataset into each target")
+    void testSchemaSuggestionsKeepOneColumnPerDatasetPerTarget() {
+        lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+        lenient().when(embeddingService.embedSchemaField(any(String.class), any(String.class), any(), any(String.class)))
+                .thenAnswer(invocation -> schemaFixtureVector(invocation.getArgument(0)));
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setSchema("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "eating": { "type": ["integer", "null"], "description": "Eating activity score" }
+                  }
+                }""");
+
+        ColumnInFileDTO fimEating = createElementFile("fim_eating", Arrays.asList("integer", "min:1", "max:7"), "sample_a.csv");
+        fimEating.setNodeId("node-a");
+        ColumnInFileDTO fimEatScore = createElementFile("fim_eat_score", Arrays.asList("integer", "min:1", "max:7"), "sample_a.csv");
+        fimEatScore.setNodeId("node-a");
+        ColumnInFileDTO barthelFeed = createElementFile("barthel_feed", Arrays.asList("integer", "min:0", "max:15"), "sample_b.csv");
+        barthelFeed.setNodeId("node-a");
+
+        req.setElementFiles(Arrays.asList(fimEating, fimEatScore, barthelFeed));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+        Map<String, Set<String>> sourcesByTarget = sourceColumnsByTarget(result);
+        Set<String> eatingSources = sourcesByTarget.getOrDefault("eating", Set.of());
+
+        assertEquals(2, eatingSources.size(), "The target should contain one source column from each dataset");
+        assertTrue(eatingSources.contains("fim_eating"),
+                "The best/first candidate from sample_a.csv should be retained");
+        assertFalse(eatingSources.contains("fim_eat_score"),
+                "A second column from the same dataset must not be mapped into the same target");
+        assertTrue(eatingSources.contains("barthel_feed"),
+                "A matching column from a different dataset should still be included");
     }
 
     @Test

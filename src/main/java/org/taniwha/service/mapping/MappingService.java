@@ -40,7 +40,7 @@ public class MappingService {
 
     private static final Set<String> GENERIC_CONTEXT_REMAINDERS = Set.of(
             "total", "tot", "sum", "score", "scores", "index", "value", "values",
-            "status", "state", "type", "code", "flag", "indicator"
+            "status", "state", "type", "code", "flag", "indicator", "management"
     );
 
     private final EmbeddingService embeddingService;
@@ -159,7 +159,7 @@ public class MappingService {
             if (candidates == null || candidates.isEmpty()) continue;
 
             candidates.sort((a, b) -> Double.compare(b.sim(), a.sim()));
-            List<EmbeddedColumn> picked = columnPicker.topCols(candidates);
+            List<EmbeddedColumn> picked = columnPicker.topColsOnePerFile(candidates);
             String detectedType = mappingAssembler.detectTypeFromSourcesOrSchema(picked, StringUtil.safe(field.type));
 
             mappingAssembler.addSuggestedMapping(out, usedUnionKeys, field.name, detectedType, field, picked);
@@ -207,7 +207,7 @@ public class MappingService {
             String token = e.getKey();
             if (token.length() < 3) continue;
             if (CONTEXT_TOKEN_EXCLUSIONS.contains(token)) continue;
-            if (e.getValue().size() >= 2) out.add(token);
+            if (e.getValue().size() >= 3) out.add(token);
         }
         return out;
     }
@@ -227,8 +227,9 @@ public class MappingService {
     }
 
     private List<Map<String, SuggestedMappingDTO>> suggestWithoutSchema(List<EmbeddedColumn> allColumns) {
-        List<EmbeddedColumn> normalizedColumns = stripLeadingContextFromColumns(allColumns, learnLeadingContextTokens(allColumns));
-        List<ColCluster> clusters = columnClusterer.clusterColumns(normalizedColumns);
+        Set<String> sourceContextTokens = learnLeadingContextTokens(allColumns);
+        List<EmbeddedColumn> normalizedColumns = stripLeadingContextFromColumns(allColumns, sourceContextTokens);
+        List<ColCluster> clusters = columnClusterer.clusterColumns(normalizedColumns, sourceContextTokens);
 
         clusters.sort((a, b) -> {
             int diff = Integer.compare(b.cols.size(), a.cols.size());

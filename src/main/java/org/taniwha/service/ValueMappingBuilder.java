@@ -483,6 +483,7 @@ public class ValueMappingBuilder {
 
         Map<String, Map<String, List<SuggestedRefDTO>>> bySource = new LinkedHashMap<>();
         Map<String, Integer> tokenGlobalFreq = new HashMap<>();
+        Map<String, Set<String>> tokenSourceKeys = new HashMap<>();
         Set<String> uniqueTokens = new LinkedHashSet<>();
 
         int valuesSeen = 0;
@@ -502,6 +503,7 @@ public class ValueMappingBuilder {
 
                 uniqueTokens.add(nv);
                 tokenGlobalFreq.put(nv, tokenGlobalFreq.getOrDefault(nv, 0) + 1);
+                tokenSourceKeys.computeIfAbsent(nv, k -> new HashSet<>()).add(srcKey);
 
                 SuggestedRefDTO ref = new SuggestedRefDTO();
                 ref.setNodeId(src.nodeId);
@@ -559,6 +561,11 @@ public class ValueMappingBuilder {
             for (int j = i + 1; j < tokens.size(); j++) {
                 String a = tokens.get(i);
                 String b = tokens.get(j);
+
+                if (tokensShareSource(a, b, tokenSourceKeys)) {
+                    blockedPairs++;
+                    continue;
+                }
 
                 if (isObviousAlias(a, b)) {
                     uf.union(i, j);
@@ -652,6 +659,17 @@ public class ValueMappingBuilder {
 
         log.info("[VMB] closedDomain: SUCCESS union='{}' buckets={}", unionKey, out.size());
         return out;
+    }
+
+    private boolean tokensShareSource(String a, String b, Map<String, Set<String>> tokenSourceKeys) {
+        if (tokenSourceKeys == null || tokenSourceKeys.isEmpty()) return false;
+        Set<String> left = tokenSourceKeys.get(a);
+        Set<String> right = tokenSourceKeys.get(b);
+        if (left == null || right == null || left.isEmpty() || right.isEmpty()) return false;
+        for (String source : left) {
+            if (right.contains(source)) return true;
+        }
+        return false;
     }
 
     private boolean shouldSkipEmbeddingAliasing(Set<String> uniqueTokens) {
@@ -793,7 +811,8 @@ public class ValueMappingBuilder {
                     ref.setValue(rv);
 
                     float[] vec = vecCache.computeIfAbsent(nv, embeddingService::embedSingleValue);
-                    items.add(new ValueItem(nv, vec, ref));
+                    String sourceKey = src.fileKey() + "::" + StringUtil.safe(src.column);
+                    items.add(new ValueItem(nv, vec, ref, sourceKey));
                     used++;
                 }
             }
@@ -842,7 +861,9 @@ public class ValueMappingBuilder {
                         log.trace("[VMB] clustering: single-char '{}' -> new cluster", it.normalized);
                     }
                 }
-            } else if (best != null && bestSim >= THRESH_CLUSTER) {
+            } else if (best != null
+                    && bestSim >= THRESH_CLUSTER
+                    && !best.hasDifferentValueFromSource(it.sourceKey, it.normalized)) {
                 best.add(it);
                 merges++;
                 if (log.isTraceEnabled()) {
@@ -977,23 +998,29 @@ public class ValueMappingBuilder {
         final String normalized;
         final float[] vec;
         final SuggestedRefDTO ref;
+        final String sourceKey;
 
-        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref) {
+        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref, String sourceKey) {
             this.normalized = normalized;
             this.vec = vec;
             this.ref = ref;
+            this.sourceKey = sourceKey;
         }
     }
 
     private static final class Cluster {
         final List<SuggestedRefDTO> refs = new ArrayList<>();
         final Set<String> normalizedValues = new LinkedHashSet<>();
+        final Map<String, Set<String>> normalizedValuesBySource = new HashMap<>();
         float[] centroid = null;
         int count = 0;
 
         void add(ValueItem it) {
             refs.add(it.ref);
             normalizedValues.add(it.normalized);
+            normalizedValuesBySource
+                    .computeIfAbsent(StringUtil.safe(it.sourceKey), k -> new HashSet<>())
+                    .add(it.normalized);
 
             if (centroid == null) {
                 centroid = Arrays.copyOf(it.vec, it.vec.length);
@@ -1017,6 +1044,12 @@ public class ValueMappingBuilder {
         String repHint() {
             if (normalizedValues.isEmpty()) return "";
             return normalizedValues.iterator().next();
+        }
+
+        boolean hasDifferentValueFromSource(String sourceKey, String normalized) {
+            Set<String> values = normalizedValuesBySource.get(StringUtil.safe(sourceKey));
+            if (values == null || values.isEmpty()) return false;
+            return !values.contains(normalized);
         }
 
         List<String> sampleNormVals(int n) {

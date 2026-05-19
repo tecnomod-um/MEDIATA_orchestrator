@@ -22,7 +22,7 @@ class ColumnClusterer {
             Set.of("date", "dt", "time", "day", "days", "week", "weeks", "month", "months",
                     "year", "years", "hour", "hours", "minute", "minutes", "total",
                     "status", "state", "type", "code", "id", "value", "score", "scores",
-                    "scale", "scales", "level", "levels");
+                    "scale", "scales", "level", "levels", "management", "control", "controls");
 
     private static final Set<String> BOOLEAN_LIKE_VALUES = Set.of(
             "yes", "no", "true", "false", "y", "n", "0", "1",
@@ -73,6 +73,11 @@ class ColumnClusterer {
     }
 
     List<ColCluster> clusterColumns(List<EmbeddedColumn> all) {
+        return clusterColumns(all, Collections.emptySet());
+    }
+
+    List<ColCluster> clusterColumns(List<EmbeddedColumn> all, Set<String> requestContextTokens) {
+        Set<String> tokenOverlapExclusions = normalizedTokenSet(requestContextTokens);
         Map<String, ColCluster> byConcept = new LinkedHashMap<>();
         for (EmbeddedColumn c : all) {
             String key = sanitizeUnionName(StringUtil.safeTrim(c.concept).toLowerCase(Locale.ROOT));
@@ -97,7 +102,7 @@ class ColumnClusterer {
 
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
 
-                double jac = conceptTokenJaccard(col, cl);
+                double jac = conceptTokenJaccard(col, cl, tokenOverlapExclusions);
                 boolean hasTokenOverlap = jac >= 0.15;
 
                 boolean hasAbbrevPair = false;
@@ -125,9 +130,6 @@ class ColumnClusterer {
                 }
 
                 boolean hasMutualSemanticEvidence = false;
-                if (!hasTokenOverlap && !hasAbbrevPair && !hasValueEvidence) {
-                    hasMutualSemanticEvidence = hasMutualSemanticScoreEvidence(col, cl, clusters, sim);
-                }
 
                 if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence || hasMutualSemanticEvidence)) continue;
 
@@ -200,16 +202,20 @@ class ColumnClusterer {
     }
 
     private boolean rolesCompatible(ColCluster a, ColCluster b) {
+        if (hasUncoveredCompositeLabel(a, b) || hasUncoveredCompositeLabel(b, a)) return false;
+
         ColumnRole ra = inferRole(a);
         ColumnRole rb = inferRole(b);
-        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN || ra == rb) return true;
+
+        if (ra == ColumnRole.UNKNOWN || rb == ColumnRole.UNKNOWN) return true;
+        if (ra == rb) return true;
 
         if (ra == ColumnRole.IDENTIFIER || rb == ColumnRole.IDENTIFIER) return false;
         if (ra == ColumnRole.FREE_TEXT || rb == ColumnRole.FREE_TEXT) return false;
         if (ra == ColumnRole.DIAGNOSIS || rb == ColumnRole.DIAGNOSIS) return false;
         if (ra == ColumnRole.OUTCOME || rb == ColumnRole.OUTCOME) return false;
         if (ra == ColumnRole.BOOLEAN_FLAG || rb == ColumnRole.BOOLEAN_FLAG) return false;
-        if (isTemporalRole(ra) || isTemporalRole(rb)) return isTemporalRole(ra) && isTemporalRole(rb);
+        if (isTemporalRole(ra) || isTemporalRole(rb)) return ra == rb;
         if (ra == ColumnRole.AGE || rb == ColumnRole.AGE) return false;
         if (ra == ColumnRole.LIFE_EVENT_YEAR || rb == ColumnRole.LIFE_EVENT_YEAR) return false;
 
@@ -456,9 +462,9 @@ class ColumnClusterer {
         return best;
     }
 
-    private double conceptTokenJaccard(ColCluster a, ColCluster b) {
-        Set<String> sa = clusterConceptTokens(a);
-        Set<String> sb = clusterConceptTokens(b);
+    private double conceptTokenJaccard(ColCluster a, ColCluster b, Set<String> tokenOverlapExclusions) {
+        Set<String> sa = clusterConceptTokens(a, tokenOverlapExclusions);
+        Set<String> sb = clusterConceptTokens(b, tokenOverlapExclusions);
         if (sa.isEmpty() || sb.isEmpty()) return 0.0;
 
         int inter = 0;
@@ -468,13 +474,13 @@ class ColumnClusterer {
         return inter / (double) union;
     }
 
-    private Set<String> clusterConceptTokens(ColCluster cluster) {
+    private Set<String> clusterConceptTokens(ColCluster cluster, Set<String> tokenOverlapExclusions) {
         Set<String> out = new LinkedHashSet<>();
         if (cluster == null) return out;
         out.addAll(conceptTokens(cluster.representativeConcept));
         if (cluster.cols != null) {
             for (EmbeddedColumn col : cluster.cols) {
-                out.addAll(conceptTokens(col == null ? "" : col.column));
+                out.addAll(conceptTokens(col == null ? "" : col.column, tokenOverlapExclusions));
                 out.addAll(conceptTokens(col == null ? "" : col.concept));
             }
         }
@@ -482,6 +488,10 @@ class ColumnClusterer {
     }
 
     private Set<String> conceptTokens(String concept) {
+        return conceptTokens(concept, Collections.emptySet());
+    }
+
+    private Set<String> conceptTokens(String concept, Set<String> tokenOverlapExclusions) {
         String s = StringUtil.safeTrim(concept).toLowerCase(Locale.ROOT);
         if (s.isEmpty()) return Collections.emptySet();
         String[] parts = s.split("[^a-z0-9]+");
@@ -490,8 +500,19 @@ class ColumnClusterer {
             if (p == null) continue;
             String t = p.trim();
             if (t.isEmpty() || t.matches("\\d+") || t.length() <= 1
-                    || JACCARD_STOP_TOKENS.contains(t)) continue;
+                    || JACCARD_STOP_TOKENS.contains(t)
+                    || tokenOverlapExclusions.contains(t)) continue;
             out.add(t);
+        }
+        return out;
+    }
+
+    private Set<String> normalizedTokenSet(Set<String> tokens) {
+        if (tokens == null || tokens.isEmpty()) return Collections.emptySet();
+        Set<String> out = new HashSet<>();
+        for (String token : tokens) {
+            String t = StringUtil.safeTrim(token).toLowerCase(Locale.ROOT);
+            if (!t.isEmpty()) out.add(t);
         }
         return out;
     }
@@ -505,6 +526,12 @@ class ColumnClusterer {
     private boolean looksLikeAbbreviationOf(String candidate, String fullConcept) {
         String[] candidateTokens = candidate.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
         String[] fullTokensArr = fullConcept.trim().toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+
+        if (hasCompositeJoiner(fullConcept)
+                && !hasCompositeJoiner(candidate)
+                && !candidateCoversCompositeHeads(candidateTokens, fullConcept)) {
+            return false;
+        }
 
         List<String> fullParts = new ArrayList<>();
         for (String t : fullTokensArr) { if (t != null && !t.isEmpty()) fullParts.add(t); }
@@ -532,8 +559,7 @@ class ColumnClusterer {
         }
         if (fullParts.size() < 2) return false;
 
-        Map<Character, Integer> initialsMultiset = new LinkedHashMap<>();
-        for (String token : fullParts) initialsMultiset.merge(token.charAt(0), 1, Integer::sum);
+        String initials = initialsOf(fullParts);
 
         for (String abbrev : candidateTokens) {
             if (abbrev == null || abbrev.isEmpty()) continue;
@@ -543,18 +569,7 @@ class ColumnClusterer {
             if (candidateTokens.length > 1 && fullParts.size() > 1
                     && abbrev.length() < 3 && abbrev.length() != fullParts.size()) continue;
 
-            Map<Character, Integer> abbrevMultiset = new LinkedHashMap<>();
-            for (char c : abbrev.toCharArray()) abbrevMultiset.merge(c, 1, Integer::sum);
-
-            // Multiset initial matching preserves repeated initials in concepts with duplicate leading letters.
-            boolean initialsMatch = true;
-            for (Map.Entry<Character, Integer> e : abbrevMultiset.entrySet()) {
-                if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
-                    initialsMatch = false;
-                    break;
-                }
-            }
-            if (initialsMatch) return true;
+            if (orderedInitialsMatch(abbrev, initials)) return true;
 
             for (String token : fullParts) {
                 if (token.length() > abbrev.length() && token.startsWith(abbrev)) {
@@ -572,19 +587,111 @@ class ColumnClusterer {
                 // Suffix initialisms cover exports that drop leading context before keeping initials.
                 String suffix = abbrev.substring(start);
                 if (suffix.length() < 2) continue;
-                Map<Character, Integer> suffixMultiset = new LinkedHashMap<>();
-                for (char c : suffix.toCharArray()) suffixMultiset.merge(c, 1, Integer::sum);
-                boolean suffixMatch = true;
-                for (Map.Entry<Character, Integer> e : suffixMultiset.entrySet()) {
-                    if (initialsMultiset.getOrDefault(e.getKey(), 0) < e.getValue()) {
-                        suffixMatch = false;
-                        break;
-                    }
-                }
-                if (suffixMatch) return true;
+                if (orderedInitialsMatch(suffix, initials)) return true;
             }
         }
         return false;
+    }
+
+    private static String initialsOf(List<String> parts) {
+        StringBuilder initials = new StringBuilder();
+        for (String part : parts) {
+            if (part != null && !part.isEmpty()) initials.append(part.charAt(0));
+        }
+        return initials.toString();
+    }
+
+    private static boolean orderedInitialsMatch(String abbreviation, String initials) {
+        if (abbreviation == null || initials == null || abbreviation.length() < 2 || initials.length() < 2) {
+            return false;
+        }
+        return initials.startsWith(abbreviation)
+                || abbreviation.startsWith(initials)
+                || (initials.length() > 2 && initials.substring(1).equals(abbreviation));
+    }
+
+    private boolean hasUncoveredCompositeLabel(ColCluster composite, ColCluster other) {
+        List<String> heads = compositeHeads(composite);
+        if (heads.size() < 2) return false;
+        String otherText = clusterSearchText(other);
+        if (otherText.isEmpty()) return false;
+        for (String head : heads) {
+            if (!otherText.contains(head)) return true;
+        }
+        return false;
+    }
+
+    private List<String> compositeHeads(ColCluster cluster) {
+        if (cluster == null) return Collections.emptyList();
+        List<String> labels = new ArrayList<>();
+        labels.add(StringUtil.safe(cluster.representativeConcept));
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                labels.add(StringUtil.safe(col == null ? "" : col.column));
+                labels.add(StringUtil.safe(col == null ? "" : col.concept));
+            }
+        }
+
+        for (String label : labels) {
+            if (!hasCompositeJoiner(label)) continue;
+            List<String> heads = new ArrayList<>();
+            for (String segment : label.toLowerCase(Locale.ROOT).split("\\+")) {
+                String[] tokens = segment.split("[^a-z0-9]+");
+                for (String token : tokens) {
+                    if (token != null && token.length() >= 2) {
+                        heads.add(token);
+                        break;
+                    }
+                }
+            }
+            if (heads.size() >= 2) return heads;
+        }
+        return Collections.emptyList();
+    }
+
+    private String clusterSearchText(ColCluster cluster) {
+        if (cluster == null) return "";
+        StringBuilder sb = new StringBuilder();
+        appendSearchText(sb, cluster.representativeConcept);
+        if (cluster.cols != null) {
+            for (EmbeddedColumn col : cluster.cols) {
+                appendSearchText(sb, col == null ? "" : col.column);
+                appendSearchText(sb, col == null ? "" : col.concept);
+            }
+        }
+        return sb.toString();
+    }
+
+    private void appendSearchText(StringBuilder sb, String value) {
+        if (value == null || value.isBlank()) return;
+        sb.append(' ')
+                .append(value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", ""));
+    }
+
+    private static boolean hasCompositeJoiner(String value) {
+        return value != null && value.contains("+");
+    }
+
+    private static boolean candidateCoversCompositeHeads(String[] candidateTokens, String fullConcept) {
+        if (candidateTokens == null || fullConcept == null) return false;
+        String candidate = String.join("", candidateTokens).toLowerCase(Locale.ROOT);
+        if (candidate.isEmpty()) return false;
+
+        List<String> heads = new ArrayList<>();
+        for (String segment : fullConcept.toLowerCase(Locale.ROOT).split("\\+")) {
+            String[] tokens = segment.split("[^a-z0-9]+");
+            for (String token : tokens) {
+                if (token != null && token.length() >= 2) {
+                    heads.add(token);
+                    break;
+                }
+            }
+        }
+        if (heads.size() < 2) return true;
+        for (String head : heads) {
+            if (!candidate.contains(head)) return false;
+        }
+        return true;
     }
 
     private static boolean remainingTokensMatch(
@@ -720,7 +827,10 @@ class ColumnClusterer {
     }
 
     private Set<String> rawConceptTokens(String concept) {
-        String s = StringUtil.safeTrim(concept).toLowerCase(Locale.ROOT);
+        String s = org.taniwha.util.NormalizationUtil.splitCamelStrong(StringUtil.safeTrim(concept));
+        s = s.replaceAll("([a-zA-Z])([0-9])", "$1 $2");
+        s = s.replaceAll("([0-9])([a-zA-Z])", "$1 $2");
+        s = s.toLowerCase(Locale.ROOT);
         if (s.isEmpty()) return Collections.emptySet();
         String[] parts = s.split("[^a-z0-9]+");
         Set<String> out = new LinkedHashSet<>();
