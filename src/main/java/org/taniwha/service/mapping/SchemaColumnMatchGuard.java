@@ -9,14 +9,6 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Applies cheap structural checks after the embedding model picks a schema field.
- *
- * Embeddings are useful for recall, but short clinical column names are noisy:
- * numeric status codes can look close to age, and any date can look close to any
- * other date.  This guard requires name/type evidence before a source column is
- * allowed into a schema-backed mapping.
- */
 class SchemaColumnMatchGuard {
 
     private static final Pattern TOKEN = Pattern.compile("[a-z]+|[0-9]+");
@@ -56,7 +48,6 @@ class SchemaColumnMatchGuard {
         if (names.strongOverlap) return 2;
         if (hasHighConfidenceTypedEmbedding(field, source, names, embeddingSimilarity)) return 1;
 
-        // Embedding-only schema matches are too loose for integration specs.
         return 0;
     }
 
@@ -121,16 +112,11 @@ class SchemaColumnMatchGuard {
             return names.strongOverlap || names.exactName || names.containedName;
         }
 
-        // String schema fields can legitimately receive coded categorical values
-        // only when the target itself asks for a code-like field.  A numeric-only
-        // summary such as gender_code does not carry enough value detail to safely
-        // populate a plain categorical target such as sex.
         if (sourceNumeric && hasCategoricalCodeShape(names.sourceTokens)
                 && !hasCategoricalCodeShape(names.targetTokens)) {
             return false;
         }
 
-        // Otherwise, string fields still require lexical evidence in matchQuality.
         return true;
     }
 
