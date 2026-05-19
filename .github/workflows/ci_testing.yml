@@ -41,8 +41,13 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add badges/coverage.svg
-          git diff --cached --quiet || git commit -m "ci: update coverage badge"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: update coverage badge"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "Coverage badge unchanged"
+          fi
 
   update-parent:
     name: Bump orchestrator in umbrella repo
