@@ -2,6 +2,7 @@ package org.taniwha.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,7 @@ import org.taniwha.dto.FieldMetadataDTO;
 import org.taniwha.dto.OntologyTermDTO;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,7 +44,7 @@ class RDFServiceTest {
         // Disable the Python-service health probe so that mock RestTemplate calls are
         // never short-circuited by the unreachable service guard in tests.
         ReflectionTestUtils.setField(svc, "pythonProbeEnabled", false);
-                ReflectionTestUtils.setField(svc, "snowstormApiUrl", base);
+        ReflectionTestUtils.setField(svc, "snowstormApiUrl", base);
     }
 
     @Test
@@ -131,54 +133,49 @@ class RDFServiceTest {
 
         ResponseEntity<Map> ok = new ResponseEntity<>(body, HttpStatus.OK);
         when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(ok);
-        when(rest.exchange(
-                eq(base + "/concepts"),
-                eq(HttpMethod.GET),
-                eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(new ResponseEntity<>(Collections.emptyMap(), HttpStatus.OK));
+                eq(Map.class)
+        )).thenReturn(new ResponseEntity<>(Collections.emptyMap(), HttpStatus.OK), ok);
 
         List<OntologyTermDTO> out = svc.getSNOMEDTermSuggestions(q);
         assertThat(out).hasSize(2);
         assertThat(out).extracting(OntologyTermDTO::getLabel)
                 .containsExactly("Foo", "456Only");
 
-        when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
+        ArgumentCaptor<URI> uriCaptor = ArgumentCaptor.forClass(URI.class);
+        verify(rest, times(2)).exchange(
+                uriCaptor.capture(),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
+                eq(Map.class)
+        );
+        List<String> uris = uriCaptor.getAllValues().stream()
+                .map(URI::toString)
+                .toList();
+        assertThat(uris.get(0))
+                .startsWith(base + "/MAIN/concepts?")
+                .contains("term=q", "activeFilter=true", "termActive=true", "limit=100");
+        assertThat(uris.get(1))
+                .startsWith(base + "/browser/MAIN/descriptions?")
+                .contains("term=q", "active=true", "conceptActive=true", "groupByConcept=true", "limit=100");
+
+        reset(rest);
         when(rest.exchange(
-                eq(base + "/concepts"),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
+                eq(Map.class)
+        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE), new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
 
+        reset(rest);
         when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenThrow(new RestClientException("nope"));
-        when(rest.exchange(
-                eq(base + "/concepts"),
-                eq(HttpMethod.GET),
-                eq(null),
-                eq(Map.class),
-                anyMap()
+                eq(Map.class)
         )).thenThrow(new RestClientException("nope"));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
     }

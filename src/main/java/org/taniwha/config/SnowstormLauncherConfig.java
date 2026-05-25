@@ -48,6 +48,9 @@ public class SnowstormLauncherConfig {
     @Value("${snowstorm.esHostPort:${env.SNOWSTORM_ES_HOST_PORT:9200}}")
     private int esHostPort;
 
+    @Value("${snowstorm.api.branch:${env.SNOWSTORM_BRANCH:MAIN}}")
+    private String snowstormBranch;
+
     @Value("${snowstorm.startupTimeoutSeconds:${env.SNOWSTORM_TIMEOUT:120}}")
     private int startupTimeoutSeconds;
 
@@ -83,8 +86,17 @@ public class SnowstormLauncherConfig {
             waitForHttp("http://localhost:" + esHostPort + "/", Duration.ofSeconds(startupTimeoutSeconds), "Elasticsearch");
 
             ensureSnowstormRunning();
-            waitForHttp("http://localhost:" + snowstormHostPort + "/MAIN/concepts?term=diagn&activeFilter=true&limit=1",
-                    Duration.ofSeconds(startupTimeoutSeconds), "Snowstorm");
+            String healthUrl = "http://localhost:" + snowstormHostPort + "/" + branchPath()
+                    + "/concepts?term=diagn&activeFilter=true&limit=1";
+            boolean snowstormReady = waitForHttp(healthUrl, Duration.ofSeconds(startupTimeoutSeconds), "Snowstorm");
+            if (snowstormReady) {
+                logger.info("Snowstorm ready for orchestrator SNOMED lookups at http://localhost:{} (branch {}).",
+                        snowstormHostPort, branchPath());
+            } else {
+                logger.warn("Snowstorm launch finished but {} is still not reachable. " +
+                                "Orchestrator SNOMED lookups may return empty results until the service is ready.",
+                        healthUrl);
+            }
         };
     }
 
@@ -187,17 +199,26 @@ public class SnowstormLauncherConfig {
         }
     }
 
-    private void waitForHttp(String url, Duration timeout, String name) throws Exception {
+    private boolean waitForHttp(String url, Duration timeout, String name) throws Exception {
         long deadline = System.currentTimeMillis() + timeout.toMillis();
         while (System.currentTimeMillis() < deadline) {
             if (commandRunner.httpResponds(url)) {
                 logger.info("{} reachable: {}", name, url);
-                return;
+                return true;
             }
             commandRunner.sleep(750);
         }
         logger.warn("{} not reachable yet: {}", name, url);
         logger.warn("Try: docker logs --tail=200 {}", name.equals("Elasticsearch") ? esContainer : snowstormContainer);
+        return false;
+    }
+
+    private String branchPath() {
+        String branch = snowstormBranch == null ? "" : snowstormBranch.trim();
+        if (branch.isEmpty()) return "MAIN";
+        branch = branch.replaceAll("^/+", "");
+        branch = branch.replaceAll("/+$", "");
+        return branch.isEmpty() ? "MAIN" : branch;
     }
 
     private void ensureImagePresent(String image) throws Exception {

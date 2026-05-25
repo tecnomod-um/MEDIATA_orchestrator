@@ -10,13 +10,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.dto.FieldMetadataDTO;
 import org.taniwha.dto.OntologyTermDTO;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -53,6 +56,9 @@ public class RDFService {
     @Value("${snowstorm.api.url:http://localhost:9100}")
     private String snowstormApiUrl;
 
+    @Value("${snowstorm.api.branch:MAIN}")
+    private String snowstormApiBranch;
+
     @Value("${rdfbuilder.healthUrl:${rdfbuilder.service.url}/types}")
     private String pythonHealthUrl;
 
@@ -69,10 +75,14 @@ public class RDFService {
     private long pythonMaxCooldownMs;
 
     private final AtomicReference<PyState> pyState = new AtomicReference<>(PyState.UNKNOWN);
+    private enum SnowstormState { UNKNOWN, UP, DOWN }
     private final AtomicReference<Instant> pyLastSuccess = new AtomicReference<>(null);
     private final AtomicReference<Instant> pyLastFailure = new AtomicReference<>(null);
     private final AtomicInteger pyConsecutiveFailures = new AtomicInteger(0);
     private final AtomicLong pyNextProbeEpochMs = new AtomicLong(0);
+    private final AtomicReference<SnowstormState> snowstormState = new AtomicReference<>(SnowstormState.UNKNOWN);
+    private final AtomicReference<Instant> snowstormLastSuccess = new AtomicReference<>(null);
+    private final AtomicReference<Instant> snowstormLastFailure = new AtomicReference<>(null);
 
     @Autowired
     public RDFService(RestTemplateConfig restTemplateConfig) {
@@ -320,15 +330,20 @@ public class RDFService {
 
     private List<OntologyTermDTO> executeSnowstormSearch(SearchRequest request) {
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
+        URI uri = buildSnowstormUri(request);
         try {
+            logger.debug("[RDFService] SNOMED lookup term='{}' via {} -> {}",
+                    shortStr(request.query), request.kind, uri);
             ResponseEntity<Map> response = restTemplate.exchange(
-                    request.url,
+                    uri,
                     HttpMethod.GET,
                     null,
-                    Map.class,
-                    request.params
+                    Map.class
             );
+            markSnowstormReachable();
             if (!response.getStatusCode().is2xxSuccessful()) {
+                logger.warn("[RDFService] Snowstorm returned {} for term='{}' via {} ({})",
+                        response.getStatusCode(), shortStr(request.query), request.kind, uri);
                 return Collections.emptyList();
             }
 
@@ -353,9 +368,27 @@ public class RDFService {
                 }
             }
             return out;
+        } catch (RestClientResponseException e) {
+            markSnowstormReachable();
+            logger.warn("[RDFService] Snowstorm search HTTP {} for term='{}' via {} ({}): {}",
+                    e.getRawStatusCode(), shortStr(request.query), request.kind, uri, shortResponseBody(e));
+            return Collections.emptyList();
+        } catch (ResourceAccessException e) {
+            markSnowstormUnreachable();
+            logger.warn("[RDFService] Snowstorm not reachable for term='{}' via {} ({}): {}",
+                    shortStr(request.query), request.kind, uri, shortMsg(e));
+            return Collections.emptyList();
         } catch (Exception e) {
+            logger.warn("[RDFService] Snowstorm search failed for term='{}' via {} ({}): {}",
+                    shortStr(request.query), request.kind, uri, shortMsg(e));
             return Collections.emptyList();
         }
+    }
+
+    private URI buildSnowstormUri(SearchRequest request) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(request.url);
+        request.params.forEach(builder::queryParam);
+        return builder.build().encode().toUri();
     }
 
     private OntologyTermDTO toOntologyTerm(Map<?, ?> item, int idCounter) {
@@ -497,11 +530,25 @@ public class RDFService {
 
     private List<SearchRequest> buildSearchRequests(String query) {
         int tokenCount = query.isBlank() ? 0 : query.split("\\s+").length;
-        int expandedLimit = tokenCount <= 1 ? 1000 : Math.min(Math.max(12 * 3, 20), 100);
+        int expandedLimit = tokenCount <= 1 ? 100 : Math.min(Math.max(12 * 3, 20), 100);
+        String branchPath = normalizedSnowstormBranchPath();
 
         List<SearchRequest> requests = new ArrayList<>(2);
         requests.add(new SearchRequest(
-                snowstormApiUrl + "/browser/MAIN/descriptions",
+                buildSnowstormUrl(branchPath + "/concepts"),
+                "concepts",
+                query,
+                Map.of(
+                        "term", query,
+                        "activeFilter", "true",
+                        "termActive", "true",
+                        "limit", String.valueOf(expandedLimit)
+                )
+        ));
+        requests.add(new SearchRequest(
+                buildSnowstormUrl("browser/" + branchPath + "/descriptions"),
+                "descriptions",
+                query,
                 Map.of(
                         "term", query,
                         "active", "true",
@@ -510,16 +557,57 @@ public class RDFService {
                         "limit", String.valueOf(expandedLimit)
                 )
         ));
-        requests.add(new SearchRequest(
-                snowstormApiUrl + "/concepts",
-                Map.of(
-                        "term", query,
-                        "activeFilter", "true",
-                        "termActive", "true",
-                        "limit", String.valueOf(expandedLimit)
-                )
-        ));
         return requests;
+    }
+
+    private String normalizedSnowstormBranchPath() {
+        String branch = safe(snowstormApiBranch).trim();
+        if (branch.isEmpty()) return "MAIN";
+        branch = branch.replaceAll("^/+", "");
+        branch = branch.replaceAll("/+$", "");
+        return branch.isEmpty() ? "MAIN" : branch;
+    }
+
+    private String buildSnowstormUrl(String path) {
+        String base = safe(snowstormApiUrl).trim();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        String normalizedPath = path == null ? "" : path.replaceAll("^/+", "");
+        return base + "/" + normalizedPath;
+    }
+
+    private void markSnowstormReachable() {
+        SnowstormState previous = snowstormState.getAndSet(SnowstormState.UP);
+        snowstormLastSuccess.set(Instant.now());
+        if (previous != SnowstormState.UP) {
+            logger.info("[RDFService] Snowstorm is reachable at {} (branch {}). SNOMED terminology lookup enabled.",
+                    safe(snowstormApiUrl).trim(), normalizedSnowstormBranchPath());
+        }
+    }
+
+    private void markSnowstormUnreachable() {
+        SnowstormState previous = snowstormState.getAndSet(SnowstormState.DOWN);
+        snowstormLastFailure.set(Instant.now());
+        if (previous != SnowstormState.DOWN) {
+            logger.warn("[RDFService] Snowstorm is not reachable at {}. SNOMED terminology lookup may return empty results until it recovers.",
+                    safe(snowstormApiUrl).trim());
+        }
+    }
+
+    private static String shortResponseBody(RestClientResponseException e) {
+        if (e == null) return "";
+        String body = e.getResponseBodyAsString();
+        if (body == null || body.isBlank()) return shortMsg(e);
+        body = body.replace("\r", " ").replace("\n", " ").trim();
+        if (body.length() > 220) body = body.substring(0, 220) + "...";
+        return body;
+    }
+
+    private static String shortStr(String text) {
+        String value = safe(text).replace("\r", " ").replace("\n", " ").trim();
+        if (value.length() > 120) return value.substring(0, 120) + "...";
+        return value;
     }
 
     private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z])");
@@ -529,10 +617,14 @@ public class RDFService {
 
     private static final class SearchRequest {
         final String url;
+        final String kind;
+        final String query;
         final Map<String, ?> params;
 
-        SearchRequest(String url, Map<String, ?> params) {
+        SearchRequest(String url, String kind, String query, Map<String, ?> params) {
             this.url = url;
+            this.kind = kind;
+            this.query = query;
             this.params = params;
         }
     }
