@@ -672,6 +672,13 @@ public class OpenMedTerminologyReportTest {
         PythonLauncherUtil.loadDotEnv(projectRoot.resolve(".env").toFile(), env);
 
         Path venvDir = projectRoot.resolve(".venv");
+        java.io.File venvFile = PythonLauncherUtil.ensureVirtualEnv(projectRoot, env);
+        java.io.File python = PythonLauncherUtil.pickPython(venvFile);
+        PythonLauncherUtil.ensureDependencies(
+                projectRoot.toFile(), env, python,
+                PythonLauncherUtil.parseDeps(
+                        "fastapi>=0.136.3, uvicorn[standard]>=0.48.0, transformers>=5.9.0, torch>=2.12.0"));
+
         if (venvDir.toFile().isDirectory()
                 && venvDir.resolve("bin").resolve("activate").toFile().exists()) {
             System.out.println("    venv found – launching service directly…");
@@ -689,12 +696,6 @@ public class OpenMedTerminologyReportTest {
             System.out.println("    " + (venvDir.toFile().isDirectory()
                     ? "venv incomplete (missing bin/activate) – running setup…"
                     : "No venv – running full setup…"));
-            java.io.File venvFile = PythonLauncherUtil.ensureVirtualEnv(projectRoot, env);
-            java.io.File python   = PythonLauncherUtil.pickPython(venvFile);
-            PythonLauncherUtil.ensureDependencies(
-                    projectRoot.toFile(), env, python,
-                    PythonLauncherUtil.parseDeps(
-                            "fastapi, uvicorn[standard], transformers, torch"));
             PythonLauncherUtil.launchAsync(projectRoot.toFile(), env,
                     "source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002");
         }

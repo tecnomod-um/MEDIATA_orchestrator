@@ -42,7 +42,8 @@ class RDFServiceTest {
         // Disable the Python-service health probe so that mock RestTemplate calls are
         // never short-circuited by the unreachable service guard in tests.
         ReflectionTestUtils.setField(svc, "pythonProbeEnabled", false);
-                ReflectionTestUtils.setField(svc, "snowstormApiUrl", base);
+        ReflectionTestUtils.setField(svc, "snowstormApiUrl", base);
+        ReflectionTestUtils.setField(svc, "snowstormApiBranch", "MAIN");
     }
 
     @Test
@@ -130,55 +131,38 @@ class RDFServiceTest {
         body.put("items", Arrays.asList(item1, item2));
 
         ResponseEntity<Map> ok = new ResponseEntity<>(body, HttpStatus.OK);
+        String expectedUrl = base + "/MAIN/concepts?term=q&activeFilter=true&termActive=true&limit=1000";
         when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
+                eq(expectedUrl),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
+                eq(Map.class)
         )).thenReturn(ok);
-        when(rest.exchange(
-                eq(base + "/concepts"),
-                eq(HttpMethod.GET),
-                eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(new ResponseEntity<>(Collections.emptyMap(), HttpStatus.OK));
 
         List<OntologyTermDTO> out = svc.getSNOMEDTermSuggestions(q);
         assertThat(out).hasSize(2);
         assertThat(out).extracting(OntologyTermDTO::getLabel)
                 .containsExactly("Foo", "456Only");
-
-        when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
-                eq(HttpMethod.GET),
-                eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
-        when(rest.exchange(
+        verify(rest, never()).exchange(
                 eq(base + "/concepts"),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
+                eq(Map.class)
+        );
+
+        when(rest.exchange(
+                eq(expectedUrl),
+                eq(HttpMethod.GET),
+                eq(null),
+                eq(Map.class)
         )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
 
         when(rest.exchange(
-                eq(base + "/browser/MAIN/descriptions"),
+                eq(expectedUrl),
                 eq(HttpMethod.GET),
                 eq(null),
-                eq(Map.class),
-                anyMap()
-        )).thenThrow(new RestClientException("nope"));
-        when(rest.exchange(
-                eq(base + "/concepts"),
-                eq(HttpMethod.GET),
-                eq(null),
-                eq(Map.class),
-                anyMap()
+                eq(Map.class)
         )).thenThrow(new RestClientException("nope"));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
     }

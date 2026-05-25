@@ -72,12 +72,43 @@ public class PythonLauncherUtil {
         runBash(cwd, env, "source " + venvBin.getParentFile().getAbsolutePath() + "/activate && pip install --upgrade pip");
 
         for (String dep : deps) {
-            String check = "source " + venvBin.getParentFile().getAbsolutePath() + "/activate && pip show " + dep;
-            if (!runBashQuiet(cwd, env, check)) {
-                logger.info("Installing missing dependency '{}'", dep);
-                runBash(cwd, env, "source " + venvBin.getParentFile().getAbsolutePath() + "/activate && pip install " + dep);
+            String spec = dep == null ? "" : dep.trim();
+            if (spec.isEmpty()) continue;
+
+            String packageName = packageNameFromRequirement(spec);
+            boolean hasVersionConstraint = hasVersionConstraint(spec);
+            String check = "source " + venvBin.getParentFile().getAbsolutePath()
+                    + "/activate && pip show " + shellQuote(packageName);
+            if (hasVersionConstraint || !runBashQuiet(cwd, env, check)) {
+                logger.info("Ensuring Python dependency '{}'", spec);
+                runBash(cwd, env, "source " + venvBin.getParentFile().getAbsolutePath()
+                        + "/activate && pip install --upgrade " + shellQuote(spec));
             }
         }
+    }
+
+    private static boolean hasVersionConstraint(String requirement) {
+        return requirement.contains("<")
+                || requirement.contains(">")
+                || requirement.contains("=")
+                || requirement.contains("~")
+                || requirement.contains("!");
+    }
+
+    private static String packageNameFromRequirement(String requirement) {
+        String trimmed = requirement.trim();
+        int end = trimmed.length();
+        for (char marker : new char[]{'[', '<', '>', '=', '~', '!'}) {
+            int idx = trimmed.indexOf(marker);
+            if (idx >= 0 && idx < end) {
+                end = idx;
+            }
+        }
+        return trimmed.substring(0, end).trim();
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     public static void launchAsync(File cwd, Map<String, String> env, String uvicornCmd) {

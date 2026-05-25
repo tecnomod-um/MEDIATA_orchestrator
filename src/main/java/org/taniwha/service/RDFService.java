@@ -8,6 +8,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -28,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -52,6 +54,9 @@ public class RDFService {
 
     @Value("${snowstorm.api.url:http://localhost:9100}")
     private String snowstormApiUrl;
+
+    @Value("${snowstorm.api.branch:MAIN}")
+    private String snowstormApiBranch;
 
     @Value("${rdfbuilder.healthUrl:${rdfbuilder.service.url}/types}")
     private String pythonHealthUrl;
@@ -321,12 +326,14 @@ public class RDFService {
     private List<OntologyTermDTO> executeSnowstormSearch(SearchRequest request) {
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         try {
+            String url = request.toUrl();
+            logger.info("[RDFService] SNOMED lookup term='{}' via concepts -> {}",
+                    request.params.get("term"), url);
             ResponseEntity<Map> response = restTemplate.exchange(
-                    request.url,
+                    url,
                     HttpMethod.GET,
                     null,
-                    Map.class,
-                    request.params
+                    Map.class
             );
             if (!response.getStatusCode().is2xxSuccessful()) {
                 return Collections.emptyList();
@@ -499,27 +506,38 @@ public class RDFService {
         int tokenCount = query.isBlank() ? 0 : query.split("\\s+").length;
         int expandedLimit = tokenCount <= 1 ? 1000 : Math.min(Math.max(12 * 3, 20), 100);
 
-        List<SearchRequest> requests = new ArrayList<>(2);
-        requests.add(new SearchRequest(
-                snowstormApiUrl + "/browser/MAIN/descriptions",
-                Map.of(
-                        "term", query,
-                        "active", "true",
-                        "conceptActive", "true",
-                        "groupByConcept", "true",
-                        "limit", String.valueOf(expandedLimit)
-                )
-        ));
-        requests.add(new SearchRequest(
-                snowstormApiUrl + "/concepts",
-                Map.of(
-                        "term", query,
-                        "activeFilter", "true",
-                        "termActive", "true",
-                        "limit", String.valueOf(expandedLimit)
-                )
-        ));
+        List<SearchRequest> requests = new ArrayList<>(1);
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("term", query);
+        params.put("activeFilter", "true");
+        params.put("termActive", "true");
+        params.put("limit", String.valueOf(expandedLimit));
+
+        requests.add(new SearchRequest(snowstormConceptsUrl(), params));
         return requests;
+    }
+
+    private String snowstormConceptsUrl() {
+        String baseUrl = safe(snowstormApiUrl).trim();
+        while (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+
+        String branch = safe(snowstormApiBranch).trim();
+        if (branch.isBlank()) {
+            branch = "MAIN";
+        }
+        while (branch.startsWith("/")) {
+            branch = branch.substring(1);
+        }
+        while (branch.endsWith("/")) {
+            branch = branch.substring(0, branch.length() - 1);
+        }
+        if (branch.isBlank()) {
+            branch = "MAIN";
+        }
+
+        return baseUrl + "/" + branch + "/concepts";
     }
 
     private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z])");
@@ -534,6 +552,12 @@ public class RDFService {
         SearchRequest(String url, Map<String, ?> params) {
             this.url = url;
             this.params = params;
+        }
+
+        String toUrl() {
+            UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(url);
+            params.forEach(builder::queryParam);
+            return builder.encode().toUriString();
         }
     }
 }
