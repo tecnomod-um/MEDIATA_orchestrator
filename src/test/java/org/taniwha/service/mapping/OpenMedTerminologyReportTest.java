@@ -674,10 +674,12 @@ public class OpenMedTerminologyReportTest {
         Path venvDir = projectRoot.resolve(".venv");
         java.io.File venvFile = PythonLauncherUtil.ensureVirtualEnv(projectRoot, env);
         java.io.File python = PythonLauncherUtil.pickPython(venvFile);
+        // Do not force-install torch here: the OpenMed service has a fallback path
+        // and the live report must stay runnable on CI without multi-GB model deps.
         PythonLauncherUtil.ensureDependencies(
                 projectRoot.toFile(), env, python,
                 PythonLauncherUtil.parseDeps(
-                        "fastapi>=0.136.3, uvicorn[standard]>=0.48.0, transformers>=5.9.0, torch>=2.12.0"));
+                        "fastapi>=0.136.3, uvicorn[standard]>=0.48.0, transformers>=5.9.0"));
 
         if (venvDir.toFile().isDirectory()
                 && venvDir.resolve("bin").resolve("activate").toFile().exists()) {
