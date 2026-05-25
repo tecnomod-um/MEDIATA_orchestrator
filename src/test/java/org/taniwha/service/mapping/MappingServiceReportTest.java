@@ -2,7 +2,6 @@ package org.taniwha.service.mapping;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,7 +57,6 @@ import static org.junit.jupiter.api.Assertions.*;
     // Small batches so each HTTP call stays within the timeout.
     "mapping.service.description-batch-columns=2"
 })
-@EnabledIfEnvironmentVariable(named = "MEDIATA_RUN_LIVE_OPENMED_TESTS", matches = "true")
 public class MappingServiceReportTest {
 
     @Configuration

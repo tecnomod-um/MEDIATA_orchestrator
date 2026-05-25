@@ -7,7 +7,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,7 +96,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
         "spring.data.mongodb.auto-index-creation=false",
         "spring.main.allow-bean-definition-overriding=true"
 })
-@EnabledIfEnvironmentVariable(named = "MEDIATA_RUN_LIVE_OPENMED_TESTS", matches = "true")
 @DisplayName("OpenMed + Snowstorm – live terminology pipeline report test (actual model + real SNOMED lookup)")
 public class OpenMedTerminologyReportTest {
 

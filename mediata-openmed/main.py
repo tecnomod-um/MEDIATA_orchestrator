@@ -678,7 +678,7 @@ def _build_value_phrase(
       → "score 50 of 100 measuring Barthel index"
 
     col_label="Gender", v="1", no scale   (category code)
-      → "1 as a value of Gender"
+      → "value 1 as a value of Gender"
     """
     label = (col_label or "").strip()
 
@@ -690,7 +690,7 @@ def _build_value_phrase(
 
     # No scale bounds → may be a category code; use neutral phrasing
     if label:
-        return f"{v} as a value of {label}"
+        return f"value {v} as a value of {label}"
     return f"value {v}"
 
 
@@ -733,7 +733,7 @@ async def describe_batch(request: DescribeBatchRequest):
            ``"score {v} of {max} measuring {col_label}"``
         3. If the value is numeric **without** scale bounds (could be a category
            code), build a neutral value prompt and pass it to the generative LLM:
-           ``"{v} as a value of {col_label}"``
+           ``"value {v} as a value of {col_label}"``
         4. If the value is text/categorical, build a category prompt and pass it
            to the generative LLM: ``"{v} as a category of {col_label}"``
 
