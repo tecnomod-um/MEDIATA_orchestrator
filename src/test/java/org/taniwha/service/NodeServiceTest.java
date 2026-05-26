@@ -54,7 +54,6 @@ class NodeServiceTest {
         when(krb.getPrincipalName("1.2.3.4", "REALM")).thenReturn("p@REALM");
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/n1.keytab");
 
-        // Mock admin user for access grant
         User adminUser = new User(null, "admin", "pass", "admin@test.com",
                 Collections.emptyList(), new ArrayList<>());
         when(userRepo.findByUsername("admin")).thenReturn(adminUser);
@@ -68,7 +67,6 @@ class NodeServiceTest {
         verify(krb).createKeytab("p@REALM");
         assertThat(svc.getLastHeartbeat("n1")).isNotNull();
 
-        // Verify admin user was granted access
         verify(userRepo).findByUsername("admin");
         verify(userRepo).save(adminUser);
         assertThat(adminUser.getNodeIds()).contains(in);
@@ -231,7 +229,6 @@ class NodeServiceTest {
         svc.registerNode(node);
 
         verify(userRepo).findByUsername("admin");
-        // Should not save if node already in access list
         verify(userRepo, never()).save(any());
         assertThat(adminUser.getNodeIds()).hasSize(1);
     }
@@ -248,7 +245,6 @@ class NodeServiceTest {
         when(krb.createKeytab("p@REALM")).thenReturn("/tmp/test.keytab");
         when(userRepo.findByUsername("admin")).thenThrow(new RuntimeException("Database error"));
 
-        // Should not fail node registration
         String result = svc.registerNode(node);
 
         assertThat(result).isEqualTo("/tmp/test.keytab");

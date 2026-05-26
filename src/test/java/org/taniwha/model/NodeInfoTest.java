@@ -93,7 +93,6 @@ class NodeInfoTest {
                 "password123", "Test description",
                 "blue", "publicKey123");
 
-        // Test that we can create two nodes with same values
         assertEquals(node1.getNodeId(), node2.getNodeId());
         assertEquals(node1.getIp(), node2.getIp());
         assertEquals(node1.getName(), node2.getName());

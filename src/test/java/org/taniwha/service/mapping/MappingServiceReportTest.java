@@ -148,7 +148,7 @@ public class MappingServiceReportTest {
 
         @Bean
         public RDFService rdfService() {
-            // Mock RDFService to return realistic OntologyTermDTOs for SNOMED lookup.
+            // RDFService returns realistic OntologyTermDTOs for SNOMED lookup.
             // OntologyTermDTO(id, label, description, iri) – iri contains the SNOMED concept ID.
             RDFService mock = Mockito.mock(RDFService.class);
 
@@ -649,7 +649,6 @@ public class MappingServiceReportTest {
         System.out.println("Valid mappings: " + validatedMappings);
         System.out.println("================================\n");
         
-        // Assert that most mappings are valid
         assertTrue(validatedMappings > 0, "Should have at least some valid value mappings");
         if (totalValueMappings > 0) {
             double validRatio = (double) validatedMappings / totalValueMappings;
@@ -659,9 +658,7 @@ public class MappingServiceReportTest {
         }
     }
 
-    // -----------------------
     // Java 8 compatibility
-    // -----------------------
 
     private static byte[] readAllBytesCompat(Path p) throws IOException {
         InputStream in = null;

@@ -75,7 +75,6 @@ public class NodeService {
         grantAdminAccessToNode(nodeInfo);
 
         try {
-            // Create a Kerberos principal for the node
             kerberosService.createPrincipal(kerberosService.getPrincipalName(nodeInfo.getIp(), realm), rawPassword);
             return kerberosService.createKeytab(kerberosService.getPrincipalName(nodeInfo.getIp(), realm));
         } catch (KrbException e) {

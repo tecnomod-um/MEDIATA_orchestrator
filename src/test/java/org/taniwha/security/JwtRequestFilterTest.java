@@ -245,7 +245,6 @@ class JwtRequestFilterTest {
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
         verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
-        // After authentication failure, filter chain should NOT continue
         verify(filterChain, never()).doFilter(any(), any());
     }
 

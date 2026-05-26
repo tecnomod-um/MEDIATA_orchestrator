@@ -71,9 +71,7 @@ class ValueMappingBuilderTest {
         lenient().when(embeddingService.embedSingleValue("married")).thenReturn(VEC_MARRIED);
     }
 
-    // ------------------------------------------------------------------
     // Helper
-    // ------------------------------------------------------------------
 
     private EmbeddedColumn col(String nodeId, String fileName, String column,
                                String concept, String... rawValues) {
@@ -102,9 +100,7 @@ class ValueMappingBuilderTest {
         );
     }
 
-    // ------------------------------------------------------------------
     // Tests
-    // ------------------------------------------------------------------
 
     /**
      * Y and N appearing across two distinct files must produce two separate value buckets,

@@ -60,7 +60,6 @@ public class NodeManagementIT extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message", containsString("registered successfully")));
 
-        // Verify node was saved to database
         List<NodeInfo> nodes = nodeRepository.findAll();
         assertEquals(1, nodes.size());
         assertEquals("192.168.1.100", nodes.get(0).getIp());
@@ -104,7 +103,6 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
                 .andExpect(status().isOk());
 
-        // Verify node was removed
         assertFalse(nodeRepository.existsById(node.getNodeId()));
     }
 
@@ -142,7 +140,6 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .content(objectMapper.writeValueAsString(registerRequest)))
                 .andExpect(status().isOk());
 
-        // Verify registration
         NodeInfo registeredNode = nodeRepository.findByIp("192.168.1.200");
         assertNotNull(registeredNode);
         assertEquals("Lifecycle Node", registeredNode.getName());
@@ -168,7 +165,6 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
                 .andExpect(status().isOk());
 
-        // Verify deregistration
         assertFalse(nodeRepository.existsById(registeredNode.getNodeId()));
     }
 }

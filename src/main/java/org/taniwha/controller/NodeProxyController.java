@@ -26,7 +26,6 @@ import java.util.Enumeration;
 import java.util.Optional;
 import java.util.Set;
 
-// Acts as a proxy for trusted http-only nodes
 @RestController
 public class NodeProxyController {
 

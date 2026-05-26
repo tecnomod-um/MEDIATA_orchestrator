@@ -152,7 +152,6 @@ class KerberosServiceTest {
 
     @Test
     void testRequestSgt_Success() throws Exception {
-        // Create a valid encoded TGT ticket first
         TgtTicket mockTgt = mock(TgtTicket.class);
         Ticket mockTicket = mock(Ticket.class);
         when(mockTicket.encode()).thenReturn(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
@@ -180,10 +179,8 @@ class KerberosServiceTest {
         when(mockIdentityService.getIdentity("errorUser"))
                 .thenThrow(new KrbException("Identity service error"));
 
-        // Should not throw, should handle gracefully
         kerberosService.createPrincipal("errorUser", "password");
 
-        // Should still attempt to create since existence check failed
         verify(mockKdcServer, times(1)).createPrincipal("errorUser", "password");
     }
 }

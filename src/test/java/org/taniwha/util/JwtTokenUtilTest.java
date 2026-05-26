@@ -80,7 +80,6 @@ class JwtTokenUtilTest {
         String token = util.generateToken("user");
         Thread.sleep(10); // Wait for token to expire
 
-        // Should throw ExpiredJwtException when trying to validate
         assertThatThrownBy(() -> util.validateToken(token, "user"))
                 .isInstanceOf(ExpiredJwtException.class);
     }

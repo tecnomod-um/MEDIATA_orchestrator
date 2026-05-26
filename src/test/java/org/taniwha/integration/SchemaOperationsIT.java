@@ -42,7 +42,6 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
     void setUpSchema() {
         nodeRepository.deleteAll();
 
-        // Create a test node for schema operations
         testNode = new NodeInfo();
         testNode.setIp("192.168.1.50");
         testNode.setName("Schema Test Node");
@@ -112,7 +111,6 @@ public class SchemaOperationsIT extends BaseIntegrationTest {
     @Test
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void testDeleteSchema() throws Exception {
-        // Create schema to delete
         Map<String, Object> schemaData = new HashMap<>();
         schemaData.put("nodeIp", "192.168.1.50");
         schemaData.put("schemaName", "DeleteMe");

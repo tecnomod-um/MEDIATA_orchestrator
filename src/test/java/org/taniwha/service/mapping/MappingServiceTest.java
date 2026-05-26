@@ -67,7 +67,6 @@ class MappingServiceTest {
                 descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings
         );
 
-        // Setup default mock behavior - return deterministic embeddings (lenient for tests that don't use it)
         lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
             .thenAnswer(invocation -> {
                 String text = invocation.getArgument(0);
@@ -79,19 +78,15 @@ class MappingServiceTest {
                 return createDeterministicEmbedding(text, 384);
             });
 
-        // Setup default mock behavior for TerminologyService
         lenient().when(terminologyService.batchLookupTerminology(any()))
             .thenReturn(Collections.emptyMap());
 
-        // Setup default mock behavior for OpenMedTerminologyService
         lenient().when(openMedTerminologyService.batchSize()).thenReturn(5);
         lenient().when(openMedTerminologyService.inferBatch(any())).thenReturn(Collections.emptyList());
 
-        // Setup default mock behavior for DescriptionGenerator
         lenient().when(descriptionGenerator.generateEnrichmentBatchAsync(any()))
             .thenReturn(CompletableFuture.completedFuture(Collections.emptyMap()));
 
-        // Setup default mock behavior for ValueMappingBuilder
         lenient().when(valueMappingBuilder.buildValuesForConcept(any(), any(), any(), any()))
             .thenReturn(Collections.emptyList());
     }
@@ -144,7 +139,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should process the valid element, ignore nulls
     }
 
     @Test
@@ -161,7 +155,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should only process the valid column
     }
 
     // ==================== Single Column Tests ====================
@@ -253,7 +246,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should cluster similar columns together
     }
 
     @Test
@@ -269,7 +261,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should recognize these as the same concept and cluster them
     }
 
     // ==================== Value Type Detection Tests ====================
@@ -287,7 +278,6 @@ class MappingServiceTest {
         assertNotNull(result, "Result should not be null");
         assertFalse(result.isEmpty(), "Should create mapping");
         
-        // Verify the mapping was created
         Map<String, SuggestedMappingDTO> firstMapping = result.get(0);
         assertFalse(firstMapping.isEmpty(), "Mapping should have keys");
     }
@@ -317,7 +307,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should handle mixed integer/double values
     }
 
     // ==================== Schema-based Tests ====================
@@ -331,7 +320,6 @@ class MappingServiceTest {
             createElementFile("Gender", Arrays.asList("M", "F"), "file1.csv")
         ));
         
-        // Create a simple JSON schema
         String schema = "{\n" +
             "    \"type\": \"object\",\n" +
             "    \"properties\": {\n" +
@@ -350,7 +338,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should attempt to match columns to schema fields
     }
 
     @Test
@@ -616,7 +603,6 @@ class MappingServiceTest {
         ));
         req.setSchema("{ invalid json }");
         
-        // Should fall back to schema-less mode if schema is invalid
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
@@ -667,7 +653,7 @@ class MappingServiceTest {
         // "etiology isch hem" share no tokens and no abbreviation pair), so the two columns
         // would remain separate.
         //
-        // After the fix, char-n-gram value similarity provides the necessary structural evidence:
+        // Char-n-gram value similarity provides the necessary structural evidence:
         // "ischemic" contains the 3-gram "hem" (positions 3-5) and shares "isc"/"sch" with
         // "isch"; "hemorrhagic" starts with "hem".  ValueVectorUtil.build() runs with its real
         // implementation (it is a pure, dependency-free utility — no mock needed).
@@ -702,7 +688,7 @@ class MappingServiceTest {
         // Both are "total" rehabilitation scores, so PubMedBERT embeddings are close.
         // The bug was that "tot" (from "tot barthel") is a prefix of "total" (from "total motor"),
         // so the abbreviation check fired — ignoring that "barthel" has no match in "motor".
-        // After the fix, the multi-token prefix guard requires ALL other tokens to also match.
+        // The multi-token prefix guard requires all other tokens to also match.
         float[] sharedVec = new float[384];
         sharedVec[0] = 1.0f;
         lenient().when(embeddingService.embedColumnWithValues(any(String.class), any()))
@@ -833,7 +819,6 @@ class MappingServiceTest {
         assertNotNull(result, "Result should not be null");
         assertFalse(result.isEmpty(), "Should create mapping");
         
-        // Should recognize M/F and Male/Female as related gender concepts
     }
 
     @Test
@@ -848,7 +833,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should create mappings for numeric ranges
     }
 
     // ==================== Edge Cases ====================
@@ -901,7 +885,6 @@ class MappingServiceTest {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
         List<ColumnInFileDTO> elements = new ArrayList<>();
         
-        // Create 100 columns
         for (int i = 0; i < 100; i++) {
             elements.add(createElementFile("Column" + i, Arrays.asList("val1", "val2"), "file.csv"));
         }
@@ -910,7 +893,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should handle many columns without crashing
     }
 
     @Test
@@ -929,7 +911,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should handle high-cardinality columns
     }
 
     @Test
@@ -1031,7 +1012,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should recognize ID/Identifier and BP/BloodPressure as related
     }
 
     // ==================== File-based Tests ====================
@@ -1049,7 +1029,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should correctly track which columns come from which files
     }
 
     @Test
@@ -1065,18 +1044,16 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should handle duplicate column names
     }
 
     // ==================== Performance/Stress Tests ====================
 
     @Test
-    @DisplayName("Should handle large request without crashing")
+    @DisplayName("Large request returns mapping suggestions")
     void testLargeRequest() {
         MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
         List<ColumnInFileDTO> elements = new ArrayList<>();
         
-        // Create 50 diverse columns
         for (int i = 0; i < 50; i++) {
             String colName = "Column_" + i;
             List<String> values;
@@ -1094,7 +1071,6 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
-        // Should complete without errors
     }
 
     // ==================== Helper Methods ====================

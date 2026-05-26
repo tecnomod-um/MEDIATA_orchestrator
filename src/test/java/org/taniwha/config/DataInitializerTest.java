@@ -44,7 +44,6 @@ class DataInitializerTest {
 
     @Test
     void initDatabase_createsDefaultProject_whenNotExists() throws Exception {
-        // Arrange
         when(roleRepository.findByName(anyString())).thenReturn(new Role());
         User existingUser = new User(null, "admin", "password", "email@test.com", null, null);
         when(userRepository.findByUsername(anyString())).thenReturn(existingUser);
@@ -53,10 +52,8 @@ class DataInitializerTest {
         CommandLineRunner runner = dataInitializer.initDatabase(
                 roleRepository, userRepository, passwordEncoder, kerberosService, projectRepository);
 
-        // Act
         runner.run();
 
-        // Assert
         ArgumentCaptor<Project> projectCaptor = ArgumentCaptor.forClass(Project.class);
         verify(projectRepository).save(projectCaptor.capture());
 
@@ -68,7 +65,6 @@ class DataInitializerTest {
 
     @Test
     void initDatabase_doesNotCreateProject_whenAlreadyExists() throws Exception {
-        // Arrange
         when(roleRepository.findByName(anyString())).thenReturn(new Role());
         User existingUser = new User(null, "admin", "password", "email@test.com", null, null);
         when(userRepository.findByUsername(anyString())).thenReturn(existingUser);
@@ -80,16 +76,13 @@ class DataInitializerTest {
         CommandLineRunner runner = dataInitializer.initDatabase(
                 roleRepository, userRepository, passwordEncoder, kerberosService, projectRepository);
 
-        // Act
         runner.run();
 
-        // Assert
         verify(projectRepository, never()).save(any(Project.class));
     }
 
     @Test
     void initDatabase_createsRoles_whenNotExist() throws Exception {
-        // Arrange
         when(roleRepository.findByName(anyString())).thenReturn(null);
         User existingUser = new User(null, "admin", "password", "email@test.com", null, null);
         when(userRepository.findByUsername(anyString())).thenReturn(existingUser);
@@ -98,10 +91,8 @@ class DataInitializerTest {
         CommandLineRunner runner = dataInitializer.initDatabase(
                 roleRepository, userRepository, passwordEncoder, kerberosService, projectRepository);
 
-        // Act
         runner.run();
 
-        // Assert
         ArgumentCaptor<Role> roleCaptor = ArgumentCaptor.forClass(Role.class);
         verify(roleRepository, times(2)).save(roleCaptor.capture());
 
@@ -112,7 +103,6 @@ class DataInitializerTest {
 
     @Test
     void initDatabase_createsAdminUser_whenNotExists() throws Exception {
-        // Arrange
         Role adminRole = new Role();
         adminRole.setName("ROLE_ADMIN");
 
@@ -127,10 +117,8 @@ class DataInitializerTest {
         CommandLineRunner runner = dataInitializer.initDatabase(
                 roleRepository, userRepository, passwordEncoder, kerberosService, projectRepository);
 
-        // Act
         runner.run();
 
-        // Assert
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
 
@@ -142,7 +130,6 @@ class DataInitializerTest {
 
     @Test
     void initDatabase_handlesKerberosException_gracefully() throws Exception {
-        // Arrange
         Role adminRole = new Role();
         adminRole.setName("ROLE_ADMIN");
 
@@ -158,10 +145,8 @@ class DataInitializerTest {
         CommandLineRunner runner = dataInitializer.initDatabase(
                 roleRepository, userRepository, passwordEncoder, kerberosService, projectRepository);
 
-        // Act - should not throw exception
         runner.run();
 
-        // Assert - user should still be saved
         verify(userRepository).save(any(User.class));
     }
 }
