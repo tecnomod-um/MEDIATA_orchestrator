@@ -45,6 +45,7 @@ class RDFServiceTest {
         // never short-circuited by the unreachable service guard in tests.
         ReflectionTestUtils.setField(svc, "pythonProbeEnabled", false);
         ReflectionTestUtils.setField(svc, "snowstormApiUrl", base);
+        ReflectionTestUtils.setField(svc, "snowstormApiBranch", "MAIN");
     }
 
     @Test

@@ -244,6 +244,7 @@ class TestNumericValues:
         assert all(d for d in descs), "Each numeric value should have a non-empty description"
         # Each description must contain the numeric value
         for vd in data["columns"][0]["values"]:
+            assert vd["d"][0].isupper(), f"Expected sentence-style description, got: {vd['d']!r}"
             assert vd["v"] in vd["d"], (
                 f"Expected value {vd['v']!r} to appear in description, got: {vd['d']!r}"
             )
@@ -271,6 +272,7 @@ class TestNumericValues:
         }])
         descs = {vd["v"]: vd["d"] for vd in data["columns"][0]["values"]}
         for val_str, desc in descs.items():
+            assert desc[0].isupper(), f"Expected sentence-style description, got: {desc!r}"
             assert val_str in desc, (
                 f"Expected value {val_str!r} in description, got: {desc!r}"
             )

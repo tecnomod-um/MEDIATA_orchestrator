@@ -114,6 +114,8 @@ public abstract class BaseIntegrationTest {
         // Disable external service launchers in integration tests
         registry.add("snowstorm.enabled", () -> "false");
         registry.add("python.launcher.enabled", () -> "false");
+        registry.add("fhir.launcher.enabled", () -> "false");
+        registry.add("openmed.launcher.enabled", () -> "false");
         // Disable JWT authentication in tests
         registry.add("jwt.filter.enabled", () -> "false");
     }

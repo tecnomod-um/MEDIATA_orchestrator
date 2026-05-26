@@ -39,7 +39,7 @@ public class OpenMedLauncherConfig {
     @Value("${openmed.path:mediata-openmed}")
     String projectRoot;
 
-    @Value("${openmed.dependencies:fastapi, uvicorn[standard], transformers, torch}")
+    @Value("${openmed.dependencies:fastapi>=0.136.3, uvicorn[standard]>=0.48.0, transformers>=5.9.0, torch>=2.12.0}")
     String dependencies;
 
     @Value("${openmed.port:8002}")
