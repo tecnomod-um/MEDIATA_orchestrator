@@ -6,18 +6,26 @@ echo "MEDIATA Orchestrator - Docker Build Script"
 echo "================================================"
 echo
 
+sed_in_place() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
 fix_crlf() {
   local f="$1"
   [[ -f "$f" ]] || return 0
-  sed -i 's/\r$//' "$f" 2>/dev/null || true
+  sed_in_place 's/\r$//' "$f" 2>/dev/null || true
 }
 
 normalize_env_file() {
   local f="$1"
   [[ -f "$f" ]] || return 0
   fix_crlf "$f"
-  sed -i 's/^[[:space:]]\+//' "$f" 2>/dev/null || true
-  sed -i -E 's/^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*/\1=/' "$f" 2>/dev/null || true
+  sed_in_place -E 's/^[[:space:]]+//' "$f" 2>/dev/null || true
+  sed_in_place -E 's/^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*/\1=/' "$f" 2>/dev/null || true
 }
 
 dc() {
