@@ -105,7 +105,11 @@ if [[ "$ENABLE_FHIR_API" == "true" ]]; then
 fi
 
 echo "Starting Docker Compose..."
-dc "${profiles[@]}" up -d --build
+if (( ${#profiles[@]} > 0 )); then
+  dc "${profiles[@]}" up -d --build
+else
+  dc up -d --build
+fi
 
 echo
 echo "================================================"
