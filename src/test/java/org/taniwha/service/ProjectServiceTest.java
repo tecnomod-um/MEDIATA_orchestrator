@@ -61,21 +61,36 @@ class ProjectServiceTest {
         p1.setName("Project 1");
         p1.setDescription("Description 1");
         p1.setBadge("badge1");
+        p1.setNodeIds(Arrays.asList("n1", "inactive-node"));
 
         Project p2 = new Project();
         p2.setId("p2");
         p2.setName("Project 2");
         p2.setDescription("Description 2");
         p2.setBadge("badge2");
+        p2.setNodeIds(Collections.emptyList());
         p2.setImageBytes("test-image".getBytes());
         p2.setImageContentType("image/png");
 
         when(projectRepo.findAll()).thenReturn(Arrays.asList(p1, p2));
         when(userRepo.count()).thenReturn(5L);
-        when(nodeRepo.count()).thenReturn(3L);
         Instant now = Instant.now();
         when(nodeService.getLastNodeListAccess()).thenReturn(now);
-        when(nodeRepo.findAll()).thenReturn(Collections.emptyList());
+
+        NodeInfo activeNode = new NodeInfo();
+        activeNode.setNodeId("n1");
+        activeNode.setActive(true);
+        NodeInfo inactiveNode = new NodeInfo();
+        inactiveNode.setNodeId("inactive-node");
+        inactiveNode.setActive(false);
+        when(nodeRepo.findAllById(Arrays.asList("n1", "inactive-node")))
+                .thenReturn(Arrays.asList(activeNode, inactiveNode));
+
+        NodeMetadata metadata = new NodeMetadata();
+        NodeMetadata.Dataset ds1 = new NodeMetadata.Dataset();
+        NodeMetadata.Dataset ds2 = new NodeMetadata.Dataset();
+        metadata.setDataset(Arrays.asList(ds1, ds2));
+        when(nodeAccessService.getMetadata("n1")).thenReturn(metadata);
 
         List<ProjectDTO> result = svc.listProjects();
 
@@ -86,26 +101,33 @@ class ProjectServiceTest {
         assertThat(dto1.getName()).isEqualTo("Project 1");
         assertThat(dto1.getDescription()).isEqualTo("Description 1");
         assertThat(dto1.getBadge()).isEqualTo("badge1");
+        assertThat(dto1.getNodeIds()).containsExactly("n1", "inactive-node");
         assertThat(dto1.getMembersCount()).isEqualTo(5);
-        assertThat(dto1.getNodesCount()).isEqualTo(3);
+        assertThat(dto1.getNodesCount()).isEqualTo(1);
+        assertThat(dto1.getDcatCount()).isEqualTo(2);
         assertThat(dto1.getLastAccess()).isEqualTo(now.toString());
         assertThat(dto1.getImageUrl()).isNull();
 
         ProjectDTO dto2 = result.get(1);
         assertThat(dto2.getId()).isEqualTo("p2");
+        assertThat(dto2.getNodesCount()).isZero();
+        assertThat(dto2.getDcatCount()).isZero();
         assertThat(dto2.getImageUrl()).startsWith("data:image/png;base64,");
     }
 
     @Test
-    void listProjects_computesDcatCount() {
-        when(projectRepo.findAll()).thenReturn(Collections.emptyList());
+    void listProjects_computesDcatCountForProjectNodes() {
+        Project project = new Project();
+        project.setId("p1");
+        project.setName("Project");
+        project.setNodeIds(Collections.singletonList("n1"));
+        when(projectRepo.findAll()).thenReturn(Collections.singletonList(project));
         when(userRepo.count()).thenReturn(0L);
-        when(nodeRepo.count()).thenReturn(1L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         NodeInfo node = new NodeInfo();
         node.setNodeId("n1");
-        when(nodeRepo.findAll()).thenReturn(Collections.singletonList(node));
+        when(nodeRepo.findAllById(Collections.singletonList("n1"))).thenReturn(Collections.singletonList(node));
 
         NodeMetadata metadata = new NodeMetadata();
         NodeMetadata.Dataset ds1 = new NodeMetadata.Dataset();
@@ -117,8 +139,24 @@ class ProjectServiceTest {
 
         List<ProjectDTO> result = svc.listProjects();
 
-        // Even though no projects, the dcat count should be computed
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getNodesCount()).isEqualTo(1);
+        assertThat(result.get(0).getDcatCount()).isEqualTo(2);
         verify(nodeAccessService).getMetadata("n1");
+    }
+
+    @Test
+    void listProjects_usesStratifFallbackImageWhenNoStoredImageExists() {
+        Project project = new Project();
+        project.setId("stratif");
+        project.setName("STRATIF-AI");
+        when(projectRepo.findAll()).thenReturn(Collections.singletonList(project));
+        when(userRepo.count()).thenReturn(0L);
+
+        List<ProjectDTO> result = svc.listProjects();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getImageUrl()).isEqualTo("/stratif.png");
     }
 
     @Test
@@ -127,18 +165,22 @@ class ProjectServiceTest {
         req.setName("New Project");
         req.setDescription("New Description");
         req.setBadge("new-badge");
+        req.setNodeIds(Arrays.asList("n1", "n1", " "));
 
         Project saved = new Project();
         saved.setId("generated-id");
         saved.setName("New Project");
         saved.setDescription("New Description");
         saved.setBadge("new-badge");
+        saved.setNodeIds(Collections.singletonList("n1"));
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
         when(userRepo.count()).thenReturn(10L);
-        when(nodeRepo.count()).thenReturn(5L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
-        when(nodeRepo.findAll()).thenReturn(Collections.emptyList());
+
+        NodeInfo node = new NodeInfo();
+        node.setNodeId("n1");
+        when(nodeRepo.findAllById(Collections.singletonList("n1"))).thenReturn(Collections.singletonList(node));
 
         ProjectDTO result = svc.saveProject(req);
 
@@ -146,14 +188,16 @@ class ProjectServiceTest {
         assertThat(result.getName()).isEqualTo("New Project");
         assertThat(result.getDescription()).isEqualTo("New Description");
         assertThat(result.getBadge()).isEqualTo("new-badge");
+        assertThat(result.getNodeIds()).containsExactly("n1");
         assertThat(result.getMembersCount()).isEqualTo(10);
-        assertThat(result.getNodesCount()).isEqualTo(5);
+        assertThat(result.getNodesCount()).isEqualTo(1);
 
         ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
         verify(projectRepo).save(captor.capture());
         Project captured = captor.getValue();
         assertThat(captured.getName()).isEqualTo("New Project");
         assertThat(captured.getId()).isNull(); // ID should be null for new projects
+        assertThat(captured.getNodeIds()).containsExactly("n1");
     }
 
     @Test
@@ -172,9 +216,7 @@ class ProjectServiceTest {
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
         when(userRepo.count()).thenReturn(10L);
-        when(nodeRepo.count()).thenReturn(5L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
-        when(nodeRepo.findAll()).thenReturn(Collections.emptyList());
 
         ProjectDTO result = svc.saveProject(req);
 
@@ -207,9 +249,7 @@ class ProjectServiceTest {
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
         when(userRepo.count()).thenReturn(0L);
-        when(nodeRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
-        when(nodeRepo.findAll()).thenReturn(Collections.emptyList());
 
         ProjectDTO result = svc.saveProject(req);
 
@@ -239,9 +279,7 @@ class ProjectServiceTest {
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
         when(userRepo.count()).thenReturn(0L);
-        when(nodeRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
-        when(nodeRepo.findAll()).thenReturn(Collections.emptyList());
 
         ProjectDTO result = svc.saveProject(req);
 

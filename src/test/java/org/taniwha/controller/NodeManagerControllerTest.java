@@ -86,6 +86,7 @@ class NodeManagerControllerTest {
                         .content(om.writeValueAsString(dto)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Node registered successfully"))
+                .andExpect(jsonPath("$.nodeId").value("n1"))
                 .andExpect(jsonPath("$.keytab")
                         .value(Base64.getEncoder().encodeToString(bytes)));
 

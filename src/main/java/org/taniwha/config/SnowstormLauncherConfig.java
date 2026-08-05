@@ -174,6 +174,8 @@ public class SnowstormLauncherConfig {
         cmd.add("unless-stopped");
         cmd.add("--network");
         cmd.add(networkName);
+        cmd.add("-e");
+        cmd.add("JAVA_TOOL_OPTIONS=--add-opens=java.base/java.util=ALL-UNNAMED");
         cmd.add("-p");
         cmd.add(snowstormHostPort + ":" + snowstormContainerPort);
         cmd.add(snowstormImage);

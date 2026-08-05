@@ -6,11 +6,11 @@ import lombok.Setter;
 @Setter
 @Getter
 public class SystemCapabilitiesDTO {
-    private boolean semanticAlignment;
+    private boolean semanticIntegration;
     private boolean hl7fhir;
 
-    public SystemCapabilitiesDTO(boolean semanticAlignment, boolean hl7fhir) {
-        this.semanticAlignment = semanticAlignment;
+    public SystemCapabilitiesDTO(boolean semanticIntegration, boolean hl7fhir) {
+        this.semanticIntegration = semanticIntegration;
         this.hl7fhir = hl7fhir;
     }
 }

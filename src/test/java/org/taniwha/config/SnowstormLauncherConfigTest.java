@@ -67,6 +67,7 @@ class SnowstormLauncherConfigTest {
         ));
         assertTrue(runner.commands.stream().anyMatch(command ->
                 command.contains("docker run -d --name snow")
+                        && command.contains("JAVA_TOOL_OPTIONS=--add-opens=java.base/java.util=ALL-UNNAMED")
                         && command.contains("-p 19100:8080")
                         && command.contains("snow-image")
                         && command.contains("--elasticsearch.urls=http://es:9200")

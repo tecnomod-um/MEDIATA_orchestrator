@@ -7,19 +7,25 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.ResourceAccessException;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
+import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
 import org.taniwha.service.TrustedNodeSignatureService;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +36,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -43,6 +51,7 @@ class NodeProxyControllerIT {
     private HttpServer httpServer;
     private MockMvc mockMvc;
     private NodeService nodeService;
+    private NodeAccessService nodeAccessService;
     private NodeInfo nodeInfo;
     private final List<CapturedRequest> capturedRequests = new ArrayList<>();
 
@@ -61,16 +70,19 @@ class NodeProxyControllerIT {
 
         nodeService = mock(NodeService.class);
         when(nodeService.findNodeById("node1")).thenReturn(nodeInfo);
+        nodeAccessService = mock(NodeAccessService.class);
+        when(nodeAccessService.checkUserAccess("node1", "central-token")).thenReturn(true);
 
         TrustedNodeProxyConfig trustedNodeConfigService = new TrustedNodeProxyConfig(configFile.toString());
         TrustedNodeSignatureService trustedNodeMessageSecurityService = new TrustedNodeSignatureService();
 
         RestTemplateConfig restTemplateConfig = mock(RestTemplateConfig.class);
-        when(restTemplateConfig.getRestTemplate()).thenReturn(new RestTemplate());
+        when(restTemplateConfig.getNodeProxyRestTemplate()).thenReturn(new RestTemplate());
 
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new NodeProxyController(
                         nodeService,
+                        nodeAccessService,
                         trustedNodeConfigService,
                         trustedNodeMessageSecurityService,
                         restTemplateConfig
@@ -131,7 +143,8 @@ class NodeProxyControllerIT {
 
     @Test
     void proxyNodeRequest_returnsNotFoundWhenNodeDoesNotExist() throws Exception {
-        MvcResult result = mockMvc.perform(get("/nodes/proxy/missing/taniwha/api/files/datasets"))
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/missing/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer central-token"))
                 .andExpect(status().isNotFound())
                 .andExpect(header().string("X-Node-Proxy", "true"))
                 .andReturn();
@@ -144,14 +157,73 @@ class NodeProxyControllerIT {
     void proxyNodeRequest_returnsForbiddenWhenHttpNodeIsNotTrusted() throws Exception {
         when(nodeService.findNodeById("untrusted"))
                 .thenReturn(new NodeInfo("untrusted", "http://untrusted.example:8080", "Node", null, "", "#fff", null));
+        when(nodeAccessService.checkUserAccess("untrusted", "central-token")).thenReturn(true);
 
-        MvcResult result = mockMvc.perform(get("/nodes/proxy/untrusted/taniwha/api/files/datasets"))
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/untrusted/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer central-token"))
                 .andExpect(status().isForbidden())
                 .andExpect(header().string("X-Node-Proxy", "true"))
                 .andReturn();
 
         assertEquals("Proxying is not enabled for this node", result.getResponse().getContentAsString());
         assertTrue(capturedRequests.isEmpty());
+    }
+
+    @Test
+    void proxyNodeRequest_rejectsAuthenticatedUserWithoutNodeAccess() throws Exception {
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer other-token"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string("X-Node-Proxy", "true"))
+                .andReturn();
+
+        assertEquals("Node access denied", result.getResponse().getContentAsString());
+        assertTrue(capturedRequests.isEmpty());
+    }
+
+    @Test
+    void proxyNodeRequest_requiresAuthentication() throws Exception {
+        MvcResult result = mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/files/datasets"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("X-Node-Proxy", "true"))
+                .andReturn();
+
+        assertEquals("Authentication required", result.getResponse().getContentAsString());
+        assertTrue(capturedRequests.isEmpty());
+    }
+
+    @Test
+    void proxyNodeRequest_isolatesTimeoutAndServesTheNextRequest() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(
+                any(URI.class), any(HttpMethod.class), any(HttpEntity.class), eq(byte[].class)
+        )).thenThrow(new ResourceAccessException(
+                "Read timed out", new SocketTimeoutException("Read timed out")
+        )).thenReturn(ResponseEntity.ok("[]".getBytes(StandardCharsets.UTF_8)));
+
+        RestTemplateConfig restTemplateConfig = mock(RestTemplateConfig.class);
+        when(restTemplateConfig.getNodeProxyRestTemplate()).thenReturn(restTemplate);
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                new NodeProxyController(
+                        nodeService,
+                        nodeAccessService,
+                        new TrustedNodeProxyConfig(tempDir.resolve("trusted-servers.config").toString()),
+                        new TrustedNodeSignatureService(),
+                        restTemplateConfig
+                )
+        ).build();
+
+        mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token"))
+                .andExpect(status().isGatewayTimeout())
+                .andExpect(header().string("X-Node-Proxy", "true"));
+
+        mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Node-Proxy", "true"));
     }
 
     private void handleRequest(HttpExchange exchange) throws IOException {

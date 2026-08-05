@@ -4,11 +4,11 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class AlignmentResponseDTOTest {
+class SemanticIntegrationResponseDTOTest {
 
     @Test
     void testConstructorAndGetters() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(
                 true,
                 "CSV saved successfully",
                 true,
@@ -23,7 +23,7 @@ class AlignmentResponseDTOTest {
 
     @Test
     void testSetters() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(false, "", false, "");
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(false, "", false, "");
 
         dto.setCsvSaved(true);
         dto.setCsvMessage("CSV updated");
@@ -38,7 +38,7 @@ class AlignmentResponseDTOTest {
 
     @Test
     void testFailureScenario() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(
                 false,
                 "Failed to save CSV",
                 false,
@@ -53,7 +53,7 @@ class AlignmentResponseDTOTest {
 
     @Test
     void testPartialSuccess() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(
                 true,
                 "CSV saved",
                 false,
@@ -66,7 +66,7 @@ class AlignmentResponseDTOTest {
 
     @Test
     void testNullMessages() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(true, null, true, null);
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(true, null, true, null);
 
         assertTrue(dto.isCsvSaved());
         assertTrue(dto.isRdfGenerated());
@@ -76,7 +76,7 @@ class AlignmentResponseDTOTest {
 
     @Test
     void testUpdateMessages() {
-        AlignmentResponseDTO dto = new AlignmentResponseDTO(true, "Initial", true, "Initial");
+        SemanticIntegrationResponseDTO dto = new SemanticIntegrationResponseDTO(true, "Initial", true, "Initial");
 
         dto.setCsvMessage("Updated CSV message");
         dto.setRdfMessage("Updated RDF message");

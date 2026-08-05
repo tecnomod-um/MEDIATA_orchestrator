@@ -7,15 +7,23 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.taniwha.model.NodeInfo;
 import org.taniwha.model.Project;
 import org.taniwha.model.Role;
 import org.taniwha.model.User;
+import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.ProjectRepository;
 import org.taniwha.repository.RoleRepository;
 import org.taniwha.repository.UserRepository;
 import org.taniwha.service.KerberosService;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 // Populates the platform with default values
 @Configuration
@@ -29,13 +37,23 @@ public class DataInitializer {
     private static final String DEFAULT_PROJECT_NAME = "Default Project";
     private static final String DEFAULT_PROJECT_DESCRIPTION = "Default project created on initialization";
     private static final String DEFAULT_PROJECT_BADGE = "default";
+    private static final String STRATIF_PROJECT_NAME = "STRATIF-AI";
+    private static final String STRATIF_PROJECT_DESCRIPTION = "STRATIF-AI deployment workspace";
+    private static final String STRATIF_PROJECT_BADGE = "Active";
+    private static final String DEFAULT_LOCAL_NODE_NAME = "Default Local";
+    private static final List<String> DEFAULT_LOCAL_NODE_HOSTS = List.of(
+            "localhost",
+            "127.0.0.1",
+            "mediata-default-node.local"
+    );
 
     @Bean
     CommandLineRunner initDatabase(RoleRepository roleRepository,
                                    UserRepository userRepository,
                                    PasswordEncoder passwordEncoder,
                                    KerberosService kerberosService,
-                                   ProjectRepository projectRepository) {
+                                   ProjectRepository projectRepository,
+                                   NodeRepository nodeRepository) {
         return args -> {
             logger.info("Initializing default data...");
 
@@ -43,8 +61,10 @@ public class DataInitializer {
             createRoleIfNotExists(roleRepository, "ROLE_USER");
 
             createDefaultAdminIfNotExists(userRepository, roleRepository, passwordEncoder, kerberosService);
-            
+
             createDefaultProjectIfNotExists(projectRepository);
+            syncDefaultProjectNodes(projectRepository, nodeRepository);
+            createStratifProject(projectRepository, nodeRepository);
 
             logger.info("Data initialization complete");
         };
@@ -116,5 +136,106 @@ public class DataInitializer {
 
         projectRepository.save(defaultProject);
         logger.info("Created default project: '{}'", DEFAULT_PROJECT_NAME);
+    }
+
+    private void syncDefaultProjectNodes(ProjectRepository projectRepository, NodeRepository nodeRepository) {
+        Project project = projectRepository.findByName(DEFAULT_PROJECT_NAME);
+        if (project == null) {
+            return;
+        }
+
+        Set<String> nodeIds = getProjectNodeIds(project);
+        int originalSize = nodeIds.size();
+        nodeRepository.findAll().stream()
+                .filter(node -> node != null && node.getNodeId() != null && (node.getActive() == null || node.getActive()))
+                .filter(this::isDefaultLocalNode)
+                .map(node -> node.getNodeId().trim())
+                .filter(nodeId -> !nodeId.isEmpty())
+                .forEach(nodeIds::add);
+
+        if (nodeIds.size() != originalSize) {
+            project.setNodeIds(new ArrayList<>(nodeIds));
+            projectRepository.save(project);
+        }
+    }
+
+    private void createStratifProject(ProjectRepository projectRepository, NodeRepository nodeRepository) {
+        Project project = projectRepository.findByName(STRATIF_PROJECT_NAME);
+        boolean isNew = project == null;
+        if (isNew) {
+            project = new Project();
+            project.setName(STRATIF_PROJECT_NAME);
+            project.setDescription(STRATIF_PROJECT_DESCRIPTION);
+            project.setBadge(STRATIF_PROJECT_BADGE);
+        }
+
+        if (project.getDescription() == null || project.getDescription().trim().isEmpty()) {
+            project.setDescription(STRATIF_PROJECT_DESCRIPTION);
+        }
+        if (project.getBadge() == null || project.getBadge().trim().isEmpty()) {
+            project.setBadge(STRATIF_PROJECT_BADGE);
+        }
+
+        Set<String> defaultNodeIds = getProjectNodeIds(projectRepository.findByName(DEFAULT_PROJECT_NAME));
+        Set<String> nodeIds = new LinkedHashSet<>(project.getNodeIds() != null ? project.getNodeIds() : Collections.emptyList());
+        nodeIds.removeAll(defaultNodeIds);
+        nodeRepository.findAll().stream()
+                .filter(node -> node != null && node.getNodeId() != null && (node.getActive() == null || node.getActive()))
+                .filter(node -> !isDefaultLocalNode(node))
+                .map(node -> node.getNodeId().trim())
+                .filter(nodeId -> !nodeId.isEmpty())
+                .filter(nodeId -> !defaultNodeIds.contains(nodeId))
+                .forEach(nodeIds::add);
+
+        Set<String> defaultLocalNodeIds = nodeRepository.findAll().stream()
+                .filter(this::isDefaultLocalNode)
+                .map(node -> node.getNodeId() == null ? "" : node.getNodeId().trim())
+                .filter(nodeId -> !nodeId.isEmpty())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        nodeIds.removeAll(defaultLocalNodeIds);
+
+        project.setNodeIds(new ArrayList<>(nodeIds));
+        projectRepository.save(project);
+
+        if (isNew) {
+            logger.info("Created project: '{}'", STRATIF_PROJECT_NAME);
+        } else {
+            logger.info("Updated project '{}' with {} node(s)", STRATIF_PROJECT_NAME, project.getNodeIds().size());
+        }
+    }
+
+    private Set<String> getProjectNodeIds(Project project) {
+        if (project == null || project.getNodeIds() == null) {
+            return Collections.emptySet();
+        }
+
+        return project.getNodeIds().stream()
+                .filter(nodeId -> nodeId != null && !nodeId.trim().isEmpty())
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private boolean isDefaultLocalNode(NodeInfo node) {
+        if (node == null) {
+            return false;
+        }
+        String name = node.getName();
+        if (name != null && DEFAULT_LOCAL_NODE_NAME.equalsIgnoreCase(name.trim())) {
+            return true;
+        }
+
+        String serviceUrl = node.getServiceUrl();
+        if (serviceUrl == null || serviceUrl.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            URI uri = new URI(serviceUrl.trim());
+            String host = uri.getHost();
+            return host != null && DEFAULT_LOCAL_NODE_HOSTS.stream()
+                    .anyMatch(defaultHost -> defaultHost.equalsIgnoreCase(host));
+        } catch (URISyntaxException e) {
+            logger.debug("Could not parse node service URL '{}' while checking default project assignment", serviceUrl);
+            return false;
+        }
     }
 }

@@ -7,6 +7,8 @@ import lombok.Setter;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.time.Instant;
+
 @Getter
 @Setter
 @AllArgsConstructor
@@ -22,6 +24,19 @@ public class NodeInfo {
     private String description;
     private String color;
     private String publicKey;
+    private Boolean active;
+    private Instant deregisteredAt;
+
+    public NodeInfo(String nodeId, String ip, String name, String password,
+                    String description, String color, String publicKey) {
+        this.nodeId = nodeId;
+        this.ip = ip;
+        this.name = name;
+        this.password = password;
+        this.description = description;
+        this.color = color;
+        this.publicKey = publicKey;
+    }
 
     public String getServiceUrl() {
         return ip;

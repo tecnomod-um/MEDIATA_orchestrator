@@ -94,7 +94,7 @@ class RDFControllerTest {
         String csv = "a,b,c";
         doNothing().when(rdfService).writeCsv(csv);
         when(rdfService.generateRdf()).thenReturn("RDF-DATA");
-        mvc.perform(post("/rdf/semanticalignment")
+        mvc.perform(post("/rdf/semanticintegration")
                         .contentType(MediaType.TEXT_PLAIN)
                         .content(csv))
                 .andExpect(status().isOk())
@@ -108,7 +108,7 @@ class RDFControllerTest {
     void uploadMappings_csvWriteFails_skipsRdf() throws Exception {
         String csv = "x,y";
         doThrow(new IOException("disk full")).when(rdfService).writeCsv(csv);
-        mvc.perform(post("/rdf/semanticalignment")
+        mvc.perform(post("/rdf/semanticintegration")
                         .contentType(MediaType.TEXT_PLAIN)
                         .content(csv))
                 .andExpect(status().isOk())
@@ -125,7 +125,7 @@ class RDFControllerTest {
         doNothing().when(rdfService).writeCsv(csv);
         when(rdfService.generateRdf()).thenThrow(new RuntimeException("syntax error"));
 
-        mvc.perform(post("/rdf/semanticalignment")
+        mvc.perform(post("/rdf/semanticintegration")
                         .contentType(MediaType.TEXT_PLAIN)
                         .content(csv))
                 .andExpect(status().isOk())

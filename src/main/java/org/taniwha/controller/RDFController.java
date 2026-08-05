@@ -4,7 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.taniwha.dto.AlignmentResponseDTO;
+import org.taniwha.dto.SemanticIntegrationResponseDTO;
 import org.taniwha.dto.FieldMetadataDTO;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.service.RDFService;
@@ -45,8 +45,8 @@ public class RDFController {
         return ResponseEntity.ok(suggestions);
     }
 
-    @PostMapping("/semanticalignment")
-    public ResponseEntity<AlignmentResponseDTO> uploadMappings(@RequestBody String csvText) {
+    @PostMapping("/semanticintegration")
+    public ResponseEntity<SemanticIntegrationResponseDTO> uploadMappings(@RequestBody String csvText) {
         logger.debug("Received mapping CSV ({} bytes)", csvText.length());
         boolean csvSaved;
         String csvMsg;
@@ -71,7 +71,7 @@ public class RDFController {
             }
         } else
             rdfMsg = "Skipped RDF generation because CSV write failed";
-        AlignmentResponseDTO result = new AlignmentResponseDTO(csvSaved, csvMsg, rdfGen, rdfMsg);
+        SemanticIntegrationResponseDTO result = new SemanticIntegrationResponseDTO(csvSaved, csvMsg, rdfGen, rdfMsg);
         return ResponseEntity.ok(result);
     }
 }

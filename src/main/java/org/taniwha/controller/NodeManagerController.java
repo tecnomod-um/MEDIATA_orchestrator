@@ -51,9 +51,10 @@ public class NodeManagerController {
             );
 
             String keytabPath = nodeService.registerNode(nodeInfo);
-            logger.info("New node registered: {} ({})", node.getName(), node.getNodeId());
+            logger.info("New node registered: {} ({})", nodeInfo.getName(), nodeInfo.getNodeId());
             RegisterResponseDTO responseDTO = new RegisterResponseDTO();
             responseDTO.setMessage("Node registered successfully");
+            responseDTO.setNodeId(nodeInfo.getNodeId());
             String keytabContent = encodeKeytabToBase64(keytabPath);
             responseDTO.setKeytab(keytabContent);
 

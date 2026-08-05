@@ -25,7 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Integration tests for node management operations.
- * Tests the complete CRUD lifecycle of nodes including creation, retrieval, updates, and deletion.
+ * Tests registration, retrieval, heartbeat, and deregistration.
  */
 @AutoConfigureMockMvc
 public class NodeManagementIT extends BaseIntegrationTest {
@@ -103,7 +103,9 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
                 .andExpect(status().isOk());
 
-        assertFalse(nodeRepository.existsById(node.getNodeId()));
+        NodeInfo deregisteredNode = nodeRepository.findById(node.getNodeId()).orElseThrow();
+        assertFalse(deregisteredNode.getActive());
+        assertNotNull(deregisteredNode.getDeregisteredAt());
     }
 
     @Test
@@ -165,6 +167,8 @@ public class NodeManagementIT extends BaseIntegrationTest {
                         .content(objectMapper.writeValueAsString(deregisterRequest)))
                 .andExpect(status().isOk());
 
-        assertFalse(nodeRepository.existsById(registeredNode.getNodeId()));
+        NodeInfo deregisteredNode = nodeRepository.findById(registeredNode.getNodeId()).orElseThrow();
+        assertFalse(deregisteredNode.getActive());
+        assertNotNull(deregisteredNode.getDeregisteredAt());
     }
 }

@@ -11,10 +11,12 @@ import org.taniwha.model.NodeSummary;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
+import org.taniwha.service.ProjectService;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 // Requests user-related interactions with the registered nodes
@@ -27,18 +29,29 @@ public class NodeRetrieverController {
     private final NodeService nodeService;
     private final NodeAccessService nodeAccessService;
     private final TrustedNodeProxyConfig trustedNodeProxyConfig;
+    private final ProjectService projectService;
 
     public NodeRetrieverController(NodeService nodeService,
                                    NodeAccessService nodeAccessService,
-                                   TrustedNodeProxyConfig trustedNodeProxyConfig) {
+                                   TrustedNodeProxyConfig trustedNodeProxyConfig,
+                                   ProjectService projectService) {
         this.nodeService = nodeService;
         this.nodeAccessService = nodeAccessService;
         this.trustedNodeProxyConfig = trustedNodeProxyConfig;
+        this.projectService = projectService;
     }
 
     @GetMapping("/list")
-    public ResponseEntity<List<NodeSummary>> listNodes() {
-        return ResponseEntity.ok(nodeService.getNodeSummaries().stream()
+    public ResponseEntity<List<NodeSummary>> listNodes(@RequestParam(value = "projectId", required = false) String projectId) {
+        List<NodeSummary> summaries = nodeService.getNodeSummaries();
+        if (projectId != null && !projectId.trim().isEmpty()) {
+            Set<String> projectNodeIds = Set.copyOf(projectService.getProjectNodeIds(projectId));
+            summaries = summaries.stream()
+                    .filter(summary -> summary != null && projectNodeIds.contains(summary.getNodeId()))
+                    .collect(Collectors.toList());
+        }
+
+        return ResponseEntity.ok(summaries.stream()
                 .map(this::decorateNodeSummary)
                 .collect(Collectors.toList()));
     }

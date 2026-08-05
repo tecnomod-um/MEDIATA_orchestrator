@@ -1,6 +1,7 @@
 package org.taniwha.config;
 
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
@@ -33,6 +34,39 @@ class RestTemplateConfigTest {
         Object connMgr = invokeIfPresent(httpClient, "getConnectionManager")
                 .orElseGet(() -> getFieldImplementing(httpClient, HttpClientConnectionManager.class));
         assertThat(connMgr).isInstanceOf(HttpClientConnectionManager.class);
+    }
+
+    @Test
+    void nodeProxyRestTemplateUsesTheSameSecureClientConfiguration() {
+        RestTemplateConfig config = new RestTemplateConfig();
+        RestTemplate regularRestTemplate = config.getRestTemplate();
+        RestTemplate restTemplate = config.getNodeProxyRestTemplate();
+
+        assertThat(restTemplate.getRequestFactory())
+                .isInstanceOf(HttpComponentsClientHttpRequestFactory.class);
+        assertThat(config.getNodeProxyRestTemplate()).isSameAs(restTemplate);
+        assertThat(config.getRestTemplate()).isSameAs(regularRestTemplate);
+    }
+
+    @Test
+    void restTemplatesUsePooledConnectionManagers() throws Exception {
+        RestTemplateConfig config = new RestTemplateConfig();
+
+        assertThat(connectionManager(config.getRestTemplate()))
+                .isInstanceOf(PoolingHttpClientConnectionManager.class);
+        assertThat(connectionManager(config.getNodeProxyRestTemplate()))
+                .isInstanceOf(PoolingHttpClientConnectionManager.class);
+    }
+
+    private static Object connectionManager(RestTemplate restTemplate) throws Exception {
+        HttpComponentsClientHttpRequestFactory rf =
+                (HttpComponentsClientHttpRequestFactory) restTemplate.getRequestFactory();
+        Field httpClientFld = HttpComponentsClientHttpRequestFactory.class
+                .getDeclaredField("httpClient");
+        httpClientFld.setAccessible(true);
+        Object httpClient = httpClientFld.get(rf);
+        return invokeIfPresent(httpClient, "getConnectionManager")
+                .orElseGet(() -> getFieldImplementing(httpClient, HttpClientConnectionManager.class));
     }
 
     private static Optional<Object> invokeIfPresent(Object target, String method) {
