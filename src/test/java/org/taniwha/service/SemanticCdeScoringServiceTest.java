@@ -26,7 +26,7 @@ class SemanticCdeScoringServiceTest {
         when(embeddings.embed("Clinical data element: diagnosis"))
                 .thenReturn(new float[]{0, 0, 1});
 
-        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55);
+        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55, 0.5);
         var scores = service.scoreCandidates(new SemanticCdeScoringRequestDTO(
                 List.of("systolic pressure", "diastolic pressure"),
                 List.of(
@@ -43,7 +43,7 @@ class SemanticCdeScoringServiceTest {
                 .containsExactly("blood-pressure.ttl", "diagnosis.ttl");
         assertThat(scores.get(0).accepted()).isTrue();
         assertThat(scores.get(0).semanticSimilarity()).isEqualTo(1.0);
-        assertThat(scores.get(0).score()).isEqualTo(0.9);
+        assertThat(scores.get(0).score()).isEqualTo(0.75);
         assertThat(scores.get(1).accepted()).isFalse();
         assertThat(scores.get(1).semanticSimilarity()).isEqualTo(0.0);
     }
@@ -53,7 +53,7 @@ class SemanticCdeScoringServiceTest {
         EmbeddingsClient embeddings = mock(EmbeddingsClient.class);
         when(embeddings.embed("blood pressure")).thenReturn(new float[768]);
 
-        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55);
+        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55, 0.5);
         var scores = service.scoreCandidates(new SemanticCdeScoringRequestDTO(
                 List.of("blood pressure"),
                 List.of(new SemanticCdeCandidateDTO(
@@ -73,7 +73,7 @@ class SemanticCdeScoringServiceTest {
         EmbeddingsClient embeddings = mock(EmbeddingsClient.class);
         when(embeddings.embed("diagnosis")).thenReturn(new float[768]);
 
-        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55);
+        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.55, 0.5);
         var scores = service.scoreCandidates(new SemanticCdeScoringRequestDTO(
                 List.of("diagnosis"),
                 List.of(new SemanticCdeCandidateDTO(
@@ -90,7 +90,7 @@ class SemanticCdeScoringServiceTest {
 
     @Test
     void rejectsUnboundedCandidateRequestsBeforeEmbedding() {
-        SemanticCdeScoringService service = new SemanticCdeScoringService(mock(EmbeddingsClient.class), 0.32);
+        SemanticCdeScoringService service = new SemanticCdeScoringService(mock(EmbeddingsClient.class), 0.35, 0.5);
         List<SemanticCdeCandidateDTO> candidates = Collections.nCopies(
                 SemanticCdeScoringService.MAX_CANDIDATES + 1,
                 new SemanticCdeCandidateDTO("candidate.ttl", List.of("description"), 0.5, true)
@@ -100,5 +100,28 @@ class SemanticCdeScoringServiceTest {
                 new SemanticCdeScoringRequestDTO(List.of("field"), candidates)
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Too many");
+    }
+
+    @Test
+    void averagesEvidenceAcrossTheCompleteSchema() {
+        EmbeddingsClient embeddings = mock(EmbeddingsClient.class);
+        when(embeddings.embed("systolic")).thenReturn(new float[]{1, 0});
+        when(embeddings.embed("diastolic")).thenReturn(new float[]{1, 0});
+        when(embeddings.embed("unit")).thenReturn(new float[]{1, 0});
+        when(embeddings.embed("unrelated field")).thenReturn(new float[]{0, 1});
+        when(embeddings.embed("Blood pressure")).thenReturn(new float[]{1, 0});
+
+        SemanticCdeScoringService service = new SemanticCdeScoringService(embeddings, 0.70, 0.5);
+        var scores = service.scoreCandidates(new SemanticCdeScoringRequestDTO(
+                List.of("systolic", "diastolic", "unit", "unrelated field"),
+                List.of(new SemanticCdeCandidateDTO(
+                        "blood-pressure.ttl", List.of("Blood pressure"), 1.0, true
+                ))
+        ));
+
+        assertThat(scores).singleElement().satisfies(score -> {
+            assertThat(score.semanticSimilarity()).isEqualTo(0.75);
+            assertThat(score.accepted()).isTrue();
+        });
     }
 }
