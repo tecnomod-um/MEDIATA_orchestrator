@@ -28,7 +28,8 @@ class SemanticCdeScoringModelIT {
 
         SemanticCdeScoringService service = new SemanticCdeScoringService(
                 new EmbeddingsClient(model),
-                0.40
+                0.35,
+                0.6
         );
         var scores = service.scoreCandidates(new SemanticCdeScoringRequestDTO(
                 List.of("systolic blood pressure", "diastolic blood pressure"),
