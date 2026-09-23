@@ -19,18 +19,18 @@ public class SemanticCdeScoringService {
     static final int MAX_CANDIDATES = 64;
     static final int MAX_DESCRIPTIONS = 16;
     static final int MAX_TEXT_LENGTH = 1_000;
+    private static final double SEMANTIC_WEIGHT = 0.8;
+    private static final double LEXICAL_WEIGHT = 1.0 - SEMANTIC_WEIGHT;
+
     private final EmbeddingsClient embeddingsClient;
     private final double minimumSimilarity;
-    private final double semanticWeight;
 
     public SemanticCdeScoringService(
             EmbeddingsClient embeddingsClient,
-            @Value("${semantic.cde.embedding.minimum-similarity:0.35}") double minimumSimilarity,
-            @Value("${semantic.cde.embedding.semantic-weight:0.5}") double semanticWeight
+            @Value("${semantic.cde.embedding.minimum-similarity:0.40}") double minimumSimilarity
     ) {
         this.embeddingsClient = embeddingsClient;
         this.minimumSimilarity = clamp(minimumSimilarity);
-        this.semanticWeight = clamp(semanticWeight);
     }
 
     public List<SemanticCdeCandidateScoreDTO> scoreCandidates(SemanticCdeScoringRequestDTO request) {
@@ -61,7 +61,7 @@ public class SemanticCdeScoringService {
                     : semanticSimilarity >= minimumSimilarity;
             double combinedScore = semanticSimilarity == null
                     ? lexicalScore
-                    : (1.0 - semanticWeight) * lexicalScore + semanticWeight * semanticSimilarity;
+                    : LEXICAL_WEIGHT * lexicalScore + SEMANTIC_WEIGHT * semanticSimilarity;
 
             scores.add(new SemanticCdeCandidateScoreDTO(
                     candidate.semanticCdePath().trim(),
@@ -97,6 +97,8 @@ public class SemanticCdeScoringService {
         }
 
         return bestFieldScores.stream()
+                .sorted(Comparator.reverseOrder())
+                .limit(Math.min(3, bestFieldScores.size()))
                 .mapToDouble(Double::doubleValue)
                 .average()
                 .orElse(0.0);
