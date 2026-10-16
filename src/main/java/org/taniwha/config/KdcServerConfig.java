@@ -14,8 +14,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.taniwha.kerberos.CustomKdcServer;
 import org.taniwha.kerberos.KerberosConfigFileGenerator;
+import org.taniwha.kerberos.MongoIdentityBackend;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -42,9 +45,21 @@ public class KdcServerConfig {
     @Value("${kerberos.workdir}")
     private String workDirPath;
 
+    @Value("${kerberos.identity-store:json}")
+    private String identityStore;
+
+    @Value("${spring.data.mongodb.uri:}")
+    private String mongoUri;
+
+    @Value("${kerberos.mongodb.collection:kerberos_identities}")
+    private String mongoCollection;
+
+    @Value("${kerberos.mongodb.migrate-json:true}")
+    private boolean migrateJson;
+
     @Bean
     @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
-    public CustomKdcServer kdcServer() throws KrbException, IOException {
+    public CustomKdcServer kdcServer(Environment environment) throws KrbException, IOException {
 
         // Force IPv4
         System.setProperty("java.net.preferIPv4Stack", "true");
@@ -67,15 +82,7 @@ public class KdcServerConfig {
                 encryptionTypes.stream().map(EncryptionType::getName).toArray(String[]::new));
         kdcConfig.setString(KdcConfigKey.ENCRYPTION_TYPES.getPropertyKey(), encTypesString);
 
-        BackendConfig backendConfig = new BackendConfig();
-        backendConfig.setString(
-                JsonIdentityBackend.JSON_IDENTITY_BACKEND_DIR,
-                new File(workDirPath, "krb5kdc").getAbsolutePath()
-        );
-        backendConfig.setString(
-                KdcConfigKey.KDC_IDENTITY_BACKEND,
-                JsonIdentityBackend.class.getCanonicalName()
-        );
+        BackendConfig backendConfig = createBackendConfig(environment);
 
         kdcServer = new CustomKdcServer(kdcConfig, backendConfig);
         kdcServer.setKdcRealm(realm);
@@ -142,6 +149,38 @@ public class KdcServerConfig {
                 kdcServer.getKdcSetting().getKdcPort());
 
         return kdcServer;
+    }
+
+    private BackendConfig createBackendConfig(Environment environment) {
+        BackendConfig backendConfig = new BackendConfig();
+        File jsonBackendDirectory = new File(workDirPath, "krb5kdc");
+
+        if ("json".equalsIgnoreCase(identityStore)) {
+            backendConfig.setString(JsonIdentityBackend.JSON_IDENTITY_BACKEND_DIR,
+                    jsonBackendDirectory.getAbsolutePath());
+            backendConfig.setString(KdcConfigKey.KDC_IDENTITY_BACKEND,
+                    JsonIdentityBackend.class.getCanonicalName());
+            logger.info("Kerberos identities are backed by JSON files");
+            return backendConfig;
+        }
+
+        if (!"mongodb".equalsIgnoreCase(identityStore)) {
+            throw new IllegalArgumentException(
+                    "Unsupported kerberos.identity-store: " + identityStore);
+        }
+        if (!environment.acceptsProfiles(Profiles.of("docker"))) {
+            throw new IllegalStateException(
+                    "The MongoDB Kerberos identity store is supported only by Docker deployments");
+        }
+
+        backendConfig.setString(KdcConfigKey.KDC_IDENTITY_BACKEND,
+                MongoIdentityBackend.class.getCanonicalName());
+        backendConfig.setString(MongoIdentityBackend.MONGODB_URI, mongoUri);
+        backendConfig.setString(MongoIdentityBackend.MONGODB_COLLECTION, mongoCollection);
+        backendConfig.setBoolean(MongoIdentityBackend.MIGRATE_JSON, migrateJson);
+        backendConfig.setString(MongoIdentityBackend.JSON_BACKEND_DIR,
+                jsonBackendDirectory.getAbsolutePath());
+        return backendConfig;
     }
 
     private void prepareWorkDir() throws IOException {
