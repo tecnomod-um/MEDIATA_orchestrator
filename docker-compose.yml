@@ -166,6 +166,9 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - API_DOCS_ENABLED=${API_DOCS_ENABLED:-true}
       - KERBEROS_PORT=${KERBEROS_PORT:-8089}
+      - KERBEROS_IDENTITY_STORE=${KERBEROS_IDENTITY_STORE:-mongodb}
+      - KERBEROS_MONGODB_COLLECTION=${KERBEROS_MONGODB_COLLECTION:-kerberos_identities}
+      - KERBEROS_MIGRATE_JSON=${KERBEROS_MIGRATE_JSON:-true}
 
       # These URLs can point to containers when profiles enabled, otherwise just leave defaults.
       - PYURL=${PYURL:-http://rdf-builder:8000}
