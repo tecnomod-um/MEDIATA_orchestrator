@@ -3,7 +3,9 @@ package org.taniwha.exception;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -70,5 +72,15 @@ class GlobalExceptionHandlerTest {
         assertNotNull(response);
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
         assertEquals("Error occurred: null", response.getBody());
+    }
+
+    @Test
+    void testHandleMissingResource_ReturnsNotFound() {
+        NoResourceFoundException exception = new NoResourceFoundException(HttpMethod.GET, "/missing");
+
+        ResponseEntity<String> response = globalExceptionHandler.handleMissingResource(exception);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals("Resource not found", response.getBody());
     }
 }

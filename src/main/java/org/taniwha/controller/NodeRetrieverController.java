@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
 // Requests user-related interactions with the registered nodes
 @RestController
 @RequestMapping("/nodes/connect")
+@Tag(name = "Node discovery", description = "List accessible nodes and retrieve node information and metadata.")
 public class NodeRetrieverController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeRetrieverController.class);
@@ -41,6 +44,7 @@ public class NodeRetrieverController {
         this.projectService = projectService;
     }
 
+    @Operation(summary = "List nodes accessible to the current user")
     @GetMapping("/list")
     public ResponseEntity<List<NodeSummary>> listNodes(@RequestParam(value = "projectId", required = false) String projectId) {
         List<NodeSummary> summaries = nodeService.getNodeSummaries();
@@ -56,6 +60,7 @@ public class NodeRetrieverController {
                 .collect(Collectors.toList()));
     }
 
+    @Operation(summary = "Connect to a node and return its information")
     @GetMapping("/info/{nodeId}")
     public ResponseEntity<Map<String, Object>> getNodeInfo(@PathVariable String nodeId, @RequestHeader("Authorization") String userToken, @RequestHeader("Kerberos-TGT") String userTgt) {
         String jwtToken = userToken.substring(7);
@@ -98,6 +103,7 @@ public class NodeRetrieverController {
         }
     }
 
+    @Operation(summary = "Retrieve metadata from a node")
     @GetMapping("/metadata/{nodeId}")
     public ResponseEntity<Map<String, Object>> getNodeMetadata(@PathVariable String nodeId) {
         logger.debug("Requesting DCAT metadata for nodeId={}", nodeId);

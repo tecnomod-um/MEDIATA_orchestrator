@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -9,6 +11,7 @@ import org.taniwha.service.DataCleaningService;
 
 @RestController
 @RequestMapping("/api/data-cleaning")
+@Tag(name = "Data cleaning", description = "Standardize CSV formatting before node-side processing.")
 public class DataCleaningController {
 
     private final DataCleaningService dataCleaningService;
@@ -17,6 +20,7 @@ public class DataCleaningController {
         this.dataCleaningService = dataCleaningService;
     }
 
+    @Operation(summary = "Reformat CSV text")
     @PostMapping("/csv/reformat")
     public ResponseEntity<CsvCleaningResponseDTO> reformatCsv(@RequestBody CsvCleaningRequestDTO request) {
         return ResponseEntity.ok(dataCleaningService.reformatCsv(request));

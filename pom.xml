@@ -16,6 +16,7 @@
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-ai.version>1.1.7</spring-ai.version>
+        <springdoc.version>2.9.1</springdoc.version>
         <jackson-bom.version>2.21.3</jackson-bom.version>
         <spring-framework.version>6.2.18</spring-framework.version>
         <spring-security.version>6.5.11</spring-security.version>
@@ -176,6 +177,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

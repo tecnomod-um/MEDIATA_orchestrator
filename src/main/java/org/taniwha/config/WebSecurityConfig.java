@@ -42,7 +42,9 @@ public class WebSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/actuator/health/**", "/actuator/info/**",
-                                "/taniwha/actuator/health/**", "/taniwha/actuator/info/**"
+                                "/taniwha/actuator/health/**", "/taniwha/actuator/info/**",
+                                "/v3/api-docs/**", "/v3/api-docs.yaml",
+                                "/swagger-ui.html", "/swagger-ui/**"
                         ).permitAll()
                         .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/deregister").permitAll()
                         .requestMatchers("/**").authenticated()

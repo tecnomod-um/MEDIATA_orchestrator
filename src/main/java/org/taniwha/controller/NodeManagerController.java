@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +22,7 @@ import java.util.Base64;
 
 // Requests related to node registration and presence in the system
 @RestController
+@Tag(name = "Node registration", description = "Register nodes and maintain their heartbeat lifecycle.")
 public class NodeManagerController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeManagerController.class);
@@ -31,6 +34,7 @@ public class NodeManagerController {
         this.nodeService = nodeService;
     }
 
+    @Operation(summary = "Register or reclaim a node")
     @PostMapping("/nodes/register")
     public ResponseEntity<RegisterResponseDTO> registerNode(@RequestBody NodeDTO node) {
         if (node.getIp() == null) {
@@ -78,6 +82,7 @@ public class NodeManagerController {
         }
     }
 
+    @Operation(summary = "Refresh a node heartbeat")
     @PostMapping("/nodes/heartbeat")
     public ResponseEntity<String> nodeHeartbeat(@RequestBody NodeHeartbeat heartbeat) {
         if (heartbeat.getNodeId() == null || heartbeat.getTimestamp() <= 0) {
@@ -93,6 +98,7 @@ public class NodeManagerController {
         return ResponseEntity.ok("Heartbeat received");
     }
 
+    @Operation(summary = "Deregister a node")
     @PostMapping("/nodes/deregister")
     public ResponseEntity<String> deregisterNode(@RequestBody NodeDTO node) {
         if (node == null || node.getNodeId() == null) {

@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -12,6 +14,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/nodes/schema")
+@Tag(name = "Common schema", description = "Store, retrieve, and remove the shared harmonization schema.")
 public class SchemaController {
 
     private static final Logger logger = LoggerFactory.getLogger(SchemaController.class);
@@ -21,6 +24,7 @@ public class SchemaController {
         this.schemaService = schemaService;
     }
 
+    @Operation(summary = "Save the common target schema")
     @PostMapping
     public ResponseEntity<Map<String, Object>> saveSchema(@RequestBody Map<String, Object> request) {
         Map<String, Object> response = new HashMap<>();
@@ -41,6 +45,7 @@ public class SchemaController {
         }
     }
 
+    @Operation(summary = "Get the common target schema")
     @GetMapping
     public ResponseEntity<Map<String, Object>> getSchema() {
         Map<String, Object> response = new HashMap<>();
@@ -53,6 +58,7 @@ public class SchemaController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Remove the common target schema")
     @DeleteMapping
     public ResponseEntity<Map<String, Object>> removeSchema() {
         Map<String, Object> response = new HashMap<>();

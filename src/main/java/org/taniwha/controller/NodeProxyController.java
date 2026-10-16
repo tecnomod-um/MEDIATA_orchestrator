@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 
 @RestController
+@Tag(name = "Node proxy", description = "Proxy authenticated requests to a selected MEDIATA node.")
 public class NodeProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeProxyController.class);
@@ -61,6 +64,11 @@ public class NodeProxyController {
         this.restTemplateConfig = restTemplateConfig;
     }
 
+    @Operation(
+            summary = "Proxy an authenticated request to a node",
+            description = "Forwards the HTTP method, headers, query string, and body. Replace the trailing ** "
+                    + "with the node-relative target path."
+    )
     @RequestMapping("/nodes/proxy/{nodeId}/**")
     public ResponseEntity<byte[]> proxyNodeRequest(@PathVariable String nodeId, HttpServletRequest request) throws IOException {
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);

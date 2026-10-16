@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -14,6 +16,7 @@ import java.io.IOException;
 
 @RestController
 @RequestMapping("/fhir")
+@Tag(name = "FHIR", description = "Generate FHIR representations from clustering results.")
 public class FHIRController {
 
     private static final Logger logger = LoggerFactory.getLogger(FHIRController.class);
@@ -23,6 +26,7 @@ public class FHIRController {
         this.fhirService = fhirService;
     }
 
+    @Operation(summary = "Generate FHIR resources from cluster data")
     @PostMapping("/clusters")
     public ResponseEntity<String> createClusters(@RequestBody String jsonText) {
         logger.debug("Received clusters payload ({} bytes)", jsonText.length());

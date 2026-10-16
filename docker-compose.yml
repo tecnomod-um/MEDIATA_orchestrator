@@ -164,6 +164,7 @@ services:
       - PORT=${PORT:-8088}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
       - JWT_SECRET=${JWT_SECRET}
+      - API_DOCS_ENABLED=${API_DOCS_ENABLED:-true}
       - KERBEROS_PORT=${KERBEROS_PORT:-8089}
 
       # These URLs can point to containers when profiles enabled, otherwise just leave defaults.

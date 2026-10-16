@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 
 @RestController
 @RequestMapping("/api/mappings")
+@Tag(name = "Mapping assistance", description = "Suggest mappings and enrich mapping metadata asynchronously.")
 public class MappingController {
 
     private final MappingService mappingService;
@@ -30,6 +33,7 @@ public class MappingController {
         this.enrichExecutor = enrichExecutor;
     }
 
+    @Operation(summary = "Suggest mappings for source columns")
     @PostMapping("/suggest")
     public ResponseEntity<MappingSuggestResponseDTO> suggest(@RequestBody MappingSuggestRequestDTO req) {
         List<Map<String, SuggestedMappingDTO>> hierarchy = mappingService.suggestMappings(req);
@@ -40,6 +44,7 @@ public class MappingController {
 
 
 
+    @Operation(summary = "Start mapping metadata enrichment")
     @PostMapping("/enrich")
     public ResponseEntity<?> enrich(@RequestBody MappingEnrichRequestDTO req) {
         List<Map<String, SuggestedMappingDTO>> hierarchy =
@@ -62,6 +67,7 @@ public class MappingController {
     }
 
 
+    @Operation(summary = "Get mapping enrichment status")
     @GetMapping("/enrich/status/{jobId}")
     public ResponseEntity<JobProgressDTO> enrichStatus(@PathVariable String jobId) {
         MappingEnrichmentJobs.JobState s = enrichmentJobs.getJob(jobId);
@@ -78,6 +84,7 @@ public class MappingController {
         ));
     }
 
+    @Operation(summary = "Get mapping enrichment results")
     @GetMapping("/enrich/result/{jobId}")
     public ResponseEntity<MappingSuggestResponseDTO> enrichResult(@PathVariable String jobId) {
         MappingEnrichmentJobs.JobState s = enrichmentJobs.getJob(jobId);
