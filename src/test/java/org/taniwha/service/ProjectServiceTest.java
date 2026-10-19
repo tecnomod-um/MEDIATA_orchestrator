@@ -146,17 +146,17 @@ class ProjectServiceTest {
     }
 
     @Test
-    void listProjects_doesNotInferAnImageFromTheProjectName() {
+    void listProjects_usesLegacyStratifImageWhenNoStoredImageExists() {
         Project project = new Project();
-        project.setId("project-without-image");
-        project.setName("Project without image");
+        project.setId("stratif");
+        project.setName("STRATIF-AI");
         when(projectRepo.findAll()).thenReturn(Collections.singletonList(project));
         when(userRepo.count()).thenReturn(0L);
 
         List<ProjectDTO> result = svc.listProjects();
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getImageUrl()).isNull();
+        assertThat(result.get(0).getImageUrl()).isEqualTo("/stratif.png");
     }
 
     @Test
