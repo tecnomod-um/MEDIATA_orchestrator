@@ -62,23 +62,12 @@ class DataInitializerTest {
         runner.run();
 
         ArgumentCaptor<Project> projectCaptor = ArgumentCaptor.forClass(Project.class);
-        verify(projectRepository, times(2)).save(projectCaptor.capture());
+        verify(projectRepository).save(projectCaptor.capture());
 
-        Project savedProject = projectCaptor.getAllValues().stream()
-                .filter(project -> "Default Project".equals(project.getName()))
-                .findFirst()
-                .orElseThrow();
+        Project savedProject = projectCaptor.getValue();
         assertThat(savedProject.getName()).isEqualTo("Default Project");
         assertThat(savedProject.getDescription()).isEqualTo("Default project created on initialization");
         assertThat(savedProject.getBadge()).isEqualTo("default");
-
-        Project stratifProject = projectCaptor.getAllValues().stream()
-                .filter(project -> "STRATIF-AI".equals(project.getName()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(stratifProject.getDescription()).isEqualTo("STRATIF-AI deployment workspace");
-        assertThat(stratifProject.getBadge()).isEqualTo("Active");
-        assertThat(stratifProject.getNodeIds()).isEmpty();
     }
 
     @Test
@@ -101,12 +90,13 @@ class DataInitializerTest {
     }
 
     @Test
-    void initDatabase_assignsActiveNodesToStratifProject() throws Exception {
+    void initDatabase_doesNotCreateProjectForUnassignedRemoteNodes() throws Exception {
         when(roleRepository.findByName(anyString())).thenReturn(new Role());
         User existingUser = new User(null, "admin", "password", "email@test.com", null, null);
         when(userRepository.findByUsername(anyString())).thenReturn(existingUser);
-        when(projectRepository.findByName("Default Project")).thenReturn(new Project());
-        when(projectRepository.findByName("STRATIF-AI")).thenReturn(null);
+        Project defaultProject = new Project();
+        defaultProject.setName("Default Project");
+        when(projectRepository.findByName("Default Project")).thenReturn(defaultProject);
 
         NodeInfo activeNode = new NodeInfo();
         activeNode.setNodeId("active-node");
@@ -123,13 +113,11 @@ class DataInitializerTest {
 
         runner.run();
 
-        verify(projectRepository).save(argThat(project ->
-                "STRATIF-AI".equals(project.getName())
-                        && project.getNodeIds().equals(List.of("active-node", "legacy-active-node"))));
+        verify(projectRepository, never()).save(any(Project.class));
     }
 
     @Test
-    void initDatabase_keepsDefaultProjectNodesOutOfStratifProject() throws Exception {
+    void initDatabase_addsOnlyDefaultLocalNodesToDefaultProject() throws Exception {
         when(roleRepository.findByName(anyString())).thenReturn(new Role());
         User existingUser = new User(null, "admin", "password", "email@test.com", null, null);
         when(userRepository.findByUsername(anyString())).thenReturn(existingUser);
@@ -138,12 +126,7 @@ class DataInitializerTest {
         defaultProject.setName("Default Project");
         defaultProject.setNodeIds(List.of("default-node"));
 
-        Project stratifProject = new Project();
-        stratifProject.setName("STRATIF-AI");
-        stratifProject.setNodeIds(List.of("default-node", "remote-node"));
-
         when(projectRepository.findByName("Default Project")).thenReturn(defaultProject);
-        when(projectRepository.findByName("STRATIF-AI")).thenReturn(stratifProject);
 
         NodeInfo defaultNode = new NodeInfo();
         defaultNode.setNodeId("default-node");
@@ -156,7 +139,6 @@ class DataInitializerTest {
         defaultLocalNode.setName("Default Local");
         defaultLocalNode.setIp("http://mediata-default-node.local:18083");
         defaultLocalNode.setActive(true);
-        stratifProject.setNodeIds(List.of("default-node", "remote-node", "fresh-default-local"));
         when(nodeRepository.findAll()).thenReturn(List.of(defaultNode, remoteNode, defaultLocalNode));
 
         CommandLineRunner runner = dataInitializer.initDatabase(
@@ -165,8 +147,8 @@ class DataInitializerTest {
         runner.run();
 
         verify(projectRepository).save(argThat(project ->
-                "STRATIF-AI".equals(project.getName())
-                        && project.getNodeIds().equals(List.of("remote-node"))));
+                "Default Project".equals(project.getName())
+                        && project.getNodeIds().equals(List.of("default-node", "fresh-default-local"))));
     }
 
     @Test

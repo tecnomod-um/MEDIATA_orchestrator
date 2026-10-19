@@ -36,9 +36,6 @@ public class NodeService {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeService.class);
     private static final String DEFAULT_PROJECT_NAME = "Default Project";
-    private static final String STRATIF_PROJECT_NAME = "STRATIF-AI";
-    private static final String STRATIF_PROJECT_DESCRIPTION = "STRATIF-AI deployment workspace";
-    private static final String STRATIF_PROJECT_BADGE = "Active";
     private static final String DEFAULT_LOCAL_NODE_NAME = "Default Local";
     private static final List<String> DEFAULT_LOCAL_NODE_HOSTS = List.of(
             "localhost",
@@ -98,7 +95,7 @@ public class NodeService {
         nodeInfo.setDeregisteredAt(null);
         nodeRepository.save(nodeInfo);
         nodeHeartbeats.put(nodeInfo.getNodeId(), now);
-        assignNodeToProject(nodeInfo);
+        assignNodeToDefaultProjectIfApplicable(nodeInfo);
 
         String rawPassword = RandomStringUtils.randomAlphanumeric(16);
         String encodedPassword = passwordEncoder.encode(rawPassword);
@@ -116,17 +113,13 @@ public class NodeService {
         }
     }
 
-    private void assignNodeToProject(NodeInfo nodeInfo) {
+    private void assignNodeToDefaultProjectIfApplicable(NodeInfo nodeInfo) {
         if (nodeInfo == null || nodeInfo.getNodeId() == null || nodeInfo.getNodeId().trim().isEmpty()) {
             return;
         }
         if (isDefaultProjectNode(nodeInfo)) {
             assignNodeToDefaultProject(nodeInfo);
-            removeNodeFromStratifProject(nodeInfo.getNodeId());
-            return;
         }
-
-        assignNodeToStratifProject(nodeInfo);
     }
 
     private void assignNodeToDefaultProject(NodeInfo nodeInfo) {
@@ -145,23 +138,6 @@ public class NodeService {
         }
     }
 
-    private void assignNodeToStratifProject(NodeInfo nodeInfo) {
-        try {
-            Project project = projectRepository.findByName(STRATIF_PROJECT_NAME);
-            if (project == null) {
-                project = new Project();
-                project.setName(STRATIF_PROJECT_NAME);
-                project.setDescription(STRATIF_PROJECT_DESCRIPTION);
-                project.setBadge(STRATIF_PROJECT_BADGE);
-            }
-
-            addNodeToProject(project, nodeInfo.getNodeId());
-            logger.info("Assigned node {} ({}) to project '{}'", nodeInfo.getName(), nodeInfo.getNodeId(), STRATIF_PROJECT_NAME);
-        } catch (Exception e) {
-            logger.error("Failed to assign node {} to project '{}'", nodeInfo.getNodeId(), STRATIF_PROJECT_NAME, e);
-        }
-    }
-
     private void addNodeToProject(Project project, String nodeId) {
         List<String> nodeIds = project.getNodeIds();
         if (nodeIds == null) {
@@ -176,25 +152,6 @@ public class NodeService {
             nodeIds.add(nodeId);
             project.setNodeIds(nodeIds);
             projectRepository.save(project);
-        }
-    }
-
-    private void removeNodeFromStratifProject(String nodeId) {
-        try {
-            Project project = projectRepository.findByName(STRATIF_PROJECT_NAME);
-            if (project == null || project.getNodeIds() == null) {
-                return;
-            }
-            List<String> nodeIds = project.getNodeIds().stream()
-                    .filter(id -> id != null && !nodeId.equals(id.trim()))
-                    .collect(Collectors.toCollection(ArrayList::new));
-            if (nodeIds.size() != project.getNodeIds().size()) {
-                project.setNodeIds(nodeIds);
-                projectRepository.save(project);
-                logger.info("Removed node {} from project '{}'", nodeId, STRATIF_PROJECT_NAME);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to remove node {} from project '{}'", nodeId, STRATIF_PROJECT_NAME, e);
         }
     }
 
