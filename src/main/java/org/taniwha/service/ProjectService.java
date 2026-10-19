@@ -23,9 +23,6 @@ import java.util.stream.Collectors;
 @Service
 public class ProjectService {
 
-    private static final String STRATIF_PROJECT_NAME = "STRATIF-AI";
-    private static final String STRATIF_PROJECT_IMAGE_URL = "/stratif.png";
-
     private final ProjectRepository projectRepository;
     private final NodeAccessService nodeAccessService;
     private final UserRepository userRepository;
@@ -147,8 +144,6 @@ public class ProjectService {
         if (project.getImageBytes() != null && project.getImageBytes().length > 0 && project.getImageContentType() != null && !project.getImageContentType().trim().isEmpty()) {
             String b64 = Base64.getEncoder().encodeToString(project.getImageBytes());
             dto.setImageUrl("data:" + project.getImageContentType().trim() + ";base64," + b64);
-        } else if (STRATIF_PROJECT_NAME.equals(project.getName())) {
-            dto.setImageUrl(STRATIF_PROJECT_IMAGE_URL);
         } else {
             dto.setImageUrl(null);
         }
