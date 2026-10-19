@@ -77,21 +77,20 @@ class NodeServiceTest {
         verify(userRepo).findByUsername("admin");
         verify(userRepo).save(adminUser);
         assertThat(adminUser.getNodeIds()).contains(in);
-        verify(projectRepo).save(argThat(project ->
-                "STRATIF-AI".equals(project.getName()) && project.getNodeIds().contains("n1")));
+        verify(projectRepo, never()).save(any(Project.class));
     }
 
     @Test
-    void registerNode_addsNodeToExistingStratifProject() throws KrbException {
+    void registerNode_doesNotAssignRemoteNodeToAnUnrelatedProject() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("new-node");
         node.setIp("10.0.0.1");
 
-        Project stratif = new Project();
-        stratif.setName("STRATIF-AI");
-        stratif.setNodeIds(new ArrayList<>(List.of("existing-node")));
+        Project unrelatedProject = new Project();
+        unrelatedProject.setName("Existing Project");
+        unrelatedProject.setNodeIds(new ArrayList<>(List.of("existing-node")));
 
-        when(projectRepo.findByName("STRATIF-AI")).thenReturn(stratif);
+        when(projectRepo.findByName("Default Project")).thenReturn(null);
         when(repo.findAllByIp("10.0.0.1")).thenReturn(Collections.emptyList());
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("10.0.0.1", "REALM")).thenReturn("p@REALM");
@@ -100,8 +99,8 @@ class NodeServiceTest {
         String result = svc.registerNode(node);
 
         assertThat(result).isEqualTo("/tmp/test.keytab");
-        assertThat(stratif.getNodeIds()).containsExactly("existing-node", "new-node");
-        verify(projectRepo).save(stratif);
+        assertThat(unrelatedProject.getNodeIds()).containsExactly("existing-node");
+        verify(projectRepo, never()).save(any(Project.class));
     }
 
     @Test
@@ -127,7 +126,7 @@ class NodeServiceTest {
     }
 
     @Test
-    void registerNode_assignsDefaultLocalNodeToDefaultProjectAndRemovesFromStratif() throws KrbException {
+    void registerNode_assignsDefaultLocalNodeToDefaultProject() throws KrbException {
         NodeInfo node = new NodeInfo();
         node.setNodeId("new-default-id");
         node.setIp("http://mediata-default-node.local:18083");
@@ -137,12 +136,7 @@ class NodeServiceTest {
         defaultProject.setName("Default Project");
         defaultProject.setNodeIds(new ArrayList<>());
 
-        Project stratifProject = new Project();
-        stratifProject.setName("STRATIF-AI");
-        stratifProject.setNodeIds(new ArrayList<>(List.of("remote-node", "new-default-id")));
-
         when(projectRepo.findByName("Default Project")).thenReturn(defaultProject);
-        when(projectRepo.findByName("STRATIF-AI")).thenReturn(stratifProject);
         when(repo.findAllByIp("http://mediata-default-node.local:18083")).thenReturn(Collections.emptyList());
         when(pwdEncoder.encode(anyString())).thenReturn("ENC");
         when(krb.getPrincipalName("http://mediata-default-node.local:18083", "REALM")).thenReturn("p@REALM");
@@ -152,9 +146,7 @@ class NodeServiceTest {
 
         assertThat(result).isEqualTo("/tmp/test.keytab");
         assertThat(defaultProject.getNodeIds()).containsExactly("new-default-id");
-        assertThat(stratifProject.getNodeIds()).containsExactly("remote-node");
         verify(projectRepo).save(defaultProject);
-        verify(projectRepo).save(stratifProject);
     }
 
     @Test
@@ -259,12 +251,12 @@ class NodeServiceTest {
         Project defaultProject = new Project();
         defaultProject.setName("Default Project");
         defaultProject.setNodeIds(new ArrayList<>(List.of("foo", "default-peer")));
-        Project stratifProject = new Project();
-        stratifProject.setName("STRATIF-AI");
-        stratifProject.setNodeIds(new ArrayList<>(List.of("remote-peer", "foo")));
+        Project secondProject = new Project();
+        secondProject.setName("Second Project");
+        secondProject.setNodeIds(new ArrayList<>(List.of("remote-peer", "foo")));
 
         when(repo.findById("foo")).thenReturn(Optional.of(n));
-        when(projectRepo.findAll()).thenReturn(List.of(defaultProject, stratifProject));
+        when(projectRepo.findAll()).thenReturn(List.of(defaultProject, secondProject));
         when(krb.getPrincipalName("5.6.7.8", "REALM"))
                 .thenReturn("5.6.7.8@REALM");
         doNothing().when(krb).deletePrincipal("5.6.7.8@REALM");
@@ -277,9 +269,9 @@ class NodeServiceTest {
         assertThat(svc.getLastHeartbeat("foo")).isNull();
         verify(krb).deletePrincipal("5.6.7.8@REALM");
         assertThat(defaultProject.getNodeIds()).containsExactly("default-peer");
-        assertThat(stratifProject.getNodeIds()).containsExactly("remote-peer");
+        assertThat(secondProject.getNodeIds()).containsExactly("remote-peer");
         verify(projectRepo).save(defaultProject);
-        verify(projectRepo).save(stratifProject);
+        verify(projectRepo).save(secondProject);
     }
 
     @Test

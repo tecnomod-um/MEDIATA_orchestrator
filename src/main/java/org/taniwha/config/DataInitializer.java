@@ -37,9 +37,6 @@ public class DataInitializer {
     private static final String DEFAULT_PROJECT_NAME = "Default Project";
     private static final String DEFAULT_PROJECT_DESCRIPTION = "Default project created on initialization";
     private static final String DEFAULT_PROJECT_BADGE = "default";
-    private static final String STRATIF_PROJECT_NAME = "STRATIF-AI";
-    private static final String STRATIF_PROJECT_DESCRIPTION = "STRATIF-AI deployment workspace";
-    private static final String STRATIF_PROJECT_BADGE = "Active";
     private static final String DEFAULT_LOCAL_NODE_NAME = "Default Local";
     private static final List<String> DEFAULT_LOCAL_NODE_HOSTS = List.of(
             "localhost",
@@ -64,7 +61,6 @@ public class DataInitializer {
 
             createDefaultProjectIfNotExists(projectRepository);
             syncDefaultProjectNodes(projectRepository, nodeRepository);
-            createStratifProject(projectRepository, nodeRepository);
 
             logger.info("Data initialization complete");
         };
@@ -156,51 +152,6 @@ public class DataInitializer {
         if (nodeIds.size() != originalSize) {
             project.setNodeIds(new ArrayList<>(nodeIds));
             projectRepository.save(project);
-        }
-    }
-
-    private void createStratifProject(ProjectRepository projectRepository, NodeRepository nodeRepository) {
-        Project project = projectRepository.findByName(STRATIF_PROJECT_NAME);
-        boolean isNew = project == null;
-        if (isNew) {
-            project = new Project();
-            project.setName(STRATIF_PROJECT_NAME);
-            project.setDescription(STRATIF_PROJECT_DESCRIPTION);
-            project.setBadge(STRATIF_PROJECT_BADGE);
-        }
-
-        if (project.getDescription() == null || project.getDescription().trim().isEmpty()) {
-            project.setDescription(STRATIF_PROJECT_DESCRIPTION);
-        }
-        if (project.getBadge() == null || project.getBadge().trim().isEmpty()) {
-            project.setBadge(STRATIF_PROJECT_BADGE);
-        }
-
-        Set<String> defaultNodeIds = getProjectNodeIds(projectRepository.findByName(DEFAULT_PROJECT_NAME));
-        Set<String> nodeIds = new LinkedHashSet<>(project.getNodeIds() != null ? project.getNodeIds() : Collections.emptyList());
-        nodeIds.removeAll(defaultNodeIds);
-        nodeRepository.findAll().stream()
-                .filter(node -> node != null && node.getNodeId() != null && (node.getActive() == null || node.getActive()))
-                .filter(node -> !isDefaultLocalNode(node))
-                .map(node -> node.getNodeId().trim())
-                .filter(nodeId -> !nodeId.isEmpty())
-                .filter(nodeId -> !defaultNodeIds.contains(nodeId))
-                .forEach(nodeIds::add);
-
-        Set<String> defaultLocalNodeIds = nodeRepository.findAll().stream()
-                .filter(this::isDefaultLocalNode)
-                .map(node -> node.getNodeId() == null ? "" : node.getNodeId().trim())
-                .filter(nodeId -> !nodeId.isEmpty())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-        nodeIds.removeAll(defaultLocalNodeIds);
-
-        project.setNodeIds(new ArrayList<>(nodeIds));
-        projectRepository.save(project);
-
-        if (isNew) {
-            logger.info("Created project: '{}'", STRATIF_PROJECT_NAME);
-        } else {
-            logger.info("Updated project '{}' with {} node(s)", STRATIF_PROJECT_NAME, project.getNodeIds().size());
         }
     }
 
