@@ -10,6 +10,7 @@ import org.taniwha.dto.SaveProjectRequestDTO;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.Project;
+import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.ProjectRepository;
 import org.taniwha.repository.UserRepository;
@@ -44,7 +45,6 @@ class ProjectServiceTest {
     @Test
     void listProjects_emptyList_returnsEmptyList() {
         when(projectRepo.findAll()).thenReturn(Collections.emptyList());
-        when(userRepo.count()).thenReturn(0L);
         when(nodeRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
@@ -73,7 +73,6 @@ class ProjectServiceTest {
         p2.setImageContentType("image/png");
 
         when(projectRepo.findAll()).thenReturn(Arrays.asList(p1, p2));
-        when(userRepo.count()).thenReturn(5L);
         Instant now = Instant.now();
         when(nodeService.getLastNodeListAccess()).thenReturn(now);
 
@@ -85,6 +84,15 @@ class ProjectServiceTest {
         inactiveNode.setActive(false);
         when(nodeRepo.findAllById(Arrays.asList("n1", "inactive-node")))
                 .thenReturn(Arrays.asList(activeNode, inactiveNode));
+
+        User firstProjectMember = new User("u1", "first", null, null,
+                Collections.emptyList(), Collections.singletonList(activeNode));
+        User secondProjectMember = new User("u2", "second", null, null,
+                Collections.emptyList(), Arrays.asList(activeNode, inactiveNode));
+        User inactiveOnlyUser = new User("u3", "inactive", null, null,
+                Collections.emptyList(), Collections.singletonList(inactiveNode));
+        when(userRepo.findAll()).thenReturn(Arrays.asList(
+                firstProjectMember, secondProjectMember, inactiveOnlyUser));
 
         NodeMetadata metadata = new NodeMetadata();
         NodeMetadata.Dataset ds1 = new NodeMetadata.Dataset();
@@ -102,7 +110,7 @@ class ProjectServiceTest {
         assertThat(dto1.getDescription()).isEqualTo("Description 1");
         assertThat(dto1.getBadge()).isEqualTo("badge1");
         assertThat(dto1.getNodeIds()).containsExactly("n1", "inactive-node");
-        assertThat(dto1.getMembersCount()).isEqualTo(5);
+        assertThat(dto1.getMembersCount()).isEqualTo(2);
         assertThat(dto1.getNodesCount()).isEqualTo(1);
         assertThat(dto1.getDcatCount()).isEqualTo(2);
         assertThat(dto1.getLastAccess()).isEqualTo(now.toString());
@@ -113,6 +121,7 @@ class ProjectServiceTest {
         assertThat(dto2.getNodesCount()).isZero();
         assertThat(dto2.getDcatCount()).isZero();
         assertThat(dto2.getImageUrl()).startsWith("data:image/png;base64,");
+        verify(userRepo).findAll();
     }
 
     @Test
@@ -122,7 +131,6 @@ class ProjectServiceTest {
         project.setName("Project");
         project.setNodeIds(Collections.singletonList("n1"));
         when(projectRepo.findAll()).thenReturn(Collections.singletonList(project));
-        when(userRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         NodeInfo node = new NodeInfo();
@@ -151,8 +159,6 @@ class ProjectServiceTest {
         project.setId("project-without-image");
         project.setName("Project without image");
         when(projectRepo.findAll()).thenReturn(Collections.singletonList(project));
-        when(userRepo.count()).thenReturn(0L);
-
         List<ProjectDTO> result = svc.listProjects();
 
         assertThat(result).hasSize(1);
@@ -175,12 +181,14 @@ class ProjectServiceTest {
         saved.setNodeIds(Collections.singletonList("n1"));
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
-        when(userRepo.count()).thenReturn(10L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         NodeInfo node = new NodeInfo();
         node.setNodeId("n1");
         when(nodeRepo.findAllById(Collections.singletonList("n1"))).thenReturn(Collections.singletonList(node));
+        User member = new User("u1", "member", null, null,
+                Collections.emptyList(), Collections.singletonList(node));
+        when(userRepo.findAll()).thenReturn(Collections.singletonList(member));
 
         ProjectDTO result = svc.saveProject(req);
 
@@ -189,7 +197,7 @@ class ProjectServiceTest {
         assertThat(result.getDescription()).isEqualTo("New Description");
         assertThat(result.getBadge()).isEqualTo("new-badge");
         assertThat(result.getNodeIds()).containsExactly("n1");
-        assertThat(result.getMembersCount()).isEqualTo(10);
+        assertThat(result.getMembersCount()).isEqualTo(1);
         assertThat(result.getNodesCount()).isEqualTo(1);
 
         ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
@@ -215,7 +223,6 @@ class ProjectServiceTest {
         saved.setBadge("updated-badge");
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
-        when(userRepo.count()).thenReturn(10L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         ProjectDTO result = svc.saveProject(req);
@@ -248,7 +255,6 @@ class ProjectServiceTest {
         saved.setImageContentType("image/png");
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
-        when(userRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         ProjectDTO result = svc.saveProject(req);
@@ -278,7 +284,6 @@ class ProjectServiceTest {
         saved.setBadge("badge");
 
         when(projectRepo.save(any(Project.class))).thenReturn(saved);
-        when(userRepo.count()).thenReturn(0L);
         when(nodeService.getLastNodeListAccess()).thenReturn(null);
 
         ProjectDTO result = svc.saveProject(req);

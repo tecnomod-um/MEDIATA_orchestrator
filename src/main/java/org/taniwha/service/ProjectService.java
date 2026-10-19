@@ -6,6 +6,7 @@ import org.taniwha.dto.SaveProjectRequestDTO;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.Project;
+import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.ProjectRepository;
 import org.taniwha.repository.UserRepository;
@@ -40,14 +41,13 @@ public class ProjectService {
     public List<ProjectDTO> listProjects() {
         List<Project> entities = projectRepository.findAll();
         List<ProjectDTO> out = new ArrayList<>();
-
-        int membersCount = (int) userRepository.count();
+        List<User> users = userRepository.findAll();
 
         Instant lastAccessInstant = nodeService.getLastNodeListAccess();
         String lastAccess = (lastAccessInstant != null) ? lastAccessInstant.toString() : null;
 
         for (Project e : entities) {
-            out.add(toDto(e, membersCount, lastAccess));
+            out.add(toDto(e, lastAccess, users));
         }
 
         return out;
@@ -84,7 +84,8 @@ public class ProjectService {
 
         Project saved = projectRepository.save(p);
         Instant lastAccessInstant = nodeService.getLastNodeListAccess();
-        return toDto(saved, (int) userRepository.count(), lastAccessInstant != null ? lastAccessInstant.toString() : null);
+        return toDto(saved, lastAccessInstant != null ? lastAccessInstant.toString() : null,
+                userRepository.findAll());
     }
 
     public List<String> getProjectNodeIds(String projectId) {
@@ -98,17 +99,17 @@ public class ProjectService {
                 .orElse(Collections.emptyList());
     }
 
-    private ProjectDTO toDto(Project project, int membersCount, String lastAccess) {
+    private ProjectDTO toDto(Project project, String lastAccess, List<User> users) {
         ProjectDTO dto = new ProjectDTO();
         dto.setId(project.getId());
         dto.setName(project.getName());
         dto.setDescription(project.getDescription());
         dto.setBadge(project.getBadge());
         dto.setNodeIds(normalizeNodeIds(project.getNodeIds()));
-        dto.setMembersCount(membersCount);
         dto.setLastAccess(lastAccess);
 
         List<NodeInfo> activeProjectNodes = getActiveProjectNodes(dto.getNodeIds());
+        dto.setMembersCount(computeMembersCount(activeProjectNodes, users));
         dto.setNodesCount(activeProjectNodes.size());
         dto.setDcatCount(computeDcatCount(activeProjectNodes));
 
@@ -167,6 +168,33 @@ public class ProjectService {
         }
 
         return total;
+    }
+
+    private int computeMembersCount(List<NodeInfo> nodes, List<User> users) {
+        if (nodes.isEmpty()) {
+            return 0;
+        }
+
+        Set<String> projectNodeIds = nodes.stream()
+                .map(NodeInfo::getNodeId)
+                .filter(nodeId -> nodeId != null && !nodeId.trim().isEmpty())
+                .map(String::trim)
+                .collect(Collectors.toSet());
+        if (projectNodeIds.isEmpty()) {
+            return 0;
+        }
+
+        if (users == null) {
+            return 0;
+        }
+
+        return (int) users.stream()
+                .filter(user -> user != null && user.getNodeIds() != null)
+                .filter(user -> user.getNodeIds().stream()
+                        .filter(node -> node != null && node.getNodeId() != null)
+                        .map(node -> node.getNodeId().trim())
+                        .anyMatch(projectNodeIds::contains))
+                .count();
     }
 
     private boolean isActive(NodeInfo nodeInfo) {
