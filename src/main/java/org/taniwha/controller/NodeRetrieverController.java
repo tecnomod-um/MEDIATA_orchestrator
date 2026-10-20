@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
@@ -14,6 +15,7 @@ import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
 import org.taniwha.service.ProjectService;
+import org.taniwha.service.ProjectProvenanceService;
 
 import java.util.HashMap;
 import java.util.List;
@@ -33,15 +35,18 @@ public class NodeRetrieverController {
     private final NodeAccessService nodeAccessService;
     private final TrustedNodeProxyConfig trustedNodeProxyConfig;
     private final ProjectService projectService;
+    private final ProjectProvenanceService provenanceService;
 
     public NodeRetrieverController(NodeService nodeService,
                                    NodeAccessService nodeAccessService,
                                    TrustedNodeProxyConfig trustedNodeProxyConfig,
-                                   ProjectService projectService) {
+                                   ProjectService projectService,
+                                   ProjectProvenanceService provenanceService) {
         this.nodeService = nodeService;
         this.nodeAccessService = nodeAccessService;
         this.trustedNodeProxyConfig = trustedNodeProxyConfig;
         this.projectService = projectService;
+        this.provenanceService = provenanceService;
     }
 
     @Operation(summary = "List nodes accessible to the current user")
@@ -62,13 +67,24 @@ public class NodeRetrieverController {
 
     @Operation(summary = "Connect to a node and return its information")
     @GetMapping("/info/{nodeId}")
-    public ResponseEntity<Map<String, Object>> getNodeInfo(@PathVariable String nodeId, @RequestHeader("Authorization") String userToken, @RequestHeader("Kerberos-TGT") String userTgt) {
+    public ResponseEntity<Map<String, Object>> getNodeInfo(
+            @PathVariable String nodeId,
+            @RequestParam(value = "projectId", required = false) String projectId,
+            @RequestHeader("Authorization") String userToken,
+            @RequestHeader("Kerberos-TGT") String userTgt,
+            Authentication authentication) {
         String jwtToken = userToken.substring(7);
         NodeInfo nodeInfo = nodeService.findNodeById(nodeId);
         if (nodeInfo == null || nodeInfo.getNodeId() == null) {
             logger.warn("Node not found.");
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put(ERROR, "Node not found");
+            return ResponseEntity.status(404).body(errorResponse);
+        }
+        if (projectId != null && !projectId.trim().isEmpty()
+                && !projectService.getProjectNodeIds(projectId).contains(nodeId)) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(ERROR, "Node is not part of this project.");
             return ResponseEntity.status(404).body(errorResponse);
         }
 
@@ -86,6 +102,8 @@ public class NodeRetrieverController {
             result.put("nodeInfo", nodeInfo);
             result.put("proxyRequired", trustedNodeProxyConfig.requiresProxy(nodeInfo));
             result.put("proxyBasePath", trustedNodeProxyConfig.proxyBasePath(nodeId));
+            provenanceService.recordUserNodeAccess(
+                    projectId, nodeId, nodeInfo.getName(), authentication);
             return ResponseEntity.ok(result);
         } else {
             String errorMessage = result.get(ERROR).toString();

@@ -21,14 +21,18 @@ import java.util.Set;
 public class OpenApiConfig {
 
     public static final String BEARER_AUTH = "bearerAuth";
+    public static final String NODE_SYNC_AUTH = "nodeSyncAuth";
 
     private static final Set<String> PUBLIC_POST_PATHS = Set.of(
             "/api/user/login",
             "/api/user/register",
             "/api/error",
             "/nodes/register",
-            "/nodes/heartbeat",
             "/nodes/deregister"
+    );
+    private static final Set<String> NODE_SYNC_POST_PATHS = Set.of(
+            "/nodes/heartbeat",
+            "/nodes/provenance/batch"
     );
 
     @Bean
@@ -45,14 +49,21 @@ public class OpenApiConfig {
                 .servers(List.of(new Server()
                         .url("/taniwha")
                         .description("Current MEDIATA orchestrator")))
-                .components(new Components().addSecuritySchemes(
-                        BEARER_AUTH,
-                        new SecurityScheme()
-                                .type(SecurityScheme.Type.HTTP)
-                                .scheme("bearer")
-                                .bearerFormat("JWT")
-                                .description("JWT returned by POST /api/user/login.")
-                ));
+                .components(new Components()
+                        .addSecuritySchemes(
+                                BEARER_AUTH,
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")
+                                        .description("JWT returned by POST /api/user/login."))
+                        .addSecuritySchemes(
+                                NODE_SYNC_AUTH,
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")
+                                        .description("Short-lived, endpoint-scoped JWT signed with the node's registered RSA private key.")));
     }
 
     @Bean
@@ -63,6 +74,17 @@ public class OpenApiConfig {
             }
             openApi.getPaths().forEach((path, pathItem) ->
                     pathItem.readOperationsMap().forEach((method, operation) -> {
+                        if (HttpMethod.POST.name().equals(method.name())
+                                && NODE_SYNC_POST_PATHS.contains(path)) {
+                            operation.setSecurity(List.of(
+                                    new SecurityRequirement().addList(NODE_SYNC_AUTH)));
+                            if (operation.getResponses() == null) {
+                                operation.setResponses(new ApiResponses());
+                            }
+                            operation.getResponses().putIfAbsent(
+                                    "401", new ApiResponse().description("Invalid node-scoped JWT."));
+                            return;
+                        }
                         if (HttpMethod.POST.name().equals(method.name()) && PUBLIC_POST_PATHS.contains(path)) {
                             operation.setSecurity(List.of());
                             return;

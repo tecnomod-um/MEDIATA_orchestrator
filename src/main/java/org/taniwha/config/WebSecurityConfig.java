@@ -46,7 +46,7 @@ public class WebSecurityConfig {
                                 "/v3/api-docs/**", "/v3/api-docs.yaml",
                                 "/swagger-ui.html", "/swagger-ui/**"
                         ).permitAll()
-                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/deregister").permitAll()
+                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/provenance/batch", "/nodes/deregister").permitAll()
                         .requestMatchers("/**").authenticated()
                 )
                 .sessionManagement(session -> session

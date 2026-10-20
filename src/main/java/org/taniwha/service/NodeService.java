@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeSummary;
 import org.taniwha.model.Project;
+import org.taniwha.model.ProjectProvenanceRecord;
 import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.ProjectRepository;
@@ -45,6 +46,7 @@ public class NodeService {
     private final NodeRepository nodeRepository;
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
+    private final ProjectProvenanceService provenanceService;
     private final Map<String, Instant> nodeHeartbeats = new ConcurrentHashMap<>();
 
     private final KerberosService kerberosService;
@@ -64,12 +66,18 @@ public class NodeService {
     private volatile Instant lastNodeListAccess;
 
     @Autowired
-    public NodeService(NodeRepository nodeRepository, UserRepository userRepository, ProjectRepository projectRepository, KerberosService kerberosService, PasswordEncoder passwordEncoder) {
+    public NodeService(NodeRepository nodeRepository,
+                       UserRepository userRepository,
+                       ProjectRepository projectRepository,
+                       KerberosService kerberosService,
+                       PasswordEncoder passwordEncoder,
+                       ProjectProvenanceService provenanceService) {
         this.nodeRepository = nodeRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.kerberosService = kerberosService;
         this.passwordEncoder = passwordEncoder;
+        this.provenanceService = provenanceService;
     }
 
     public String registerNode(NodeInfo nodeInfo) {
@@ -131,14 +139,18 @@ public class NodeService {
                 project.setDescription("Default project created on initialization");
                 project.setBadge("default");
             }
-            addNodeToProject(project, nodeInfo.getNodeId());
-            logger.info("Assigned node {} ({}) to project '{}'", nodeInfo.getName(), nodeInfo.getNodeId(), DEFAULT_PROJECT_NAME);
+            if (addNodeToProject(project, nodeInfo.getNodeId())) {
+                provenanceService.recordProjectNodeMembership(
+                        project.getId(), nodeInfo.getNodeId(), nodeInfo.getName(), true,
+                        ProjectProvenanceRecord.ActorType.SYSTEM, "MEDIATA orchestrator");
+                logger.info("Assigned node {} ({}) to project '{}'", nodeInfo.getName(), nodeInfo.getNodeId(), DEFAULT_PROJECT_NAME);
+            }
         } catch (Exception e) {
             logger.error("Failed to assign node {} to project '{}'", nodeInfo.getNodeId(), DEFAULT_PROJECT_NAME, e);
         }
     }
 
-    private void addNodeToProject(Project project, String nodeId) {
+    private boolean addNodeToProject(Project project, String nodeId) {
         List<String> nodeIds = project.getNodeIds();
         if (nodeIds == null) {
             nodeIds = new ArrayList<>();
@@ -152,7 +164,9 @@ public class NodeService {
             nodeIds.add(nodeId);
             project.setNodeIds(nodeIds);
             projectRepository.save(project);
+            return true;
         }
+        return false;
     }
 
     private boolean isDefaultProjectNode(NodeInfo nodeInfo) {
@@ -260,6 +274,9 @@ public class NodeService {
             if (remainingNodeIds.size() != project.getNodeIds().size()) {
                 project.setNodeIds(remainingNodeIds);
                 projectRepository.save(project);
+                provenanceService.recordProjectNodeMembership(
+                        project.getId(), normalizedNodeId, null, false,
+                        ProjectProvenanceRecord.ActorType.SYSTEM, "MEDIATA orchestrator");
                 logger.info("Removed deregistered node {} from project '{}'", normalizedNodeId, project.getName());
             }
         }

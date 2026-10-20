@@ -18,20 +18,23 @@ class OpenApiConfigTest {
 
         assertThat(openApi.getInfo().getTitle()).isEqualTo("MEDIATA Orchestrator API");
         assertThat(openApi.getComponents().getSecuritySchemes())
-                .containsKey(OpenApiConfig.BEARER_AUTH);
+                .containsKeys(OpenApiConfig.BEARER_AUTH, OpenApiConfig.NODE_SYNC_AUTH);
     }
 
     @Test
     void leavesPublicOperationsOpenAndSecuresApplicationOperations() {
         Operation login = new Operation();
         Operation projects = new Operation();
+        Operation heartbeat = new Operation();
         OpenAPI openApi = config.orchestratorOpenApi().paths(new Paths()
                 .addPathItem("/api/user/login", new PathItem().post(login))
+                .addPathItem("/nodes/heartbeat", new PathItem().post(heartbeat))
                 .addPathItem("/api/projects/list", new PathItem().get(projects)));
 
         config.orchestratorSecurityRequirements().customise(openApi);
 
         assertThat(login.getSecurity()).isNullOrEmpty();
+        assertThat(heartbeat.getSecurity().get(0)).containsKey(OpenApiConfig.NODE_SYNC_AUTH);
         assertThat(projects.getSecurity().get(0)).containsKey(OpenApiConfig.BEARER_AUTH);
     }
 }

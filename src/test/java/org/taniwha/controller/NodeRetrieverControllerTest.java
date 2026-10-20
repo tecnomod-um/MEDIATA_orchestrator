@@ -11,6 +11,7 @@ import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
 import org.taniwha.service.ProjectService;
+import org.taniwha.service.ProjectProvenanceService;
 
 import java.util.*;
 
@@ -27,6 +28,7 @@ class NodeRetrieverControllerTest {
     private NodeAccessService nodeAccessService;
     private TrustedNodeProxyConfig trustedNodeConfigService;
     private ProjectService projectService;
+    private ProjectProvenanceService provenanceService;
 
     private final String jwtHeader = "Bearer JWT123";
     private final String tgtHeader = "TGT-VAL";
@@ -37,8 +39,9 @@ class NodeRetrieverControllerTest {
         nodeAccessService = mock(NodeAccessService.class);
         trustedNodeConfigService = mock(TrustedNodeProxyConfig.class);
         projectService = mock(ProjectService.class);
+        provenanceService = mock(ProjectProvenanceService.class);
         mvc = MockMvcBuilders.standaloneSetup(
-                new NodeRetrieverController(nodeService, nodeAccessService, trustedNodeConfigService, projectService)
+                new NodeRetrieverController(nodeService, nodeAccessService, trustedNodeConfigService, projectService, provenanceService)
         ).build();
     }
 

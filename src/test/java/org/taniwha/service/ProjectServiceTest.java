@@ -33,13 +33,15 @@ class ProjectServiceTest {
     private NodeRepository nodeRepo;
     @Mock
     private NodeService nodeService;
+    @Mock
+    private ProjectProvenanceService provenanceService;
 
     private ProjectService svc;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        svc = new ProjectService(projectRepo, nodeAccessService, userRepo, nodeRepo, nodeService);
+        svc = new ProjectService(projectRepo, nodeAccessService, userRepo, nodeRepo, nodeService, provenanceService);
     }
 
     @Test

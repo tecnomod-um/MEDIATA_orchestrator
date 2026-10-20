@@ -29,13 +29,20 @@ public class ProjectService {
     private final UserRepository userRepository;
     private final NodeRepository nodeRepository;
     private final NodeService nodeService;
+    private final ProjectProvenanceService provenanceService;
 
-    public ProjectService(ProjectRepository projectRepository, NodeAccessService nodeAccessService, UserRepository userRepository, NodeRepository nodeRepository, NodeService nodeService) {
+    public ProjectService(ProjectRepository projectRepository,
+                          NodeAccessService nodeAccessService,
+                          UserRepository userRepository,
+                          NodeRepository nodeRepository,
+                          NodeService nodeService,
+                          ProjectProvenanceService provenanceService) {
         this.projectRepository = projectRepository;
         this.nodeAccessService = nodeAccessService;
         this.userRepository = userRepository;
         this.nodeRepository = nodeRepository;
         this.nodeService = nodeService;
+        this.provenanceService = provenanceService;
     }
 
     public List<ProjectDTO> listProjects() {
@@ -55,9 +62,14 @@ public class ProjectService {
 
     public ProjectDTO saveProject(SaveProjectRequestDTO req) {
         Project p = new Project();
+        List<String> previousNodeIds = Collections.emptyList();
 
         if (req.getId() != null && !req.getId().trim().isEmpty()) {
             p.setId(req.getId().trim());
+            previousNodeIds = projectRepository.findById(p.getId())
+                    .map(Project::getNodeIds)
+                    .map(this::normalizeNodeIds)
+                    .orElse(Collections.emptyList());
         }
 
         p.setName(req.getName());
@@ -83,9 +95,30 @@ public class ProjectService {
         }
 
         Project saved = projectRepository.save(p);
+        recordProjectNodeChanges(saved, previousNodeIds);
         Instant lastAccessInstant = nodeService.getLastNodeListAccess();
         return toDto(saved, lastAccessInstant != null ? lastAccessInstant.toString() : null,
                 userRepository.findAll());
+    }
+
+    private void recordProjectNodeChanges(Project project, List<String> previousNodeIds) {
+        Set<String> previous = new LinkedHashSet<>(normalizeNodeIds(previousNodeIds));
+        Set<String> current = new LinkedHashSet<>(normalizeNodeIds(project.getNodeIds()));
+
+        current.stream()
+                .filter(nodeId -> !previous.contains(nodeId))
+                .forEach(nodeId -> provenanceService.recordProjectNodeMembershipAsCurrentActor(
+                        project.getId(), nodeId, resolveNodeName(nodeId), true));
+        previous.stream()
+                .filter(nodeId -> !current.contains(nodeId))
+                .forEach(nodeId -> provenanceService.recordProjectNodeMembershipAsCurrentActor(
+                        project.getId(), nodeId, resolveNodeName(nodeId), false));
+    }
+
+    private String resolveNodeName(String nodeId) {
+        return nodeRepository.findById(nodeId)
+                .map(NodeInfo::getName)
+                .orElse(null);
     }
 
     public List<String> getProjectNodeIds(String projectId) {

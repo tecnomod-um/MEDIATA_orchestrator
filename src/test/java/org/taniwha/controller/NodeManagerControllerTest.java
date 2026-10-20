@@ -8,7 +8,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.NodeDTO;
 import org.taniwha.model.NodeHeartbeat;
+import org.taniwha.model.NodeInfo;
 import org.taniwha.service.NodeService;
+import org.taniwha.util.JwtTokenUtil;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -22,12 +24,15 @@ class NodeManagerControllerTest {
 
     private MockMvc mvc;
     private NodeService nodeService;
+    private JwtTokenUtil jwtTokenUtil;
     private final ObjectMapper om = new ObjectMapper();
 
     @BeforeEach
     void setup() {
         nodeService = mock(NodeService.class);
-        mvc = MockMvcBuilders.standaloneSetup(new NodeManagerController(nodeService)).build();
+        jwtTokenUtil = mock(JwtTokenUtil.class);
+        mvc = MockMvcBuilders.standaloneSetup(
+                new NodeManagerController(nodeService, jwtTokenUtil)).build();
     }
 
     @Test
@@ -110,14 +115,15 @@ class NodeManagerControllerTest {
         hb.setNodeId("n1");
         hb.setTimestamp(123L);
 
-        when(nodeService.nodeIsNotRegistered("n1")).thenReturn(true);
+        when(nodeService.findNodeById("n1")).thenReturn(null);
         mvc.perform(post("/nodes/heartbeat")
+                        .header("Authorization", "Bearer signed-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(om.writeValueAsString(hb)))
                 .andExpect(status().isNotFound())
                 .andExpect(content().string("Node not found, please re-register"));
 
-        verify(nodeService).nodeIsNotRegistered("n1");
+        verify(nodeService).findNodeById("n1");
         verify(nodeService, never()).updateHeartbeat(any());
     }
 
@@ -127,14 +133,39 @@ class NodeManagerControllerTest {
         hb.setNodeId("n1");
         hb.setTimestamp(123L);
 
-        when(nodeService.nodeIsNotRegistered("n1")).thenReturn(false);
+        NodeInfo node = new NodeInfo();
+        node.setNodeId("n1");
+        node.setPublicKey("node-public-key");
+        when(nodeService.findNodeById("n1")).thenReturn(node);
+        when(jwtTokenUtil.validateNodeSyncToken(
+                "signed-token", "n1", "/nodes/heartbeat", "node-public-key")).thenReturn(true);
         mvc.perform(post("/nodes/heartbeat")
+                        .header("Authorization", "Bearer signed-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(om.writeValueAsString(hb)))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Heartbeat received"));
 
         verify(nodeService).updateHeartbeat("n1");
+    }
+
+    @Test
+    void nodeHeartbeat_requiresNodeScopedToken() throws Exception {
+        NodeHeartbeat hb = new NodeHeartbeat();
+        hb.setNodeId("n1");
+        hb.setTimestamp(123L);
+        NodeInfo node = new NodeInfo();
+        node.setNodeId("n1");
+        node.setPublicKey("node-public-key");
+        when(nodeService.findNodeById("n1")).thenReturn(node);
+
+        mvc.perform(post("/nodes/heartbeat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(om.writeValueAsString(hb)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("Invalid node heartbeat token"));
+
+        verify(nodeService, never()).updateHeartbeat(any());
     }
 
     @Test

@@ -9,12 +9,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.taniwha.dto.NodeDTO;
 import org.taniwha.dto.RegisterResponseDTO;
 import org.taniwha.model.NodeHeartbeat;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.service.NodeService;
+import org.taniwha.util.JwtTokenUtil;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,10 +30,13 @@ public class NodeManagerController {
     private static final Logger logger = LoggerFactory.getLogger(NodeManagerController.class);
 
     private final NodeService nodeService;
+    private final JwtTokenUtil jwtTokenUtil;
 
     @Autowired
-    public NodeManagerController(NodeService nodeService) {
+    public NodeManagerController(NodeService nodeService,
+                                 JwtTokenUtil jwtTokenUtil) {
         this.nodeService = nodeService;
+        this.jwtTokenUtil = jwtTokenUtil;
     }
 
     @Operation(summary = "Register or reclaim a node")
@@ -84,18 +89,37 @@ public class NodeManagerController {
 
     @Operation(summary = "Refresh a node heartbeat")
     @PostMapping("/nodes/heartbeat")
-    public ResponseEntity<String> nodeHeartbeat(@RequestBody NodeHeartbeat heartbeat) {
+    public ResponseEntity<String> nodeHeartbeat(
+            @RequestBody NodeHeartbeat heartbeat,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
         if (heartbeat.getNodeId() == null || heartbeat.getTimestamp() <= 0) {
             logger.error("Invalid heartbeat data: {}", heartbeat);
             return ResponseEntity.badRequest().body("Invalid heartbeat data");
         }
-        if (nodeService.nodeIsNotRegistered(heartbeat.getNodeId())) {
+        NodeInfo node = nodeService.findNodeById(heartbeat.getNodeId());
+        if (node == null) {
             logger.warn("Node not found for heartbeat. Node ID: {}. Attempting to re-register.", heartbeat.getNodeId());
             return ResponseEntity.status(404).body("Node not found, please re-register");
+        }
+        if (!isValidNodeSyncToken(authorization, heartbeat.getNodeId(), node.getPublicKey())) {
+            logger.warn("Rejected unsigned heartbeat from node {}", heartbeat.getNodeId());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid node heartbeat token");
         }
         nodeService.updateHeartbeat(heartbeat.getNodeId());
         logger.debug("Heartbeat received for node: {}", heartbeat.getNodeId());
         return ResponseEntity.ok("Heartbeat received");
+    }
+
+    private boolean isValidNodeSyncToken(String authorization, String nodeId, String publicKey) {
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return false;
+        }
+        try {
+            return jwtTokenUtil.validateNodeSyncToken(
+                    authorization.substring(7), nodeId, "/nodes/heartbeat", publicKey);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     @Operation(summary = "Deregister a node")

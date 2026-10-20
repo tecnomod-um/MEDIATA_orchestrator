@@ -36,13 +36,15 @@ class NodeServiceTest {
     private KerberosService krb;
     @Mock
     private org.springframework.security.crypto.password.PasswordEncoder pwdEncoder;
+    @Mock
+    private ProjectProvenanceService provenanceService;
 
     private NodeService svc;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        svc = new NodeService(repo, userRepo, projectRepo, krb, pwdEncoder);
+        svc = new NodeService(repo, userRepo, projectRepo, krb, pwdEncoder, provenanceService);
         ReflectionTestUtils.setField(svc, "overwriteNode", false);
         ReflectionTestUtils.setField(svc, "nodeReclaimWindowMinutes", 60L);
         ReflectionTestUtils.setField(svc, "realm", "REALM");
