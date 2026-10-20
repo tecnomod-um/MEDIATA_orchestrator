@@ -1,6 +1,7 @@
 package org.taniwha.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +12,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.repository.NodeRepository;
 
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
+import java.util.Base64;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,9 +75,11 @@ public class NodeManagementIT extends BaseIntegrationTest {
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void testNodeHeartbeat() throws Exception {
         // First register a node
+        KeyPair nodeKey = newNodeKeyPair();
         NodeInfo node = new NodeInfo();
         node.setIp("192.168.1.101");
         node.setName("Heartbeat Test Node");
+        node.setPublicKey(encodedPublicKey(nodeKey));
         node = nodeRepository.save(node);
 
         Map<String, Object> heartbeatRequest = new HashMap<>();
@@ -80,6 +88,8 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/heartbeat")
                         .with(csrf())
+                        .header("Authorization", "Bearer " + nodeSyncToken(
+                                node.getNodeId(), "/nodes/heartbeat", nodeKey.getPrivate()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(heartbeatRequest)))
                 .andExpect(status().isOk());
@@ -131,10 +141,12 @@ public class NodeManagementIT extends BaseIntegrationTest {
         // Complete lifecycle: Register -> Heartbeat -> Deregister
 
         // 1. Register
+        KeyPair nodeKey = newNodeKeyPair();
         Map<String, Object> registerRequest = new HashMap<>();
         registerRequest.put("ip", "192.168.1.200");
         registerRequest.put("name", "Lifecycle Node");
         registerRequest.put("port", 8088);
+        registerRequest.put("publicKey", encodedPublicKey(nodeKey));
 
         mockMvc.perform(post("/nodes/register")
                         .with(csrf())
@@ -153,6 +165,8 @@ public class NodeManagementIT extends BaseIntegrationTest {
 
         mockMvc.perform(post("/nodes/heartbeat")
                         .with(csrf())
+                        .header("Authorization", "Bearer " + nodeSyncToken(
+                                registeredNode.getNodeId(), "/nodes/heartbeat", nodeKey.getPrivate()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(heartbeatRequest)))
                 .andExpect(status().isOk());
@@ -170,5 +184,30 @@ public class NodeManagementIT extends BaseIntegrationTest {
         NodeInfo deregisteredNode = nodeRepository.findById(registeredNode.getNodeId()).orElseThrow();
         assertFalse(deregisteredNode.getActive());
         assertNotNull(deregisteredNode.getDeregisteredAt());
+    }
+
+    private KeyPair newNodeKeyPair() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+    }
+
+    private String encodedPublicKey(KeyPair keyPair) {
+        return Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
+    }
+
+    private String nodeSyncToken(String nodeId, String endpoint, PrivateKey privateKey) {
+        return Jwts.builder()
+                .claims(Map.of(
+                        "token_use", "node_sync",
+                        "node_id", nodeId,
+                        "sync_endpoint", endpoint,
+                        "aud", "mediata-orchestrator"))
+                .issuer("mediata-node")
+                .subject(nodeId)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 120_000))
+                .signWith(privateKey)
+                .compact();
     }
 }
