@@ -19,9 +19,7 @@ import java.util.List;
 @CompoundIndexes({
         @CompoundIndex(name = "project_occurred_idx", def = "{'projectId': 1, 'occurredAt': -1}"),
         @CompoundIndex(name = "project_activity_idx", def = "{'projectId': 1, 'activityId': 1, 'occurredAt': 1}"),
-        @CompoundIndex(name = "project_event_idx", def = "{'projectId': 1, 'eventType': 1, 'occurredAt': -1}"),
-        @CompoundIndex(name = "project_node_source_event_unique_idx",
-                def = "{'projectId': 1, 'nodeId': 1, 'sourceEventId': 1}", unique = true, sparse = true)
+        @CompoundIndex(name = "project_event_idx", def = "{'projectId': 1, 'eventType': 1, 'occurredAt': -1}")
 })
 public class ProjectProvenanceRecord {
 
