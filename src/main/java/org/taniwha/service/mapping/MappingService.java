@@ -51,6 +51,7 @@ public class MappingService {
     private final ColumnClusterer columnClusterer;
     private final ColumnPicker columnPicker;
     private final MappingAssembler mappingAssembler;
+    private final SuggestionTerminologyPropagator terminologyPropagator;
     private final MappingEnrichmentHelper enrichmentHelper;
     private final SchemaColumnMatchGuard schemaColumnMatchGuard;
 
@@ -69,6 +70,7 @@ public class MappingService {
         this.columnClusterer   = new ColumnClusterer(mappingSettings);
         this.columnPicker      = new ColumnPicker();
         this.mappingAssembler  = new MappingAssembler(valueMappingBuilder);
+        this.terminologyPropagator = new SuggestionTerminologyPropagator();
         this.schemaColumnMatchGuard = new SchemaColumnMatchGuard();
         this.enrichmentHelper  = new MappingEnrichmentHelper(
                 openMedTerminologyService,
@@ -120,6 +122,7 @@ public class MappingService {
         } else {
             out = suggestWithSchema(schemaFields, processedColumns);
         }
+        terminologyPropagator.propagate(columnDTOs, out);
         return out;
     }
 

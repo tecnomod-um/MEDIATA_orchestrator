@@ -28,6 +28,8 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * Comprehensive functional test suite for MappingService.
@@ -139,6 +141,31 @@ class MappingServiceTest {
         List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
         
         assertNotNull(result, "Result should not be null");
+    }
+
+    @Test
+    @DisplayName("Source terminology is propagated after matching and excluded from embeddings")
+    void testSourceTerminologyIsPostProcessingOnly() {
+        ColumnInFileDTO first = createElementFile("ClinicalStatus", List.of("Y", "N"), "first.csv");
+        first.setTerminology("Clinical finding | 404684003");
+        ColumnInFileDTO second = createElementFile("ClinicalStatus", List.of("Yes", "No"), "second.csv");
+        second.setTerminology("clinical finding | 404684003");
+
+        MappingSuggestRequestDTO req = new MappingSuggestRequestDTO();
+        req.setElementFiles(List.of(first, second));
+
+        List<Map<String, SuggestedMappingDTO>> result = mappingService.suggestMappings(req);
+
+        SuggestedMappingDTO combined = result.stream()
+                .flatMap(mapping -> mapping.values().stream())
+                .filter(mapping -> mapping.getColumns() != null && mapping.getColumns().size() == 2)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("Clinical finding | 404684003", combined.getTerminology());
+        verify(embeddingService, never()).embedColumnWithValues(
+                org.mockito.ArgumentMatchers.argThat(text -> text != null && text.contains("404684003")),
+                any()
+        );
     }
 
     @Test
