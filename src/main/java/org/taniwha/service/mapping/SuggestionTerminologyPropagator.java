@@ -21,6 +21,12 @@ final class SuggestionTerminologyPropagator {
     private static final int MIN_AGREEING_SOURCES = 2;
     private static final Pattern SCTID_SUFFIX = Pattern.compile("(?:^|\\||/id/)\\s*(\\d{6,})\\s*$");
 
+    static String conceptId(String terminology) {
+        if (terminology == null) return "";
+        Matcher matcher = SCTID_SUFFIX.matcher(terminology.trim());
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
     void propagate(
             List<ColumnInFileDTO> sources,
             List<Map<String, SuggestedMappingDTO>> suggestions
@@ -63,10 +69,67 @@ final class SuggestionTerminologyPropagator {
 
         for (SuggestedGroupDTO group : mapping.getGroups()) {
             if (group == null || group.getValues() == null) continue;
+            mergeEquivalentValues(group, annotations);
             for (SuggestedValueDTO value : group.getValues()) {
                 propagateValue(value, annotations);
             }
         }
+    }
+
+    private void mergeEquivalentValues(
+            SuggestedGroupDTO group,
+            Map<SourceColumnKey, SourceAnnotations> annotations
+    ) {
+        Map<String, SuggestedValueDTO> firstByConcept = new LinkedHashMap<>();
+        List<SuggestedValueDTO> retained = new ArrayList<>();
+        for (SuggestedValueDTO value : group.getValues()) {
+            String id = valueConceptId(value, annotations);
+            SuggestedValueDTO first = id.isEmpty() ? null : firstByConcept.get(id);
+            if (first != null && compatibleExistingTerms(first, value, id)
+                    && disjointSources(first, value)) {
+                List<SuggestedRefDTO> refs = new ArrayList<>(first.getMapping());
+                refs.addAll(value.getMapping());
+                first.setMapping(refs);
+            } else {
+                retained.add(value);
+                if (!id.isEmpty()) firstByConcept.putIfAbsent(id, value);
+            }
+        }
+        group.setValues(retained);
+    }
+
+    private boolean compatibleExistingTerms(SuggestedValueDTO left, SuggestedValueDTO right, String id) {
+        String leftId = conceptId(left.getTerminology());
+        String rightId = conceptId(right.getTerminology());
+        return (leftId.isEmpty() || leftId.equals(id)) && (rightId.isEmpty() || rightId.equals(id));
+    }
+
+    private String valueConceptId(
+            SuggestedValueDTO value,
+            Map<SourceColumnKey, SourceAnnotations> annotations
+    ) {
+        if (value == null || value.getMapping() == null || value.getMapping().isEmpty()) return "";
+        String id = "";
+        for (SuggestedRefDTO ref : value.getMapping()) {
+            if (!(ref.getValue() instanceof String rawValue)) return "";
+            SourceAnnotations source = annotations.get(sourceKey(ref));
+            if (source == null) continue;
+            String next = conceptId(source.valueTerminologies().get(normalizeValue(rawValue)));
+            if (next.isEmpty()) continue;
+            if (!id.isEmpty() && !id.equals(next)) return "";
+            id = next;
+        }
+        return id;
+    }
+
+    private boolean disjointSources(SuggestedValueDTO left, SuggestedValueDTO right) {
+        if (left.getMapping() == null || right.getMapping() == null) return false;
+        for (SuggestedRefDTO a : left.getMapping()) {
+            for (SuggestedRefDTO b : right.getMapping()) {
+                if (sourceKey(a).equals(sourceKey(b))) return false;
+            }
+        }
+        return true;
     }
 
     private void propagateValue(

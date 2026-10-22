@@ -83,6 +83,7 @@ class ColumnClusterer {
             String key = sanitizeUnionName(StringUtil.safeTrim(c.concept).toLowerCase(Locale.ROOT));
             if (key.isEmpty()) key = "__empty__";
             key = key + "__role_" + initialRoleKey(inferRole(c));
+            if (!c.terminologyId.isEmpty()) key += "__sctid_" + c.terminologyId;
             byConcept.computeIfAbsent(key, k -> new ColCluster()).add(c);
         }
 
@@ -99,6 +100,10 @@ class ColumnClusterer {
 
             for (ColCluster cl : merged) {
                 if (!rolesCompatible(col, cl)) continue;
+                String sourceId = unambiguousTerminologyId(col);
+                String targetId = unambiguousTerminologyId(cl);
+                if (!sourceId.isEmpty() && !targetId.isEmpty() && !sourceId.equals(targetId)) continue;
+                boolean sameConcept = !sourceId.isEmpty() && sourceId.equals(targetId);
 
                 double sim = MappingMathUtil.cosine(col.centroid, cl.centroid);
 
@@ -131,14 +136,14 @@ class ColumnClusterer {
 
                 boolean hasMutualSemanticEvidence = false;
 
-                if (!(hasTokenOverlap || hasAbbrevPair || hasValueEvidence || hasMutualSemanticEvidence)) continue;
+                if (!(sameConcept || hasTokenOverlap || hasAbbrevPair || hasValueEvidence || hasMutualSemanticEvidence)) continue;
 
                 logger.debug("[CLUSTER] '{}' vs '{}': sim={}, jac={}, abbrev={}, valueEvidence={}, mutualSemantic={}",
                         colConcept, cl.representativeConcept, sim, jac, hasAbbrevPair, hasValueEvidence,
                         hasMutualSemanticEvidence);
 
-                double ensembleScore = ensembleScore(col, cl, sim, jac, hasAbbrevPair, hasValueEvidence,
-                        hasMutualSemanticEvidence);
+                double ensembleScore = sameConcept ? 1.0 : ensembleScore(col, cl, sim, jac,
+                        hasAbbrevPair, hasValueEvidence, hasMutualSemanticEvidence);
                 if (ensembleScore >= settings.columnClusterThreshold() && ensembleScore > bestMatchSim) {
                     bestMatchSim = ensembleScore;
                     bestMatch = cl;
@@ -165,6 +170,16 @@ class ColumnClusterer {
     private String initialRoleKey(ColumnRole role) {
         if (role == null || role == ColumnRole.UNKNOWN) return "unknown";
         return role.name().toLowerCase(Locale.ROOT);
+    }
+
+    private String unambiguousTerminologyId(ColCluster cluster) {
+        String id = "";
+        for (EmbeddedColumn column : cluster.cols) {
+            if (column.terminologyId.isEmpty()) continue;
+            if (!id.isEmpty() && !id.equals(column.terminologyId)) return "";
+            id = column.terminologyId;
+        }
+        return id;
     }
 
     private double ensembleScore(

@@ -144,6 +144,27 @@ class SuggestionTerminologyPropagatorTest {
         assertThat(mapping.getGroups().get(0).getValues().get(0).getTerminology()).isNull();
     }
 
+    @Test
+    void mergesSeparateCategoricalBucketsWithTheSameSnomedId() {
+        ColumnInFileDTO first = source("n1", "a.csv", "Response", "",
+                Map.of("Y", "Present | 52101004"));
+        ColumnInFileDTO second = source("n2", "b.csv", "Finding", "",
+                Map.of("Yes", "http://snomed.info/id/52101004"));
+        SuggestedMappingDTO mapping = suggestion(ref("n1", "a.csv", "Response", "Y"));
+        SuggestedValueDTO other = new SuggestedValueDTO();
+        other.setName("Yes");
+        other.setMapping(List.of(ref("n2", "b.csv", "Finding", "Yes")));
+        mapping.getGroups().get(0).setValues(new java.util.ArrayList<>(List.of(
+                mapping.getGroups().get(0).getValues().get(0), other)));
+
+        propagator.propagate(List.of(first, second), List.of(Map.of("Response", mapping)));
+
+        assertThat(mapping.getGroups().get(0).getValues()).hasSize(1);
+        assertThat(mapping.getGroups().get(0).getValues().get(0).getMapping()).hasSize(2);
+        assertThat(mapping.getGroups().get(0).getValues().get(0).getTerminology())
+                .isEqualTo("Present | 52101004");
+    }
+
     private ColumnInFileDTO source(
             String nodeId,
             String fileName,

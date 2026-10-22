@@ -14,6 +14,7 @@ public final class EmbeddedColumn {
     public final float[] vec;
     public final float[] valueVec;
     public final ColStats stats;
+    public final String terminologyId;
 
     public EmbeddedColumn(
             String nodeId,
@@ -25,6 +26,14 @@ public final class EmbeddedColumn {
             float[] valueVec,
             ColStats stats
     ) {
+        this(nodeId, fileName, column, concept, rawValues, vec, valueVec, stats, "");
+    }
+
+    public EmbeddedColumn(
+            String nodeId, String fileName, String column, String concept,
+            List<String> rawValues, float[] vec, float[] valueVec, ColStats stats,
+            String terminologyId
+    ) {
         this.nodeId = nodeId;
         this.fileName = fileName;
         this.column = column;
@@ -33,6 +42,7 @@ public final class EmbeddedColumn {
         this.vec = vec;
         this.valueVec = valueVec;
         this.stats = (stats == null) ? new ColStats() : stats;
+        this.terminologyId = terminologyId == null ? "" : terminologyId;
     }
 
     public String fileKey() {

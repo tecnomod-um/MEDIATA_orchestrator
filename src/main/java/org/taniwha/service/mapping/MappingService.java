@@ -110,7 +110,8 @@ public class MappingService {
             }
             // Value vectors stay separate so domain similarity does not distort the main semantic embedding.
             float[] valueVec = ValueVectorUtil.build(rawValues);
-            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, valueVec, stats));
+            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues,
+                    combined, valueVec, stats, SuggestionTerminologyPropagator.conceptId(c.getTerminology())));
         });
         if (processedColumns.isEmpty()) return Collections.emptyList();
 
@@ -287,7 +288,8 @@ public class MappingService {
                     col.rawValues,
                     vec,
                     col.valueVec,
-                    col.stats
+                    col.stats,
+                    col.terminologyId
             ));
         }
         return out;
