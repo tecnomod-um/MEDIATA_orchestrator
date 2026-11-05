@@ -14,9 +14,17 @@ import org.taniwha.kerberos.CustomKdcServer;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.io.IOException;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 class KerberosServiceTest {
@@ -38,6 +46,35 @@ class KerberosServiceTest {
                 "TEST.REALM",
                 "target/test-keytabs"
         );
+    }
+
+    @Test
+    void oversizedTgtIsRejectedBeforeCallingKdc() {
+        assertThrows(IOException.class, () -> kerberosService.requestSgt(
+                "A".repeat(4 * ((2 * 1024 * 1024 + 2) / 3) + 1), "node@TEST.REALM"));
+        verifyNoInteractions(mockKrbClient);
+    }
+
+    @Test
+    void authenticationAndPrincipalCreationDoNotLogPasswords() throws Exception {
+        String password = "unique-password-that-must-not-appear-in-logs";
+        Logger logger = (Logger) LoggerFactory.getLogger(KerberosService.class);
+        Level originalLevel = logger.getLevel();
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.DEBUG);
+        try {
+            when(mockKrbClient.requestTgt("review@TEST.REALM", password))
+                    .thenThrow(new KrbException("Test authentication failure"));
+            kerberosService.createPrincipal("review@TEST.REALM", password);
+            kerberosService.requestTgt("review@TEST.REALM", password);
+            assertFalse(appender.list.stream().anyMatch(event -> event.getFormattedMessage().contains(password)));
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(originalLevel);
+            appender.stop();
+        }
     }
 
     @Test
