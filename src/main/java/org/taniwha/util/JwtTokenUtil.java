@@ -2,6 +2,7 @@ package org.taniwha.util;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,8 @@ public class JwtTokenUtil {
 
     private static final String NODE_SYNC_ISSUER = "mediata-node";
     private static final String NODE_SYNC_AUDIENCE = "mediata-orchestrator";
+    private static final String USER_ISSUER = "mediata-orchestrator";
+    private static final String USER_AUDIENCE = "mediata-central";
 
     @Value("${jwt.secret}")
     private String secret;
@@ -35,21 +38,39 @@ public class JwtTokenUtil {
 
     public String generateToken(String subject) {
         Map<String, Object> claims = new HashMap<>();
+        claims.put("token_use", "central_user");
         return doGenerateToken(claims, subject);
     }
 
     private String doGenerateToken(Map<String, Object> claims, String subject) {
-        return Jwts.builder()
+        JwtBuilder builder = Jwts.builder()
                 .claims(claims)
                 .subject(subject)
                 .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
-                .signWith(getSigningKey())
-                .compact();
+                .expiration(new Date(System.currentTimeMillis() + expiration * 1000));
+        if ("central_user".equals(claims.get("token_use"))) {
+            builder.issuer(USER_ISSUER).audience().add(USER_AUDIENCE).and();
+        }
+        return builder.signWith(getSigningKey()).compact();
     }
 
     public String getUsernameFromToken(String token) {
         return getAllClaimsFromToken(token).getSubject();
+    }
+
+    public boolean isUserAccessToken(String token) {
+        try {
+            Claims claims = getAllClaimsFromToken(token);
+            return "central_user".equals(claims.get("token_use", String.class))
+                    && USER_ISSUER.equals(claims.getIssuer())
+                    && claims.getAudience() != null
+                    && claims.getAudience().contains(USER_AUDIENCE)
+                    && claims.getSubject() != null
+                    && claims.getExpiration() != null
+                    && !claims.getExpiration().before(new Date());
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private Claims getAllClaimsFromToken(String token) {

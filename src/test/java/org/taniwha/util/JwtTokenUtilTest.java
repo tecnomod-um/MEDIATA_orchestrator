@@ -68,6 +68,23 @@ class JwtTokenUtilTest {
 
         assertThat(token).isNotBlank();
         assertThat(token.split("\\.")).hasSize(3); // JWT has 3 parts separated by dots
+        assertThat(util.isUserAccessToken(token)).isTrue();
+    }
+
+    @Test
+    void isUserAccessToken_rejectsNodePurposeToken() {
+        JwtTokenUtil util = loadWith("AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH", "3600");
+        String token = Jwts.builder()
+                .claims(Map.of("token_use", "node_access", "node_id", "node-1", "aud", "mediata-node-access"))
+                .issuer("mediata-node")
+                .subject("alice")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 3600_000))
+                .signWith(io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                        "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH".getBytes()))
+                .compact();
+
+        assertThat(util.isUserAccessToken(token)).isFalse();
     }
 
     @Test

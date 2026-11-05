@@ -61,6 +61,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String username = validateTokenAndExtractUsername(jwtToken, response);
         if (username == null) return;
 
+        if (!jwtTokenUtil.isUserAccessToken(jwtToken)) {
+            filterLogger.warn("JWT token is not scoped for central user access");
+            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid token purpose");
+            return;
+        }
+
         if (!authenticateUser(request, response, jwtToken, username)) return;
 
         chain.doFilter(request, response);

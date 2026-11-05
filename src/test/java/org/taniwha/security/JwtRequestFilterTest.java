@@ -57,6 +57,7 @@ class JwtRequestFilterTest {
         MockitoAnnotations.openMocks(this);
         jwtRequestFilter = new JwtRequestFilter(jwtTokenUtil, applicationContext);
         ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", true);
+        when(jwtTokenUtil.isUserAccessToken(anyString())).thenReturn(true);
         SecurityContextHolder.clearContext();
     }
 
@@ -213,6 +214,38 @@ class JwtRequestFilterTest {
         verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
         verify(response).setHeader("X-Token-Expired", "true");
         verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void expiredSignedTokenPreservesSessionExpiryHeader() throws ServletException, IOException {
+        JwtTokenUtil realTokens = new JwtTokenUtil();
+        ReflectionTestUtils.setField(realTokens, "secret", "local-test-signing-key-with-at-least-32-bytes");
+        ReflectionTestUtils.setField(realTokens, "expiration", -60L);
+        JwtRequestFilter filter = new JwtRequestFilter(realTokens, applicationContext);
+        ReflectionTestUtils.setField(filter, "jwtFilterEnabled", true);
+        when(request.getRequestURI()).thenReturn("/taniwha/api/projects/list");
+        when(request.getHeader("Authorization")).thenReturn("Bearer " + realTokens.generateToken("admin"));
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(response).setHeader("X-Token-Expired", "true");
+        verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
+        verify(filterChain, never()).doFilter(any(), any());
+        verifyNoInteractions(applicationContext);
+    }
+
+    @Test
+    void wrongPurposeTokenRemainsRejected() throws ServletException, IOException {
+        when(request.getRequestURI()).thenReturn("/taniwha/api/projects/list");
+        when(request.getHeader("Authorization")).thenReturn("Bearer wrongPurpose");
+        when(jwtTokenUtil.getUsernameFromToken("wrongPurpose")).thenReturn("admin");
+        when(jwtTokenUtil.isUserAccessToken("wrongPurpose")).thenReturn(false);
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(response).sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid token purpose");
+        verify(filterChain, never()).doFilter(any(), any());
+        verifyNoInteractions(applicationContext);
     }
 
     @Test
