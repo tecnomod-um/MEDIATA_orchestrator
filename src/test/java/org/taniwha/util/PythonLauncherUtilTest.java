@@ -78,6 +78,22 @@ class PythonLauncherUtilTest {
     }
 
     @Test
+    void ensureDependencies_updatesPackagingTools(@TempDir Path tmp) throws IOException {
+        Path project = tmp.resolve("project with spaces");
+        Path bin = project.resolve(".venv/bin");
+        Files.createDirectories(bin);
+        Files.writeString(bin.resolve("activate"),
+                "python() { printf '%s\\n' \"$*\" >> \"$COMMAND_LOG\"; }\n");
+        Path log = tmp.resolve("commands.log");
+
+        PythonLauncherUtil.ensureDependencies(project.toFile(),
+                Map.of("COMMAND_LOG", log.toString()), bin.resolve("python").toFile(), List.of());
+
+        assertThat(Files.readString(log)).contains(
+                "-m pip install --upgrade pip>=26.2 setuptools>=84.1 wheel>=0.46.2");
+    }
+
+    @Test
     void ensureDependencies_doesNotThrowEvenIfPipCommandsFail(@TempDir Path tmp) throws IOException {
         Path proj = tmp.resolve("p");
         Files.createDirectories(proj);
