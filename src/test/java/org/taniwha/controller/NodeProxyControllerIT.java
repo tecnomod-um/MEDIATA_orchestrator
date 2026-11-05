@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,12 +31,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.MessageDigest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -45,6 +51,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class NodeProxyControllerIT {
 
+    private static final String SHARED_SECRET = "12345678901234567890123456789012";
     @TempDir
     Path tempDir;
 
@@ -66,7 +73,9 @@ class NodeProxyControllerIT {
         nodeInfo = new NodeInfo("node1", serviceUrl, "Node", null, "", "#fff", null);
 
         Path configFile = tempDir.resolve("trusted-servers.config");
-        Files.writeString(configFile, serviceUrl + System.lineSeparator(), StandardCharsets.UTF_8);
+        Files.writeString(configFile, serviceUrl + "|"
+                + serviceUrl + "|" + SHARED_SECRET
+                + System.lineSeparator(), StandardCharsets.UTF_8);
 
         nodeService = mock(NodeService.class);
         when(nodeService.findNodeById("node1")).thenReturn(nodeInfo);
@@ -195,11 +204,26 @@ class NodeProxyControllerIT {
     @Test
     void proxyNodeRequest_isolatesTimeoutAndServesTheNextRequest() throws Exception {
         RestTemplate restTemplate = mock(RestTemplate.class);
-        when(restTemplate.exchange(
-                any(URI.class), any(HttpMethod.class), any(HttpEntity.class), eq(byte[].class)
-        )).thenThrow(new ResourceAccessException(
-                "Read timed out", new SocketTimeoutException("Read timed out")
-        )).thenReturn(ResponseEntity.ok("[]".getBytes(StandardCharsets.UTF_8)));
+        doAnswer(invocation -> {
+            throw new ResourceAccessException(
+                    "Read timed out", new SocketTimeoutException("Read timed out"));
+        }).doAnswer(invocation -> {
+            URI target = invocation.getArgument(0);
+            HttpMethod method = invocation.getArgument(1);
+            HttpEntity<?> entity = invocation.getArgument(2);
+            byte[] body = "[]".getBytes(StandardCharsets.UTF_8);
+            String timestamp = Long.toString(System.currentTimeMillis() / 1000);
+            String contentHash = sha256Base64(body);
+            String nonce = entity.getHeaders().getFirst("X-Taniwha-Nonce");
+            String canonical = String.join("\n", "RESP", "200", method.name(),
+                    target.getRawPath(), nonce, timestamp, contentHash);
+            HttpHeaders headers = new HttpHeaders();
+            headers.add("X-Taniwha-Response-Timestamp", timestamp);
+            headers.add("X-Taniwha-Response-Content-SHA256", contentHash);
+            headers.add("X-Taniwha-Response-Signature", hmacBase64(canonical));
+            return new ResponseEntity<>(body, headers, org.springframework.http.HttpStatus.OK);
+        }).when(restTemplate).exchange(
+                any(URI.class), any(HttpMethod.class), any(HttpEntity.class), eq(byte[].class));
 
         RestTemplateConfig restTemplateConfig = mock(RestTemplateConfig.class);
         when(restTemplateConfig.getNodeProxyRestTemplate()).thenReturn(restTemplate);
@@ -247,9 +271,37 @@ class NodeProxyControllerIT {
         }
 
         byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+        String timestamp = Long.toString(System.currentTimeMillis() / 1000);
+        String contentHash = sha256Base64(bytes);
+        String nonce = exchange.getRequestHeaders().getFirst("X-Taniwha-Nonce");
+        String pathAndQuery = exchange.getRequestURI().toString();
+        String canonical = String.join("\n", "RESP", "200", exchange.getRequestMethod(),
+                pathAndQuery, nonce, timestamp, contentHash);
+        exchange.getResponseHeaders().add("X-Taniwha-Response-Timestamp", timestamp);
+        exchange.getResponseHeaders().add("X-Taniwha-Response-Content-SHA256", contentHash);
+        exchange.getResponseHeaders().add("X-Taniwha-Response-Signature", hmacBase64(canonical));
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    private String sha256Base64(byte[] body) throws IOException {
+        try {
+            return Base64.getEncoder().encodeToString(
+                    MessageDigest.getInstance("SHA-256").digest(body));
+        } catch (Exception e) {
+            throw new IOException("Unable to hash test response", e);
+        }
+    }
+
+    private String hmacBase64(String payload) throws IOException {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(SHARED_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getEncoder().encodeToString(mac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IOException("Unable to sign test response", e);
+        }
     }
 
     private record CapturedRequest(String method, String path, String authorization, String body) {

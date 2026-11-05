@@ -88,6 +88,10 @@ public class NodeProxyController {
         if (route.isEmpty()) {
             return proxiedResponse(HttpStatus.FORBIDDEN, "Proxying is not enabled for this node".getBytes(), new HttpHeaders());
         }
+        if (route.get().sharedSecret() == null || route.get().sharedSecret().length() < 32) {
+            logger.error("Trusted HTTP route for node {} has no strong shared secret", nodeId);
+            return proxiedResponse(HttpStatus.SERVICE_UNAVAILABLE, "Trusted proxy is not securely configured".getBytes(), new HttpHeaders());
+        }
 
         String downstreamPath = extractDownstreamPath(request);
         String targetUrl = buildTargetUrl(route.get().upstreamBaseUrl(), downstreamPath, request.getQueryString());
