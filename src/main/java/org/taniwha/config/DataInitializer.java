@@ -109,8 +109,8 @@ public class DataInitializer {
             kerberosService.createPrincipal(principalName, DEFAULT_PASSWORD);
             kerberosService.createKeytab(principalName);
 
-            logger.warn("Created default admin user - Username: '{}', Password: '{}'. CHANGE THIS IN PRODUCTION!",
-                    DEFAULT_USERNAME, DEFAULT_PASSWORD);
+            logger.warn("Created default admin user '{}'. Change its credentials before production use!",
+                    DEFAULT_USERNAME);
 
         } catch (KrbException e) {
             logger.error("Failed to create Kerberos principal for default admin user", e);
