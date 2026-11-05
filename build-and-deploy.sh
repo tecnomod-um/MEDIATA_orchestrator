@@ -54,9 +54,18 @@ else
   normalize_env_file ".env"
 fi
 
+# Explicit launcher overrides must survive sourcing production .env defaults.
+launcher_proxy_hosts="${TRUSTED_PROXY_ALLOWED_UPSTREAM_HOSTS-}"
+launcher_proxy_http="${TRUSTED_PROXY_ALLOW_HTTP_UPSTREAM-}"
 set -a
 source ".env"
 set +a
+if [[ -n "$launcher_proxy_hosts" ]]; then
+  export TRUSTED_PROXY_ALLOWED_UPSTREAM_HOSTS="$launcher_proxy_hosts"
+fi
+if [[ -n "$launcher_proxy_http" ]]; then
+  export TRUSTED_PROXY_ALLOW_HTTP_UPSTREAM="$launcher_proxy_http"
+fi
 
 ENABLE_RDF_BUILDER="${ENABLE_RDF_BUILDER:-false}"
 ENABLE_FHIR_API="${ENABLE_FHIR_API:-false}"
