@@ -94,6 +94,13 @@ public class NodeProxyController {
         }
 
         String downstreamPath = extractDownstreamPath(request);
+        // Dataset records must never enter this tunnel, even if node download policy permits them.
+        String inspected = downstreamPath;
+        for (int i = 0; i < 3; i++) inspected = org.springframework.web.util.UriUtils.decode(inspected, java.nio.charset.StandardCharsets.UTF_8);
+        inspected = URI.create("/" + inspected.replaceFirst("^/+", "").replaceAll(";[^/]*", "")).normalize().getPath();
+        if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && inspected.contains("/api/files/datasets/")) {
+            return proxiedResponse(HttpStatus.FORBIDDEN, "Dataset records cannot be relayed through the orchestrator".getBytes(), new HttpHeaders());
+        }
         String targetUrl = buildTargetUrl(route.get().upstreamBaseUrl(), downstreamPath, request.getQueryString());
         HttpMethod method = HttpMethod.valueOf(request.getMethod());
         HttpHeaders headers = buildForwardHeaders(request, downstreamPath);
@@ -116,26 +123,26 @@ public class NodeProxyController {
             ResponseEntity<byte[]> response = restTemplate.exchange(targetUri, method, entity, byte[].class);
             if (!trustedNodeSignatureService.verifyResponseIfNeeded(
                     signedRequestContext, response.getStatusCode(), response.getHeaders(), response.getBody())) {
-                logger.warn("Trusted proxy signature verification failed for node {} at {}", nodeId, targetUrl);
+                logger.warn("Trusted proxy signature verification failed for node {}", nodeId);
                 return proxiedResponse(HttpStatus.BAD_GATEWAY, "Invalid proxied node response signature".getBytes(), new HttpHeaders());
             }
             return proxiedResponse(response.getStatusCode(), response.getBody(), response.getHeaders());
         } catch (HttpStatusCodeException e) {
             if (!trustedNodeSignatureService.verifyResponseIfNeeded(
                     signedRequestContext, e.getStatusCode(), e.getResponseHeaders(), e.getResponseBodyAsByteArray())) {
-                logger.warn("Trusted proxy signature verification failed for error response from node {} at {}", nodeId, targetUrl);
+                logger.warn("Trusted proxy signature verification failed for error response from node {}", nodeId);
                 return proxiedResponse(HttpStatus.BAD_GATEWAY, "Invalid proxied node response signature".getBytes(), new HttpHeaders());
             }
             return proxiedResponse(e.getStatusCode(), e.getResponseBodyAsByteArray(), e.getResponseHeaders());
         } catch (ResourceAccessException e) {
             if (hasCause(e, SocketTimeoutException.class)) {
-                logger.warn("Timed out proxying request to node {} at {}: {}", nodeId, targetUrl, e.getMessage());
+                logger.warn("Timed out proxying request to node {}", nodeId);
                 return proxiedResponse(HttpStatus.GATEWAY_TIMEOUT, "Proxied node request timed out".getBytes(), new HttpHeaders());
             }
-            logger.warn("I/O error proxying request to node {} at {}: {}", nodeId, targetUrl, e.getMessage());
+            logger.warn("I/O error proxying request to node {}", nodeId);
             return proxiedResponse(HttpStatus.BAD_GATEWAY, "Failed to reach proxied node".getBytes(), new HttpHeaders());
         } catch (RestClientException e) {
-            logger.error("Unexpected error proxying request to node {} at {}", nodeId, targetUrl, e);
+            logger.error("Unexpected error proxying request to node {}", nodeId);
             return proxiedResponse(HttpStatus.BAD_GATEWAY, "Failed to proxy request to node".getBytes(), new HttpHeaders());
         }
     }

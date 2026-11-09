@@ -61,6 +61,9 @@ class NodeProxyControllerIT {
     private NodeAccessService nodeAccessService;
     private NodeInfo nodeInfo;
     private final List<CapturedRequest> capturedRequests = new ArrayList<>();
+    private String customResponseBody;
+    private boolean tamperSignature;
+    private int responseStatus = 200;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -105,6 +108,74 @@ class NodeProxyControllerIT {
             httpServer.stop(0);
         }
         capturedRequests.clear();
+    }
+
+    @Test
+    void proxyCannotRelayDatasetRecordsEvenForAnAuthorisedNodeUser() throws Exception {
+        for (String path : List.of("/taniwha/api/files/datasets/patient.csv", "/taniwha/api/files/datasets/patient.xlsx",
+                "/taniwha/api/files/%64atasets/patient.csv", "/taniwha/api/files/%2564atasets/patient.csv",
+                "/taniwha/api/files/datasets;v=1/patient.csv")) {
+            mockMvc.perform(get(URI.create("/nodes/proxy/node1" + path))
+                            .header("Authorization", "Bearer central-token")
+                            .header("X-Node-Authorization", "Bearer node-token"))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head(URI.create("/nodes/proxy/node1" + path))
+                            .header("Authorization", "Bearer central-token")
+                            .header("X-Node-Authorization", "Bearer node-token"))
+                    .andExpect(status().isForbidden());
+        }
+        assertTrue(capturedRequests.isEmpty());
+    }
+
+    @Test
+    void proxyNodeRequestTunnelsPairedAggregateSummariesAndFiltersWithoutChangingThem() throws Exception {
+        customResponseBody = "[{\"fileName\":\"cohort.csv\",\"relationshipSummaryVersion\":1,"
+                + "\"numericPairSummaries\":[{\"featureX\":\"Age\",\"featureY\":\"FIM\",\"count\":24,"
+                + "\"meanX\":61.5,\"meanY\":42.0,\"m2X\":360.0,\"m2Y\":480.0,\"crossMoment\":120.0,\"frequencies\":[]}]}]";
+        String operators = "{\"multipleFileFilters\":[{\"fileName\":\"cohort.csv\",\"filters\":{\"conditions\":{\"cluster\":1}}}]}";
+        var response = mockMvc.perform(post("/nodes/proxy/node1/taniwha/api/data/filterByNameList")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token")
+                        .contentType("application/json").content(operators))
+                .andExpect(status().isOk()).andExpect(header().string("X-Node-Proxy", "true")).andReturn();
+        assertEquals(customResponseBody, response.getResponse().getContentAsString());
+        assertEquals(operators, capturedRequests.get(0).body());
+        assertEquals("Bearer node-token", capturedRequests.get(0).authorization());
+    }
+
+    @Test
+    void tamperedSuccessAndErrorResponsesNeverReachTheCaller() throws Exception {
+        tamperSignature = true;
+        customResponseBody = "synthetic-payload-must-not-be-relayed";
+        for (int statusCode : List.of(200, 400)) {
+            responseStatus = statusCode;
+            var response = mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/data/processList/result/synthetic-job")
+                            .header("Authorization", "Bearer central-token")
+                            .header("X-Node-Authorization", "Bearer node-token"))
+                    .andExpect(status().isBadGateway()).andReturn();
+            assertEquals("Invalid proxied node response signature", response.getResponse().getContentAsString());
+        }
+    }
+
+    @Test
+    void signedNodeErrorRetainsItsStatusAndSafeBody() throws Exception {
+        responseStatus = 400;
+        customResponseBody = "{\"message\":\"Error processing statistics.\"}";
+        var response = mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/data/processList/result/synthetic-job")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token"))
+                .andExpect(status().isBadRequest()).andReturn();
+        assertEquals(customResponseBody, response.getResponse().getContentAsString());
+    }
+
+    @Test
+    void unavailableNodeReturnsAGenericFailure() throws Exception {
+        httpServer.stop(0);
+        var response = mockMvc.perform(get("/nodes/proxy/node1/taniwha/api/files/datasets")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token"))
+                .andExpect(status().isBadGateway()).andReturn();
+        assertEquals("Failed to reach proxied node", response.getResponse().getContentAsString());
     }
 
     @Test
@@ -265,7 +336,7 @@ class NodeProxyControllerIT {
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "http://localhost:3000");
         } else {
-            responseBody = "[{\"ok\":true}]";
+            responseBody = customResponseBody == null ? "[{\"ok\":true}]" : customResponseBody;
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "http://localhost:3000");
         }
@@ -275,12 +346,12 @@ class NodeProxyControllerIT {
         String contentHash = sha256Base64(bytes);
         String nonce = exchange.getRequestHeaders().getFirst("X-Taniwha-Nonce");
         String pathAndQuery = exchange.getRequestURI().toString();
-        String canonical = String.join("\n", "RESP", "200", exchange.getRequestMethod(),
+        String canonical = String.join("\n", "RESP", Integer.toString(responseStatus), exchange.getRequestMethod(),
                 pathAndQuery, nonce, timestamp, contentHash);
         exchange.getResponseHeaders().add("X-Taniwha-Response-Timestamp", timestamp);
         exchange.getResponseHeaders().add("X-Taniwha-Response-Content-SHA256", contentHash);
-        exchange.getResponseHeaders().add("X-Taniwha-Response-Signature", hmacBase64(canonical));
-        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseHeaders().add("X-Taniwha-Response-Signature", tamperSignature ? "tampered" : hmacBase64(canonical));
+        exchange.sendResponseHeaders(responseStatus, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }

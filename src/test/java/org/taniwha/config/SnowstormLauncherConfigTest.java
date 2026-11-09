@@ -178,8 +178,13 @@ class SnowstormLauncherConfigTest {
         SnowstormLauncherConfig.DefaultLauncherCommandRunner runner =
                 new SnowstormLauncherConfig.DefaultLauncherCommandRunner();
 
-        assertEquals(0, runner.runAndLogIfFails(null, "sh", "-c", "printf ok"));
-        assertEquals(7, runner.runAndLogIfFails(null, "sh", "-c", "printf bad && exit 7"));
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            assertEquals(0, runner.runAndLogIfFails(null, "cmd.exe", "/c", "exit 0"));
+            assertEquals(7, runner.runAndLogIfFails(null, "cmd.exe", "/c", "exit 7"));
+        } else {
+            assertEquals(0, runner.runAndLogIfFails(null, "sh", "-c", "printf ok"));
+            assertEquals(7, runner.runAndLogIfFails(null, "sh", "-c", "printf bad && exit 7"));
+        }
     }
 
     private SnowstormLauncherConfig configuredLauncher(FakeRunner runner) {
