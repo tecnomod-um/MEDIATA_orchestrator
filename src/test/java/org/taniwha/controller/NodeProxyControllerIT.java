@@ -130,6 +130,10 @@ class NodeProxyControllerIT {
     @Test
     void proxyNodeRequestTunnelsPairedAggregateSummariesAndFiltersWithoutChangingThem() throws Exception {
         customResponseBody = "[{\"fileName\":\"cohort.csv\",\"relationshipSummaryVersion\":1,"
+                + "\"continuousFeatures\":[{\"featureName\":\"Age\",\"count\":24,\"mean\":61.5,"
+                + "\"sumCubedDeviations\":42.0,\"sumFourthDeviations\":840.0,\"sampleStdDev\":4.0,"
+                + "\"skewness\":0.12,\"kurtosis\":-0.5,\"meanCiLower\":59.1,\"meanCiUpper\":63.9,"
+                + "\"modes\":[60.0,65.0],\"modeFrequency\":6,\"modeStatus\":\"Available\"}],"
                 + "\"numericPairSummaries\":[{\"featureX\":\"Age\",\"featureY\":\"FIM\",\"count\":24,"
                 + "\"meanX\":61.5,\"meanY\":42.0,\"m2X\":360.0,\"m2Y\":480.0,\"crossMoment\":120.0,\"frequencies\":[]}]}]";
         String operators = "{\"multipleFileFilters\":[{\"fileName\":\"cohort.csv\",\"filters\":{\"conditions\":{\"cluster\":1}}}]}";
