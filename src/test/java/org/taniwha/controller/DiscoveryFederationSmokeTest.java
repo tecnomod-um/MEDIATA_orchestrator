@@ -42,7 +42,7 @@ class DiscoveryFederationSmokeTest {
             for (JsonNode node : fixture.get("nodes")) {
                 String filters = filtered ? "{\"operator\":\"AND\",\"conditions\":{\"Cluster\":{\"conditions\":[{\"type\":\"equal\",\"value\":\"1\",\"filterType\":\"continuous\"}],\"operators\":[]}}}" : "null";
                 JsonNode response = query(proxy, fixture, node, "pooled-demo.csv", filters);
-                assertEquals(1, response.get("disclosurePolicyVersion").asInt());
+                assertEquals(2, response.get("disclosurePolicyVersion").asInt());
                 assertEquals(1, response.get("relationshipSummaryVersion").asInt());
                 String x = node.get("nodeId").asText().equals("beta") ? "OtherX" : "X";
                 boolean found = false;
@@ -69,7 +69,7 @@ class DiscoveryFederationSmokeTest {
                 String x = node.get("nodeId").asText().equals("beta") ? "OtherX" : "X";
                 String filters = filtered ? "{\"operator\":\"AND\",\"conditions\":{\"Cluster\":{\"conditions\":[{\"type\":\"equal\",\"value\":\"1\",\"filterType\":\"continuous\"}],\"operators\":[]}}}" : "null";
                 JsonNode typed = query(proxy, fixture, node, "pooled-demo.csv", filters, Map.of(x, "categorical", "Y", "categorical"));
-                assertEquals(1, typed.get("disclosurePolicyVersion").asInt());
+                assertEquals(2, typed.get("disclosurePolicyVersion").asInt());
                 assertEquals(1, typed.get("featureTypeSummaryVersion").asInt());
                 assertEquals("categorical", typed.get("featureTypes").get(x).asText());
                 boolean found = false;
@@ -123,7 +123,7 @@ class DiscoveryFederationSmokeTest {
         var completed = proxy.perform(get(root + "processList/result/" + id).header("Authorization", "Bearer synthetic-session")
                 .header("X-Node-Authorization", token)).andExpect(status().isOk()).andReturn();
         JsonNode release = mapper.readTree(completed.getResponse().getContentAsByteArray()).get(0);
-        assertEquals(1, release.path("disclosurePolicyVersion").asInt());
+        assertEquals(2, release.path("disclosurePolicyVersion").asInt());
         assertEquals("categorical", release.path("featureTypes").path("Cluster").asText());
         assertTrue(release.path("continuousFeatures").findValues("outliers").stream().allMatch(JsonNode::isEmpty));
         assertEquals(55296, release.path("continuousFeatures").get(0).path("count").asInt());
