@@ -48,3 +48,50 @@ jobs:
           else
             echo "Coverage badge unchanged"
           fi
+
+  update-parent:
+    name: Update umbrella submodule
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout component history
+        uses: actions/checkout@v7.0.1
+        with:
+          path: component
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout umbrella main
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: tecnomod-um/MEDIATA_project
+          token: ${{ secrets.PARENT_REPO_TOKEN }}
+          ref: main
+          path: monorepo
+
+      - name: Update submodule pin
+        working-directory: monorepo
+        env:
+          COMPONENT: ${{ github.event.repository.name }}
+          REVISION: ${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard FETCH_HEAD
+            pinned=$(git rev-parse "HEAD:$COMPONENT")
+            if [ "$pinned" = "$REVISION" ] || git -C ../component merge-base --is-ancestor "$REVISION" "$pinned"; then
+              echo "$COMPONENT is already pinned at this revision or a newer one."
+              exit 0
+            fi
+            git update-index --cacheinfo "160000,$REVISION,$COMPONENT"
+            git commit -m "ci: bump $COMPONENT to $REVISION"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep "$((attempt * 2))"
+          done
+          echo "::error::Could not update the umbrella pin for $COMPONENT."
+          exit 1
