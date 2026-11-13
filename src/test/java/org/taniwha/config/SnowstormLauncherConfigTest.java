@@ -67,6 +67,7 @@ class SnowstormLauncherConfigTest {
         ));
         assertTrue(runner.commands.stream().anyMatch(command ->
                 command.contains("docker run -d --name snow")
+                        && command.contains("JAVA_TOOL_OPTIONS=--add-opens=java.base/java.util=ALL-UNNAMED")
                         && command.contains("-p 19100:8080")
                         && command.contains("snow-image")
                         && command.contains("--elasticsearch.urls=http://es:9200")
@@ -166,19 +167,24 @@ class SnowstormLauncherConfigTest {
 
     @Test
     void defaultRunnerReportsInvalidHttpAsNotResponding() {
-        SnowstormLauncherConfig.DefaultLauncherCommandRunner runner =
-                new SnowstormLauncherConfig.DefaultLauncherCommandRunner();
+        DefaultLauncherCommandRunner runner =
+                new DefaultLauncherCommandRunner();
 
         assertFalse(runner.httpResponds("http://127.0.0.1:1/not-open"));
     }
 
     @Test
     void defaultRunnerReturnsCommandExitCodes() throws Exception {
-        SnowstormLauncherConfig.DefaultLauncherCommandRunner runner =
-                new SnowstormLauncherConfig.DefaultLauncherCommandRunner();
+        DefaultLauncherCommandRunner runner =
+                new DefaultLauncherCommandRunner();
 
-        assertEquals(0, runner.runAndLogIfFails(null, "sh", "-c", "printf ok"));
-        assertEquals(7, runner.runAndLogIfFails(null, "sh", "-c", "printf bad && exit 7"));
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            assertEquals(0, runner.runAndLogIfFails(null, "cmd.exe", "/c", "exit 0"));
+            assertEquals(7, runner.runAndLogIfFails(null, "cmd.exe", "/c", "exit 7"));
+        } else {
+            assertEquals(0, runner.runAndLogIfFails(null, "sh", "-c", "printf ok"));
+            assertEquals(7, runner.runAndLogIfFails(null, "sh", "-c", "printf bad && exit 7"));
+        }
     }
 
     private SnowstormLauncherConfig configuredLauncher(FakeRunner runner) {
@@ -197,7 +203,7 @@ class SnowstormLauncherConfigTest {
         return config;
     }
 
-    private static class FakeRunner implements SnowstormLauncherConfig.LauncherCommandRunner {
+    private static class FakeRunner implements LauncherCommandRunner {
         boolean dockerAvailable = true;
         final Map<String, String> containerStatuses = new HashMap<>();
         final Map<String, Integer> commandResults = new HashMap<>();

@@ -1,8 +1,4 @@
-# public HTTP origin
-# http://public-node.example:8022
-
-# public HTTP origin | upstream base URL override
-# http://public-node.example:8022|http://10.0.0.25:8080
-
 # public HTTP origin | upstream base URL override | shared secret
-# http://public-node.example:8022|http://10.0.0.25:8080|replace-with-a-long-random-secret
+# HTTP is only suitable when the upstream network is separately encrypted/trusted.
+# The upstream host must be listed in TRUSTED_PROXY_ALLOWED_UPSTREAM_HOSTS.
+# http://public-node.example:8022|http://host.docker.internal:8080|replace-with-at-least-32-random-bytes

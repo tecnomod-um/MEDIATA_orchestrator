@@ -6,6 +6,7 @@ volumes:
   mongodb-data:
   elasticsearch-data:
   kerby-data:
+  openmed-model-cache:
 
 services:
   mongodb:
@@ -128,6 +129,8 @@ services:
       dockerfile: Dockerfile.openmed
     container_name: mediata-openmed
     restart: unless-stopped
+    volumes:
+      - openmed-model-cache:/root/.cache/huggingface
     ports:
       - "${OPENMED_HOST_PORT:-8002}:8002"
     networks:
@@ -164,7 +167,13 @@ services:
       - PORT=${PORT:-8088}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mediata}
       - JWT_SECRET=${JWT_SECRET}
+      - TRUSTED_PROXY_ALLOWED_UPSTREAM_HOSTS=${TRUSTED_PROXY_ALLOWED_UPSTREAM_HOSTS:-localhost,127.0.0.1,host.docker.internal}
+      - TRUSTED_PROXY_ALLOW_HTTP_UPSTREAM=${TRUSTED_PROXY_ALLOW_HTTP_UPSTREAM:-false}
+      - API_DOCS_ENABLED=${API_DOCS_ENABLED:-true}
       - KERBEROS_PORT=${KERBEROS_PORT:-8089}
+      - KERBEROS_IDENTITY_STORE=${KERBEROS_IDENTITY_STORE:-mongodb}
+      - KERBEROS_MONGODB_COLLECTION=${KERBEROS_MONGODB_COLLECTION:-kerberos_identities}
+      - KERBEROS_MIGRATE_JSON=${KERBEROS_MIGRATE_JSON:-true}
 
       # These URLs can point to containers when profiles enabled, otherwise just leave defaults.
       - PYURL=${PYURL:-http://rdf-builder:8000}

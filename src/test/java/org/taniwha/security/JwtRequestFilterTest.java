@@ -57,6 +57,7 @@ class JwtRequestFilterTest {
         MockitoAnnotations.openMocks(this);
         jwtRequestFilter = new JwtRequestFilter(jwtTokenUtil, applicationContext);
         ReflectionTestUtils.setField(jwtRequestFilter, "jwtFilterEnabled", true);
+        when(jwtTokenUtil.isUserAccessToken(anyString())).thenReturn(true);
         SecurityContextHolder.clearContext();
     }
 
@@ -108,6 +109,32 @@ class JwtRequestFilterTest {
 
         verify(filterChain).doFilter(request, response);
         verify(request, never()).getHeader(anyString());
+    }
+
+    @Test
+    void testDoFilterInternal_ApiDocumentationEndpointsAreExempted() throws ServletException, IOException {
+        String[] documentationPaths = {
+                "/taniwha/v3/api-docs",
+                "/taniwha/v3/api-docs.yaml",
+                "/taniwha/swagger-ui.html",
+                "/taniwha/swagger-ui/index.html"
+        };
+
+        for (String path : documentationPaths) {
+            HttpServletRequest documentationRequest = mock(HttpServletRequest.class);
+            HttpServletResponse documentationResponse = mock(HttpServletResponse.class);
+            FilterChain documentationChain = mock(FilterChain.class);
+            when(documentationRequest.getRequestURI()).thenReturn(path);
+
+            jwtRequestFilter.doFilterInternal(
+                    documentationRequest,
+                    documentationResponse,
+                    documentationChain
+            );
+
+            verify(documentationChain).doFilter(documentationRequest, documentationResponse);
+            verify(documentationRequest, never()).getHeader(anyString());
+        }
     }
 
     @Test
@@ -190,6 +217,38 @@ class JwtRequestFilterTest {
     }
 
     @Test
+    void expiredSignedTokenPreservesSessionExpiryHeader() throws ServletException, IOException {
+        JwtTokenUtil realTokens = new JwtTokenUtil();
+        ReflectionTestUtils.setField(realTokens, "secret", "local-test-signing-key-with-at-least-32-bytes");
+        ReflectionTestUtils.setField(realTokens, "expiration", -60L);
+        JwtRequestFilter filter = new JwtRequestFilter(realTokens, applicationContext);
+        ReflectionTestUtils.setField(filter, "jwtFilterEnabled", true);
+        when(request.getRequestURI()).thenReturn("/taniwha/api/projects/list");
+        when(request.getHeader("Authorization")).thenReturn("Bearer " + realTokens.generateToken("admin"));
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(response).setHeader("X-Token-Expired", "true");
+        verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
+        verify(filterChain, never()).doFilter(any(), any());
+        verifyNoInteractions(applicationContext);
+    }
+
+    @Test
+    void wrongPurposeTokenRemainsRejected() throws ServletException, IOException {
+        when(request.getRequestURI()).thenReturn("/taniwha/api/projects/list");
+        when(request.getHeader("Authorization")).thenReturn("Bearer wrongPurpose");
+        when(jwtTokenUtil.getUsernameFromToken("wrongPurpose")).thenReturn("admin");
+        when(jwtTokenUtil.isUserAccessToken("wrongPurpose")).thenReturn(false);
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(response).sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid token purpose");
+        verify(filterChain, never()).doFilter(any(), any());
+        verifyNoInteractions(applicationContext);
+    }
+
+    @Test
     void testDoFilterInternal_MalformedToken() throws ServletException, IOException {
         String token = "malformedToken";
 
@@ -245,7 +304,6 @@ class JwtRequestFilterTest {
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
         verify(response).sendError(eq(HttpServletResponse.SC_UNAUTHORIZED), anyString());
-        // After authentication failure, filter chain should NOT continue
         verify(filterChain, never()).doFilter(any(), any());
     }
 

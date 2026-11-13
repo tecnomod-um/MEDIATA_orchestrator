@@ -1,9 +1,12 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
@@ -11,15 +14,19 @@ import org.taniwha.model.NodeSummary;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
+import org.taniwha.service.ProjectService;
+import org.taniwha.service.ProjectProvenanceService;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 // Requests user-related interactions with the registered nodes
 @RestController
 @RequestMapping("/nodes/connect")
+@Tag(name = "Node discovery", description = "List accessible nodes and retrieve node information and metadata.")
 public class NodeRetrieverController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeRetrieverController.class);
@@ -27,30 +34,57 @@ public class NodeRetrieverController {
     private final NodeService nodeService;
     private final NodeAccessService nodeAccessService;
     private final TrustedNodeProxyConfig trustedNodeProxyConfig;
+    private final ProjectService projectService;
+    private final ProjectProvenanceService provenanceService;
 
     public NodeRetrieverController(NodeService nodeService,
                                    NodeAccessService nodeAccessService,
-                                   TrustedNodeProxyConfig trustedNodeProxyConfig) {
+                                   TrustedNodeProxyConfig trustedNodeProxyConfig,
+                                   ProjectService projectService,
+                                   ProjectProvenanceService provenanceService) {
         this.nodeService = nodeService;
         this.nodeAccessService = nodeAccessService;
         this.trustedNodeProxyConfig = trustedNodeProxyConfig;
+        this.projectService = projectService;
+        this.provenanceService = provenanceService;
     }
 
+    @Operation(summary = "List nodes accessible to the current user")
     @GetMapping("/list")
-    public ResponseEntity<List<NodeSummary>> listNodes() {
-        return ResponseEntity.ok(nodeService.getNodeSummaries().stream()
+    public ResponseEntity<List<NodeSummary>> listNodes(@RequestParam(value = "projectId", required = false) String projectId) {
+        List<NodeSummary> summaries = nodeService.getNodeSummaries();
+        if (projectId != null && !projectId.trim().isEmpty()) {
+            Set<String> projectNodeIds = Set.copyOf(projectService.getProjectNodeIds(projectId));
+            summaries = summaries.stream()
+                    .filter(summary -> summary != null && projectNodeIds.contains(summary.getNodeId()))
+                    .collect(Collectors.toList());
+        }
+
+        return ResponseEntity.ok(summaries.stream()
                 .map(this::decorateNodeSummary)
                 .collect(Collectors.toList()));
     }
 
+    @Operation(summary = "Connect to a node and return its information")
     @GetMapping("/info/{nodeId}")
-    public ResponseEntity<Map<String, Object>> getNodeInfo(@PathVariable String nodeId, @RequestHeader("Authorization") String userToken, @RequestHeader("Kerberos-TGT") String userTgt) {
+    public ResponseEntity<Map<String, Object>> getNodeInfo(
+            @PathVariable String nodeId,
+            @RequestParam(value = "projectId", required = false) String projectId,
+            @RequestHeader("Authorization") String userToken,
+            @RequestHeader("Kerberos-TGT") String userTgt,
+            Authentication authentication) {
         String jwtToken = userToken.substring(7);
         NodeInfo nodeInfo = nodeService.findNodeById(nodeId);
         if (nodeInfo == null || nodeInfo.getNodeId() == null) {
             logger.warn("Node not found.");
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put(ERROR, "Node not found");
+            return ResponseEntity.status(404).body(errorResponse);
+        }
+        if (projectId != null && !projectId.trim().isEmpty()
+                && !projectService.getProjectNodeIds(projectId).contains(nodeId)) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(ERROR, "Node is not part of this project.");
             return ResponseEntity.status(404).body(errorResponse);
         }
 
@@ -68,6 +102,8 @@ public class NodeRetrieverController {
             result.put("nodeInfo", nodeInfo);
             result.put("proxyRequired", trustedNodeProxyConfig.requiresProxy(nodeInfo));
             result.put("proxyBasePath", trustedNodeProxyConfig.proxyBasePath(nodeId));
+            provenanceService.recordUserNodeAccess(
+                    projectId, nodeId, nodeInfo.getName(), authentication);
             return ResponseEntity.ok(result);
         } else {
             String errorMessage = result.get(ERROR).toString();
@@ -85,6 +121,7 @@ public class NodeRetrieverController {
         }
     }
 
+    @Operation(summary = "Retrieve metadata from a node")
     @GetMapping("/metadata/{nodeId}")
     public ResponseEntity<Map<String, Object>> getNodeMetadata(@PathVariable String nodeId) {
         logger.debug("Requesting DCAT metadata for nodeId={}", nodeId);

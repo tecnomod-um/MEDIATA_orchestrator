@@ -81,14 +81,12 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testCreateKeytab_WhenFileIsEmpty() throws KrbException {
-        // Simulate creating an empty keytab file (failure case)
         doAnswer(invocation -> {
             File fileArg = invocation.getArgument(1);
             File parent = fileArg.getParentFile();
             if (!parent.exists()) {
                 parent.mkdirs();
             }
-            // Create empty file
             fileArg.createNewFile();
             return null;
         }).when(mockKdcServer).exportPrincipal(eq("emptyPrincipal"), any(File.class));
@@ -100,7 +98,6 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testCreateKeytab_WithSpecialCharacters() throws KrbException {
-        // Test that special characters in principal names are replaced
         doAnswer(invocation -> {
             File fileArg = invocation.getArgument(1);
             File parent = fileArg.getParentFile();
@@ -122,8 +119,6 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testRequestSgt_WithInvalidTokenDecoding() throws Exception {
-        // Test that decoding errors are handled properly
-        // Using a simplified test since full ticket encoding/decoding is complex
         TgtTicket mockTgt = mock(TgtTicket.class);
         Ticket mockTicket = mock(Ticket.class);
         when(mockTicket.encode()).thenReturn(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
@@ -142,14 +137,10 @@ class KerberosServiceAdditionalTest {
 
         String encodedTgt = kerberosService.requestTgt("testPrincipal", "testPassword");
         assertNotNull(encodedTgt, "TGT should be encoded successfully");
-
-        // The actual requestSgt would attempt to decode, which would fail with mock data
-        // This tests that the encoding works, the decoding test is omitted due to complexity
     }
 
     @Test
     void testRequestSgt_WithInvalidToken() {
-        // Test with invalid base64 token
         assertThrows(Exception.class, () -> {
             kerberosService.requestSgt("invalidBase64Token!", "service/host");
         });
@@ -157,7 +148,6 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testDeletePrincipal_WithKeytabFileCleanup() throws Exception {
-        // Create actual keytab file to test deletion
         File workDir = new File("target/test-keytabs");
         workDir.mkdirs();
         File keytabFile = new File(workDir, "testuser.keytab");
@@ -167,7 +157,6 @@ class KerberosServiceAdditionalTest {
         }
         assertTrue(keytabFile.exists());
 
-        // Mock principal exists
         when(mockIdentityService.getIdentity("testuser")).thenReturn(mock(org.apache.kerby.kerberos.kerb.request.KrbIdentity.class));
 
         kerberosService.deletePrincipal("testuser");
@@ -178,9 +167,6 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testPrincipalExists_WhenIdentityServiceThrows() throws KrbException {
-        // Test error handling when identity service throws during createPrincipal
-        // Since getIdentityService() returns an object, we can't make it throw directly
-        // Instead test that when the identity check returns false, creation proceeds
         when(mockIdentityService.getIdentity("errorUser")).thenReturn(null);
 
         kerberosService.createPrincipal("errorUser", "password");
@@ -190,7 +176,6 @@ class KerberosServiceAdditionalTest {
 
     @Test
     void testRequestTgt_WithEncodeFailure() throws Exception {
-        // Test proper error handling when ticket encoding fails
         TgtTicket mockTgt = mock(TgtTicket.class);
         Ticket mockTicket = mock(Ticket.class);
         EncAsRepPart mockEncAsRepPart = mock(EncAsRepPart.class);
@@ -204,7 +189,6 @@ class KerberosServiceAdditionalTest {
         when(mockKrbClient.requestTgt("user", "password")).thenReturn(mockTgt);
 
         String result = kerberosService.requestTgt("user", "password");
-        // Should return null on encoding failure
         assertNull(result, "Should return null when encoding fails");
     }
 

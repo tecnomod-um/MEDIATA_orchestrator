@@ -23,11 +23,12 @@ class TrustedNodeProxyConfigTest {
         Path configFile = tempDir.resolve("trusted-servers.config");
         Files.writeString(
                 configFile,
-                "http://stratifscuba.mediata.dev:8022|http://10.0.0.15:8080|shared-secret\n",
+                "http://stratifscuba.mediata.dev:8022|http://host.docker.internal:8080|12345678901234567890123456789012\n",
                 StandardCharsets.UTF_8
         );
 
-        TrustedNodeProxyConfig service = new TrustedNodeProxyConfig(configFile.toString());
+        TrustedNodeProxyConfig service = new TrustedNodeProxyConfig(
+                configFile.toString(), "host.docker.internal,10.0.0.15,localhost");
         NodeInfo nodeInfo = new NodeInfo();
         nodeInfo.setIp("http://stratifscuba.mediata.dev:8022");
 
@@ -35,12 +36,12 @@ class TrustedNodeProxyConfigTest {
 
         assertTrue(route.isPresent());
         assertEquals("http://stratifscuba.mediata.dev:8022", route.get().publicOrigin());
-        assertEquals("http://10.0.0.15:8080", route.get().upstreamBaseUrl());
-        assertEquals("shared-secret", route.get().sharedSecret());
+        assertEquals("http://host.docker.internal:8080", route.get().upstreamBaseUrl());
+        assertEquals("12345678901234567890123456789012", route.get().sharedSecret());
         assertTrue(service.requiresProxy(nodeInfo));
         assertEquals("/nodes/proxy/node1", service.proxyBasePath("node1"));
-        assertEquals(Optional.of("http://10.0.0.15:8080"), service.resolveUpstreamBaseUrl(nodeInfo));
-        assertEquals(Optional.of("shared-secret"), service.resolveSharedSecret(nodeInfo));
+        assertEquals(Optional.of("http://host.docker.internal:8080"), service.resolveUpstreamBaseUrl(nodeInfo));
+        assertEquals(Optional.of("12345678901234567890123456789012"), service.resolveSharedSecret(nodeInfo));
     }
 
     @Test
@@ -69,8 +70,8 @@ class TrustedNodeProxyConfigTest {
     @Test
     void resolveRoute_usesPublicOriginWhenUpstreamIsOmitted() throws Exception {
         Path configFile = tempDir.resolve("trusted-servers.config");
-        Files.writeString(configFile, "http://node.example:8080\n", StandardCharsets.UTF_8);
-        TrustedNodeProxyConfig service = new TrustedNodeProxyConfig(configFile.toString());
+        Files.writeString(configFile, "http://node.example:8080||12345678901234567890123456789012\n", StandardCharsets.UTF_8);
+        TrustedNodeProxyConfig service = new TrustedNodeProxyConfig(configFile.toString(), "node.example");
 
         Optional<TrustedNodeProxyConfig.TrustedNodeRoute> route =
                 service.resolveRoute("http://node.example:8080/taniwha");
@@ -78,7 +79,7 @@ class TrustedNodeProxyConfigTest {
         assertTrue(route.isPresent());
         assertEquals("http://node.example:8080", route.get().publicOrigin());
         assertEquals("http://node.example:8080", route.get().upstreamBaseUrl());
-        assertNull(route.get().sharedSecret());
+        assertEquals("12345678901234567890123456789012", route.get().sharedSecret());
         assertTrue(service.requiresProxy("http://node.example:8080/taniwha"));
     }
 
@@ -91,7 +92,7 @@ class TrustedNodeProxyConfigTest {
                         "not-a-url",
                         "https://secure.example",
                         "http://public.example|::::bad-upstream",
-                        "http://default-port.example|http://upstream.example:9090|   ",
+                        "http://default-port.example|http://localhost:9090|   ",
                         ""
                 ),
                 StandardCharsets.UTF_8
@@ -101,26 +102,37 @@ class TrustedNodeProxyConfigTest {
         assertFalse(service.requiresProxy("not-a-url"));
         assertFalse(service.requiresProxy("https://secure.example"));
         assertFalse(service.requiresProxy((String) null));
-        assertTrue(service.requiresProxy("http://default-port.example/path"));
+        assertFalse(service.requiresProxy("http://default-port.example/path"));
 
         Optional<TrustedNodeProxyConfig.TrustedNodeRoute> route =
                 service.resolveRoute("http://default-port.example");
-        assertTrue(route.isPresent());
-        assertEquals("http://default-port.example:80", route.get().publicOrigin());
-        assertEquals("http://upstream.example:9090", route.get().upstreamBaseUrl());
-        assertNull(route.get().sharedSecret());
+        assertFalse(route.isPresent());
+    }
+
+    @Test
+    void resolveRoute_rejectsUnallowlistedUpstreamAndDisabledHttp() throws Exception {
+        Path configFile = tempDir.resolve("trusted-servers.config");
+        Files.writeString(configFile,
+                "http://node.example:8080|http://upstream.example:8080|12345678901234567890123456789012\n",
+                StandardCharsets.UTF_8);
+        TrustedNodeProxyConfig disallowed = new TrustedNodeProxyConfig(configFile.toString(), "localhost");
+        assertFalse(disallowed.requiresProxy("http://node.example:8080"));
+
+        TrustedNodeProxyConfig httpDisabled = new TrustedNodeProxyConfig(configFile.toString(), "upstream.example");
+        org.springframework.test.util.ReflectionTestUtils.setField(httpDisabled, "allowHttpUpstream", false);
+        assertFalse(httpDisabled.requiresProxy("http://node.example:8080"));
     }
 
     @Test
     void reloadIfNeeded_picksUpConfigFileChanges() throws Exception {
         Path configFile = tempDir.resolve("trusted-servers.config");
-        Files.writeString(configFile, "http://old.example\n", StandardCharsets.UTF_8);
+        Files.writeString(configFile, "http://old.example|http://localhost:8080|12345678901234567890123456789012\n", StandardCharsets.UTF_8);
         TrustedNodeProxyConfig service = new TrustedNodeProxyConfig(configFile.toString());
 
         assertTrue(service.requiresProxy("http://old.example"));
         assertFalse(service.requiresProxy("http://new.example"));
 
-        Files.writeString(configFile, "http://new.example\n", StandardCharsets.UTF_8);
+        Files.writeString(configFile, "http://new.example|http://localhost:8080|12345678901234567890123456789012\n", StandardCharsets.UTF_8);
         Files.setLastModifiedTime(configFile, FileTime.fromMillis(System.currentTimeMillis() + 5_000));
 
         assertFalse(service.requiresProxy("http://old.example"));

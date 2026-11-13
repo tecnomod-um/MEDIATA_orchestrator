@@ -8,7 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedValueDTO;
@@ -80,9 +80,7 @@ class MappingEnrichmentHelperTerminologyTest {
                 .thenReturn(CompletableFuture.completedFuture(Collections.emptyMap()));
     }
 
-    // ====================================================================
     // Helpers
-    // ====================================================================
 
     /** Build a minimal mapping map for the given column key. */
     private static Map<String, SuggestedMappingDTO> mappingOf(
@@ -110,9 +108,7 @@ class MappingEnrichmentHelperTerminologyTest {
         return s == null || s.isEmpty() || SNOMED_FORMAT.matcher(s).matches();
     }
 
-    // ====================================================================
     // 1. Column-level terminology output
-    // ====================================================================
 
     @Test
     @DisplayName("CORRECT OUTPUT: valid SNOMED label+code is stored in the mapping DTO")
@@ -222,9 +218,7 @@ class MappingEnrichmentHelperTerminologyTest {
         logger.info("[TermTest] empty Snowstorm → terminology='{}'", mapping.getTerminology());
     }
 
-    // ====================================================================
     // 2. Value-level terminology output
-    // ====================================================================
 
     @Test
     @DisplayName("CORRECT OUTPUT: valid SNOMED label+code stored in the value DTO")
@@ -296,9 +290,7 @@ class MappingEnrichmentHelperTerminologyTest {
         logger.info("[TermTest] value raw phrase filtered → terminology='{}'", stroke.getTerminology());
     }
 
-    // ====================================================================
     // 3. Mixed-batch: multiple columns, multiple values, mixed Snowstorm results
-    // ====================================================================
 
     @Test
     @DisplayName("CORRECT OUTPUT: mixed batch – only valid SNOMED codes appear in terminology fields")
@@ -381,9 +373,7 @@ class MappingEnrichmentHelperTerminologyTest {
         logger.info("[TermTest]   Stroke       val → '{}'", stroke.getTerminology());
     }
 
-    // ====================================================================
     // 4. Edge cases in the SNOMED format gate
-    // ====================================================================
 
     @Test
     @DisplayName("FORMAT: 5-digit codes are too short to be SNOMED – filtered to empty")

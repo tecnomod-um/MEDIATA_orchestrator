@@ -61,25 +61,40 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String username = validateTokenAndExtractUsername(jwtToken, response);
         if (username == null) return;
 
+        if (!jwtTokenUtil.isUserAccessToken(jwtToken)) {
+            filterLogger.warn("JWT token is not scoped for central user access");
+            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid token purpose");
+            return;
+        }
+
         if (!authenticateUser(request, response, jwtToken, username)) return;
 
         chain.doFilter(request, response);
     }
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        boolean publicFairDataPointGet = ("GET".equalsIgnoreCase(request.getMethod())
-                || "OPTIONS".equalsIgnoreCase(request.getMethod()))
-                && uri.matches("^/taniwha/nodes/proxy/[^/]+/taniwha/fdp(?:/.*)?$");
-        return uri.startsWith("/taniwha/actuator/health")
-                || uri.startsWith("/taniwha/actuator/info")
-                || uri.equals("/taniwha/api/user/login")
-                || uri.equals("/taniwha/api/user/register")
-                || uri.startsWith("/taniwha/api/error")
-                || uri.equals("/taniwha/nodes/register")
-                || uri.equals("/taniwha/nodes/heartbeat")
-                || uri.equals("/taniwha/nodes/deregister")
-                || publicFairDataPointGet;
+        String requestUri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        String path = contextPath != null && !contextPath.isEmpty() && requestUri.startsWith(contextPath)
+                ? requestUri.substring(contextPath.length())
+                : requestUri;
+        if (path.startsWith("/taniwha/")) {
+            path = path.substring("/taniwha".length());
+        }
+
+        return PublicFairDataPointRoute.matches(request)
+                || path.startsWith("/actuator/health")
+                || path.startsWith("/actuator/info")
+                || path.equals("/api/user/login")
+                || path.equals("/api/user/register")
+                || path.startsWith("/api/error")
+                || path.equals("/nodes/register")
+                || path.equals("/nodes/heartbeat")
+                || path.equals("/nodes/provenance/batch")
+                || path.equals("/nodes/deregister")
+                || path.startsWith("/v3/api-docs")
+                || path.equals("/swagger-ui.html")
+                || path.startsWith("/swagger-ui/");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {

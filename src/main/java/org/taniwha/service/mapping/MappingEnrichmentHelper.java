@@ -1,8 +1,10 @@
 package org.taniwha.service.mapping;
 
+import org.taniwha.service.enrichment.TerminologyRequest;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedRefDTO;
@@ -142,7 +144,7 @@ class MappingEnrichmentHelper {
             }
 
             if (terminologyLookupService != null) {
-                List<TerminologyLookupService.TerminologyRequest> batchSnowReqs = new ArrayList<>();
+                List<TerminologyRequest> batchSnowReqs = new ArrayList<>();
                 for (ColumnRecord ci : batch) {
                     if (ci == null) continue;
                     String colKey = StringUtil.safeTrim(ci.colKey());
@@ -151,7 +153,7 @@ class MappingEnrichmentHelper {
                     String colLkup = colLookupKeyByCol.get(colKey);
                     if (colLkup != null && !StringUtil.safeTrim(colLkup).isEmpty()
                             && submittedLookupKeys.add(colLkup)) {
-                        batchSnowReqs.add(new TerminologyLookupService.TerminologyRequest(colLkup, null));
+                        batchSnowReqs.add(new TerminologyRequest(colLkup, null));
                     }
                     if (ci.values() != null) {
                         for (String rv : ci.values()) {
@@ -160,7 +162,7 @@ class MappingEnrichmentHelper {
                             String vLkup = valLookupKeyByValueKey.get(colKey + "|" + v);
                             if (vLkup != null && !StringUtil.safeTrim(vLkup).isEmpty()
                                     && submittedLookupKeys.add(vLkup)) {
-                                batchSnowReqs.add(new TerminologyLookupService.TerminologyRequest(vLkup, colKey));
+                                batchSnowReqs.add(new TerminologyRequest(vLkup, colKey));
                             }
                         }
                     }
@@ -195,14 +197,14 @@ class MappingEnrichmentHelper {
         }
 
         int missing = 0;
-        List<TerminologyLookupService.TerminologyRequest> retryReqs = new ArrayList<>();
+        List<TerminologyRequest> retryReqs = new ArrayList<>();
         // Preserve the first retry per lookup key so later duplicates do not reshuffle priorities.
         Set<String> retrySeenReq = new HashSet<>();
         for (Map.Entry<String, String> e : colLookupKeyByCol.entrySet()) {
             String lookupKey = StringUtil.safeTrim(e.getValue());
             if (!lookupKey.isEmpty() && !terminologyResults.containsKey(lookupKey)
                     && retrySeenReq.add(lookupKey)) {
-                retryReqs.add(new TerminologyLookupService.TerminologyRequest(lookupKey, null));
+                retryReqs.add(new TerminologyRequest(lookupKey, null));
                 missing++;
             }
         }
@@ -214,7 +216,7 @@ class MappingEnrichmentHelper {
             if (bar > 0) colKey = valueKey.substring(0, bar);
             if (!lookupKey.isEmpty() && !terminologyResults.containsKey(lookupKey)
                     && retrySeenReq.add(lookupKey)) {
-                retryReqs.add(new TerminologyLookupService.TerminologyRequest(lookupKey, colKey));
+                retryReqs.add(new TerminologyRequest(lookupKey, colKey));
                 missing++;
             }
         }

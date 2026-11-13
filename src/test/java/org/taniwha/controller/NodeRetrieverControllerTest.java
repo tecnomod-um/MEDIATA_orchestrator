@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.model.NodeMetadataDataset;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -10,6 +12,8 @@ import org.taniwha.model.NodeSummary;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
+import org.taniwha.service.ProjectService;
+import org.taniwha.service.ProjectProvenanceService;
 
 import java.util.*;
 
@@ -25,6 +29,8 @@ class NodeRetrieverControllerTest {
     private NodeService nodeService;
     private NodeAccessService nodeAccessService;
     private TrustedNodeProxyConfig trustedNodeConfigService;
+    private ProjectService projectService;
+    private ProjectProvenanceService provenanceService;
 
     private final String jwtHeader = "Bearer JWT123";
     private final String tgtHeader = "TGT-VAL";
@@ -34,8 +40,10 @@ class NodeRetrieverControllerTest {
         nodeService = mock(NodeService.class);
         nodeAccessService = mock(NodeAccessService.class);
         trustedNodeConfigService = mock(TrustedNodeProxyConfig.class);
+        projectService = mock(ProjectService.class);
+        provenanceService = mock(ProjectProvenanceService.class);
         mvc = MockMvcBuilders.standaloneSetup(
-                new NodeRetrieverController(nodeService, nodeAccessService, trustedNodeConfigService)
+                new NodeRetrieverController(nodeService, nodeAccessService, trustedNodeConfigService, projectService, provenanceService)
         ).build();
     }
 
@@ -59,6 +67,24 @@ class NodeRetrieverControllerTest {
                 .andExpect(jsonPath("$[1].proxyRequired").value(true))
                 .andExpect(jsonPath("$[1].proxyBasePath").value("/nodes/proxy/n2"))
                 .andExpect(jsonPath("$[1].color").value("Blue"));
+    }
+
+    @Test
+    void listNodes_withProjectId_returnsProjectNodesOnly() throws Exception {
+        List<NodeSummary> summaries = Arrays.asList(
+                new NodeSummary("n1", "Name1", "Desc1", "Red", "https://one.example/taniwha"),
+                new NodeSummary("n2", "Name2", "Desc2", "Blue", "https://two.example/taniwha")
+        );
+        when(nodeService.getNodeSummaries()).thenReturn(summaries);
+        when(projectService.getProjectNodeIds("p1")).thenReturn(Collections.singletonList("n2"));
+        when(trustedNodeConfigService.requiresProxy("https://two.example/taniwha")).thenReturn(false);
+        when(trustedNodeConfigService.proxyBasePath("n2")).thenReturn("/nodes/proxy/n2");
+
+        mvc.perform(get("/nodes/connect/list").param("projectId", "p1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].nodeId").value("n2"))
+                .andExpect(jsonPath("$[0].name").value("Name2"));
     }
 
     @Test
@@ -178,7 +204,7 @@ class NodeRetrieverControllerTest {
     void getNodeMetadata_success_returnsMetadata() throws Exception {
         when(nodeAccessService.isFairDataPointEnabled("n1")).thenReturn(false);
         NodeMetadata md = new NodeMetadata();
-        NodeMetadata.Dataset ds = new NodeMetadata.Dataset();
+        NodeMetadataDataset ds = new NodeMetadataDataset();
         ds.setTitle("T");
         md.setDataset(Collections.singletonList(ds));
         when(nodeAccessService.getMetadata("n1")).thenReturn(md);

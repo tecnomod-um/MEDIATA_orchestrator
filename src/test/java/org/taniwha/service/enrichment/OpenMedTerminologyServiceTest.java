@@ -69,9 +69,7 @@ class OpenMedTerminologyServiceTest {
         logger.info("[OpenMedTest] setUp – service ready");
     }
 
-    // ====================================================================
     // 1. isValidTerm – term quality gate
-    // ====================================================================
 
     @Test
     @DisplayName("isValidTerm: accepts well-formed medical phrases")
@@ -119,9 +117,7 @@ class OpenMedTerminologyServiceTest {
         logger.info("[OpenMedTest] isValidTerm rejects punctuation tokens ✓");
     }
 
-    // ====================================================================
     // 2. resolveWithSnowstorm – must return SNOMED code or ""
-    // ====================================================================
 
     @Test
     @DisplayName("resolveWithSnowstorm: returns SNOMED code when Snowstorm finds a match")
@@ -227,9 +223,7 @@ class OpenMedTerminologyServiceTest {
         logger.info("[OpenMedTest] first-of-multiple Snowstorm result: '{}'", result);
     }
 
-    // ====================================================================
     // 3. inferBatch – returns validated search phrases, NOT SNOMED codes
-    // ====================================================================
 
     @Test
     @DisplayName("inferBatch: returns empty list when service is disabled")
@@ -327,12 +321,10 @@ class OpenMedTerminologyServiceTest {
         verifyNoInteractions(rdfService);
     }
 
-    // ====================================================================
     // 4. End-to-end correctness: the full SNOMED pipeline
     //    inferBatch → caller builds lookup keys → TerminologyLookupService
     //    → resolveTerminology → SNOMED code or ""
     //    Simulated here via resolveWithSnowstorm directly.
-    // ====================================================================
 
     @Test
     @DisplayName("CORRECTNESS: SNOMED code returned for a recognised medical term")
@@ -377,9 +369,7 @@ class OpenMedTerminologyServiceTest {
         logger.info("[OpenMedTest] numeric values → '' ✓");
     }
 
-    // ====================================================================
     // 5. Graceful degradation
-    // ====================================================================
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)

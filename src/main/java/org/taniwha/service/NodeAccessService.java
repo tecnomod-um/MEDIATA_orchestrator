@@ -57,6 +57,10 @@ public class NodeAccessService {
     }
 
     public boolean checkUserAccess(String nodeId, String userToken) {
+        if (!jwtTokenUtil.isUserAccessToken(userToken)) {
+            logger.warn("Rejected non-user token for node access check");
+            return false;
+        }
         String username = jwtTokenUtil.getUsernameFromToken(userToken);
         return userService.userHasAccessToNode(username, nodeId);
     }

@@ -69,7 +69,8 @@ public class PythonLauncherUtil {
     }
 
     public static void ensureDependencies(File cwd, Map<String, String> env, File venvBin, List<String> deps) {
-        runBash(cwd, env, "source " + venvBin.getParentFile().getAbsolutePath() + "/activate && pip install --upgrade pip");
+        runBash(cwd, env, "source " + shellQuote(venvBin.getParentFile().getAbsolutePath() + "/activate")
+                + " && python -m pip install --upgrade 'pip>=26.2' 'setuptools>=84.1' 'wheel>=0.46.2'");
 
         for (String dep : deps) {
             String spec = dep == null ? "" : dep.trim();

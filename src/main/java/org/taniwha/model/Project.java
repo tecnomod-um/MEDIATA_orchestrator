@@ -5,6 +5,9 @@ import lombok.Setter;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Setter
 @Getter
 @Document(collection = "projects")
@@ -15,6 +18,7 @@ public class Project {
     private String name;
     private String description;
     private String badge;
+    private List<String> nodeIds = new ArrayList<>();
     private byte[] imageBytes;
     private String imageContentType;
 }

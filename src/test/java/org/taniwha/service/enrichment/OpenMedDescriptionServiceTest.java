@@ -37,9 +37,7 @@ class OpenMedDescriptionServiceTest {
         ReflectionTestUtils.setField(service, "timeoutMs",   5000);
     }
 
-    // ====================================================================
     // extractLabel
-    // ====================================================================
 
     @Test
     @DisplayName("extractLabel: 'label | code' returns the label part")
@@ -75,9 +73,7 @@ class OpenMedDescriptionServiceTest {
         assertThat(OpenMedDescriptionService.extractLabel("Hypertension")).isEqualTo("Hypertension");
     }
 
-    // ====================================================================
     // Service level – disabled / null inputs
-    // ====================================================================
 
     @Test
     @DisplayName("disabled service returns empty map immediately")
@@ -98,9 +94,7 @@ class OpenMedDescriptionServiceTest {
         assertThat(service.describeColumns(List.of())).isEmpty();
     }
 
-    // ====================================================================
     // DescriptionService integration – OpenMed used when available
-    // ====================================================================
 
     @Test
     @DisplayName("DescriptionService uses OpenMed when it returns results")

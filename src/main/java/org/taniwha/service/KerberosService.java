@@ -5,6 +5,11 @@ import org.apache.kerby.kerberos.kerb.KrbException;
 import org.apache.kerby.kerberos.kerb.client.KrbClient;
 import org.apache.kerby.kerberos.kerb.identity.IdentityService;
 import org.apache.kerby.kerberos.kerb.type.base.PrincipalName;
+import org.apache.kerby.kerberos.kerb.type.base.EncryptedData;
+import org.apache.kerby.kerberos.kerb.type.base.KeyUsage;
+import org.apache.kerby.kerberos.kerb.crypto.EncryptionHandler;
+import org.apache.kerby.kerberos.kerb.type.ap.Authenticator;
+import org.apache.kerby.kerberos.kerb.type.KerberosTime;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncAsRepPart;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncKdcRepPart;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncTgsRepPart;
@@ -30,6 +35,10 @@ import java.util.Base64;
 // Kerberos-related functionality
 @Service
 public class KerberosService {
+    private static final int MAX_ENVELOPE_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_TICKET_BYTES = 1024 * 1024;
+    private static final int MAX_PRINCIPAL_BYTES = 512;
+    private static final int MAX_ENCODED_ENVELOPE_CHARS = 4 * ((MAX_ENVELOPE_BYTES + 2) / 3);
 
     private static final Logger logger = LoggerFactory.getLogger(KerberosService.class);
     private final Object krbClientLock = new Object();
@@ -59,7 +68,7 @@ public class KerberosService {
             return;
         }
         kdcServer.createPrincipal(principal, password);
-        logger.debug("New principal created: {} {}", principal, password);
+        logger.debug("New principal created: {}", principal);
     }
 
     // Exports a keytab for a given principal
@@ -98,7 +107,7 @@ public class KerberosService {
 
     public String requestTgt(String userPrincipal, String password) {
         try {
-            logger.debug("Requesting TGT for user principal: {} with password {}", userPrincipal, password);
+            logger.debug("Requesting TGT for user principal: {}", userPrincipal);
             TgtTicket tgtTicket;
             synchronized (krbClientLock) {
                 tgtTicket = krbClient.requestTgt(userPrincipal, password);
@@ -131,15 +140,22 @@ public class KerberosService {
         }
     }
 
-    private String encodeKrbTicket(KrbTicket krbTicket) throws IOException {
+    private String encodeKrbTicket(KrbTicket krbTicket) throws IOException, KrbException {
         try (ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-             ObjectOutputStream objStream = new ObjectOutputStream(byteStream)) {
+             DataOutputStream objStream = new DataOutputStream(byteStream)) {
 
             byte[] ticketBytes = krbTicket.getTicket().encode();
             objStream.writeInt(ticketBytes.length);
             objStream.write(ticketBytes);
 
-            byte[] encKdcRepPartBytes = krbTicket.getEncKdcRepPart().encode();
+            byte[] encKdcRepPartBytes;
+            if (krbTicket instanceof SgtTicket) {
+                // The node derives the session key from the encrypted ticket. Never
+                // transmit the KDC session key beside the authenticator.
+                encKdcRepPartBytes = new byte[0];
+            } else {
+                encKdcRepPartBytes = krbTicket.getEncKdcRepPart().encode();
+            }
             objStream.writeInt(encKdcRepPartBytes.length);
             objStream.write(encKdcRepPartBytes);
 
@@ -153,35 +169,64 @@ public class KerberosService {
                 byte[] clientPrincipalBytes = sgtTicket.getClientPrincipal().getName().getBytes(StandardCharsets.UTF_8);
                 objStream.writeInt(clientPrincipalBytes.length);
                 objStream.write(clientPrincipalBytes);
+
+                Authenticator authenticator = new Authenticator();
+                authenticator.setAuthenticatorVno(5);
+                authenticator.setCrealm(realm);
+                authenticator.setCname(sgtTicket.getClientPrincipal());
+                authenticator.setCtime(KerberosTime.now());
+                authenticator.setCusec(0);
+                EncryptedData encryptedAuthenticator = EncryptionHandler.encrypt(
+                        authenticator.encode(),
+                        sgtTicket.getEncKdcRepPart().getKey(),
+                        KeyUsage.AP_REQ_AUTH
+                );
+                objStream.writeInt(encryptedAuthenticator.getEType().getValue());
+                objStream.writeInt(encryptedAuthenticator.getCipher().length);
+                objStream.write(encryptedAuthenticator.getCipher());
             }
 
             objStream.flush();
-            return Base64.getEncoder().encodeToString(byteStream.toByteArray());
+            byte[] encoded = byteStream.toByteArray();
+            if (encoded.length > MAX_ENVELOPE_BYTES) {
+                throw new IOException("Kerberos envelope exceeds the permitted size");
+            }
+            return Base64.getEncoder().encodeToString(encoded);
         }
     }
 
     private KrbTicket decodeKrbTicket(String encodedTicket, boolean isTgt) throws IOException {
+        if (encodedTicket == null || encodedTicket.isEmpty()
+                || encodedTicket.length() > MAX_ENCODED_ENVELOPE_CHARS) {
+            throw new IOException("Kerberos envelope exceeds the permitted size");
+        }
         byte[] combinedBytes = Base64.getDecoder().decode(encodedTicket);
+        if (combinedBytes.length == 0 || combinedBytes.length > MAX_ENVELOPE_BYTES) {
+            throw new IOException("Kerberos envelope exceeds the permitted size");
+        }
         try (ByteArrayInputStream byteStream = new ByteArrayInputStream(combinedBytes);
-             ObjectInputStream objStream = new ObjectInputStream(byteStream)) {
+             DataInputStream objStream = new DataInputStream(byteStream)) {
 
-            int ticketLength = objStream.readInt();
+            int ticketLength = readLength(objStream, MAX_TICKET_BYTES, "ticket");
             byte[] ticketBytes = new byte[ticketLength];
             objStream.readFully(ticketBytes);
             Ticket ticket = new Ticket();
             ticket.decode(ticketBytes);
 
-            int encKdcRepPartLength = objStream.readInt();
+            int encKdcRepPartLength = readLength(objStream, MAX_TICKET_BYTES, "KDC reply");
             byte[] encKdcRepPartBytes = new byte[encKdcRepPartLength];
             objStream.readFully(encKdcRepPartBytes);
             EncKdcRepPart encKdcRepPart = isTgt ? new EncAsRepPart() : new EncTgsRepPart();
             encKdcRepPart.decode(encKdcRepPartBytes);
 
-            int clientPrincipalLength = objStream.readInt();
+            int clientPrincipalLength = readLength(objStream, MAX_PRINCIPAL_BYTES, "client principal");
             byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
             objStream.readFully(clientPrincipalBytes);
             PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes, StandardCharsets.UTF_8));
 
+            if (objStream.available() != 0) {
+                throw new IOException("Unexpected trailing data in Kerberos envelope");
+            }
             if (isTgt) {
                 return new TgtTicket(ticket, (EncAsRepPart) encKdcRepPart, clientPrincipal);
             } else {
@@ -190,6 +235,14 @@ public class KerberosService {
                 return sgtTicket;
             }
         }
+    }
+
+    private int readLength(DataInputStream input, int maximum, String field) throws IOException {
+        int length = input.readInt();
+        if (length < 0 || length > maximum || length > input.available()) {
+            throw new IOException("Invalid Kerberos " + field + " length");
+        }
+        return length;
     }
 
     public String getPrincipalName(String ip, String realm) {

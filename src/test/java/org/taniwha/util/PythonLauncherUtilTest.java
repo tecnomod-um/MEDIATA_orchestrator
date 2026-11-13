@@ -2,6 +2,8 @@ package org.taniwha.util;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -61,6 +63,7 @@ class PythonLauncherUtilTest {
     }
 
     @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC}) // Requires native Unix Bash and bin/activate.
     void runBash_and_runBashQuiet_successAndFailure(@TempDir Path tmp) {
         Map<String, String> env = Collections.emptyMap();
         assertThat(PythonLauncherUtil.runBash(tmp.toFile(), env, "true")).isTrue();
@@ -70,6 +73,7 @@ class PythonLauncherUtilTest {
     }
 
     @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
     void ensureVirtualEnv_createsVenvDir(@TempDir Path tmp) throws IOException {
         Path proj = tmp.resolve("project");
         Files.createDirectories(proj);
@@ -78,6 +82,24 @@ class PythonLauncherUtilTest {
     }
 
     @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void ensureDependencies_updatesPackagingTools(@TempDir Path tmp) throws IOException {
+        Path project = tmp.resolve("project with spaces");
+        Path bin = project.resolve(".venv/bin");
+        Files.createDirectories(bin);
+        Files.writeString(bin.resolve("activate"),
+                "python() { printf '%s\\n' \"$*\" >> \"$COMMAND_LOG\"; }\n");
+        Path log = tmp.resolve("commands.log");
+
+        PythonLauncherUtil.ensureDependencies(project.toFile(),
+                Map.of("COMMAND_LOG", log.toString()), bin.resolve("python").toFile(), List.of());
+
+        assertThat(Files.readString(log)).contains(
+                "-m pip install --upgrade pip>=26.2 setuptools>=84.1 wheel>=0.46.2");
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
     void ensureDependencies_doesNotThrowEvenIfPipCommandsFail(@TempDir Path tmp) throws IOException {
         Path proj = tmp.resolve("p");
         Files.createDirectories(proj);
@@ -91,6 +113,7 @@ class PythonLauncherUtilTest {
     }
 
     @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
     void launchAsync_doesNotThrowForHarmlessCommand(@TempDir Path tmp) {
         File cwd = tmp.toFile();
         Map<String, String> env = new HashMap<>();

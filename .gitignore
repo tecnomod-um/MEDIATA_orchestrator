@@ -19,6 +19,7 @@ mediata-rdf-builder/
 
 nohup.out
 target/
+openapi.yaml
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

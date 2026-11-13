@@ -1,5 +1,9 @@
 package org.taniwha.service.mapping;
 
+import org.taniwha.service.enrichment.TerminologyRequest;
+
+import org.taniwha.config.MappingServiceSettings;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -21,7 +25,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.taniwha.config.MappingConfig;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.ColumnEnrichmentInput;
 import org.taniwha.model.ColumnRecord;
@@ -99,9 +102,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @DisplayName("OpenMed + Snowstorm – live terminology pipeline report test (actual model + real SNOMED lookup)")
 public class OpenMedTerminologyReportTest {
 
-    // -----------------------------------------------------------------------
     // Spring context
-    // -----------------------------------------------------------------------
 
     @Configuration
     @EnableAutoConfiguration(exclude = {
@@ -198,8 +199,8 @@ public class OpenMedTerminologyReportTest {
         }
 
         @Bean
-        public MappingConfig.MappingServiceSettings mappingSettings() {
-            return new MappingConfig.MappingServiceSettings(
+        public MappingServiceSettings mappingSettings() {
+            return new MappingServiceSettings(
                     60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6);
         }
 
@@ -211,16 +212,14 @@ public class OpenMedTerminologyReportTest {
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 ObjectMapper objectMapper,
-                MappingConfig.MappingServiceSettings mappingSettings) {
+                MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
                     openMedTerminologyService,
                     descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
         }
     }
 
-    // -----------------------------------------------------------------------
     // Constants
-    // -----------------------------------------------------------------------
 
     private static final Logger logger =
             LoggerFactory.getLogger(OpenMedTerminologyReportTest.class);
@@ -257,9 +256,7 @@ public class OpenMedTerminologyReportTest {
     /** Seeded concepts: lowercase search phrase → "conceptId|label". */
     private static final Map<String, String> seededTerms = new LinkedHashMap<>();
 
-    // -----------------------------------------------------------------------
     // @BeforeAll / @AfterAll
-    // -----------------------------------------------------------------------
 
     @BeforeAll
     static void startFullStack() throws Exception {
@@ -525,8 +522,7 @@ public class OpenMedTerminologyReportTest {
                 continue;
             }
 
-            // Create a concept whose FSN is the exact OpenMed phrase so the
-            // bridge's term search will always find it.
+            // The FSN matches the OpenMed phrase so bridge search finds it deterministically.
             String conceptId = createSnowstormConcept(openMedPhrase);
             if (conceptId != null) {
                 seededTerms.put(key, conceptId + "|" + openMedPhrase);
@@ -718,9 +714,6 @@ public class OpenMedTerminologyReportTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Test dataset
-    // -----------------------------------------------------------------------
 
     private static List<ColumnRecord> testColumns() {
         return List.of(
@@ -747,9 +740,7 @@ public class OpenMedTerminologyReportTest {
         );
     }
 
-    // -----------------------------------------------------------------------
     // Autowired services
-    // -----------------------------------------------------------------------
 
     @org.springframework.beans.factory.annotation.Autowired
     private OpenMedTerminologyService openMedTerminologyService;
@@ -760,9 +751,7 @@ public class OpenMedTerminologyReportTest {
     @org.springframework.beans.factory.annotation.Autowired
     private OpenMedDescriptionService openMedDescriptionService;
 
-    // -----------------------------------------------------------------------
     // Test
-    // -----------------------------------------------------------------------
 
     @Test
     @DisplayName("Full pipeline: OpenMed NER → Snowstorm SNOMED – terminology must be non-empty for known medical terms")
@@ -816,20 +805,20 @@ public class OpenMedTerminologyReportTest {
         System.out.println("\n=== Step 2: building Snowstorm lookup requests ===");
         Map<String, String> colLookupKeys = new LinkedHashMap<>();
         Map<String, String> valLookupKeys = new LinkedHashMap<>();
-        List<TerminologyLookupService.TerminologyRequest> requests = new ArrayList<>();
+        List<TerminologyRequest> requests = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
 
         for (OpenMedTerminologyService.InferredTerm t : inferred) {
             String colKey = t.colKey() + "|" + t.colSearchTerm();
             colLookupKeys.put(t.colKey(), colKey);
             if (seen.add(colKey))
-                requests.add(new TerminologyLookupService.TerminologyRequest(colKey, null));
+                requests.add(new TerminologyRequest(colKey, null));
             if (t.valueSearchTerms() != null) {
                 t.valueSearchTerms().forEach((rawVal, valTerm) -> {
                     String vKey = t.colKey() + "|" + valTerm;
                     valLookupKeys.put(t.colKey() + "|" + rawVal, vKey);
                     if (seen.add(vKey))
-                        requests.add(new TerminologyLookupService.TerminologyRequest(vKey, t.colKey()));
+                        requests.add(new TerminologyRequest(vKey, t.colKey()));
                 });
             }
         }
@@ -840,7 +829,7 @@ public class OpenMedTerminologyReportTest {
         if (!snowstormAvailable)
             System.out.println("  ⚠ Snowstorm not available – all SNOMED results will be empty");
 
-            // Ensure RDF bridge is ready before attempting lookups
+            // RDF bridge readiness is required before attempting lookups.
             if (bridgeAvailable) {
                 System.out.println("  Waiting for rdf-builder to be fully operational…");
                 int maxWaitMs = 5000;
@@ -1063,9 +1052,7 @@ public class OpenMedTerminologyReportTest {
                 snomedCount, emptyCount);
     }
 
-    // -----------------------------------------------------------------------
     // Description generation test (OpenMed /describe_batch)
-    // -----------------------------------------------------------------------
 
     /**
      * Calls the real OpenMed {@code /describe_batch} endpoint with a representative
@@ -1259,9 +1246,7 @@ public class OpenMedTerminologyReportTest {
         System.out.printf("%n  ✓ All %d columns have valid descriptions%n", results.size());
     }
 
-    // -----------------------------------------------------------------------
     // Helpers
-    // -----------------------------------------------------------------------
 
     private String findValueTerminology(Map<String, TermResult> results, String valueName) {
         for (TermResult r : results.values()) {
@@ -1338,8 +1323,7 @@ public class OpenMedTerminologyReportTest {
             System.out.printf("  [VAL] %-20s → '%s' ✓%n", exp.valueName(), phrase);
         }
 
-        // Verify that numeric values in 'Toilet' column produce contextual search terms
-        // (not just the raw number), and that those terms pass isValidTerm()
+        // Numeric values in the Toilet column should produce contextual search terms.
         for (OpenMedTerminologyService.InferredTerm t : inferred) {
             if (!"Toilet".equalsIgnoreCase(t.colKey())) continue;
             if (t.valueSearchTerms() == null) continue;
@@ -1376,9 +1360,7 @@ public class OpenMedTerminologyReportTest {
         System.out.println("  ✓ All model-output quality assertions passed");
     }
 
-    // -----------------------------------------------------------------------
     // Report writers
-    // -----------------------------------------------------------------------
 
     private static void writeJsonReport(Path out, Map<String, TermResult> results) throws IOException {
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -1474,7 +1456,6 @@ public class OpenMedTerminologyReportTest {
     }
 
 
-    // -----------------------------------------------------------------------
 
     private static String httpGet(String url, int timeoutMs) throws Exception {
         return HttpClient.newBuilder()

@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./mediata-openmed/main.py /app/main.py
 
+RUN python -m pip install --no-cache-dir --upgrade 'pip>=26.2' 'setuptools>=84.1' 'wheel>=0.46.2' \
+    && python -m pip check
+
 EXPOSE 8002
 
 # Healthcheck: the /health endpoint confirms both models are loaded (or fallback is active).

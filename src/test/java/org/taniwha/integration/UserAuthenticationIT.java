@@ -50,16 +50,13 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
 
     @BeforeEach
     void setUpUser() {
-        // Clean up before each test
         userRepository.deleteAll();
         roleRepository.deleteAll();
 
-        // Create test role
         testRole = new Role();
         testRole.setName("ADMIN");
         testRole = roleRepository.save(testRole);
 
-        // Create test user with roles
         testUser = new User(
                 null, // id - let MongoDB generate
                 "testuser",
@@ -125,7 +122,6 @@ public class UserAuthenticationIT extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string("User registered successfully"));
 
-        // Verify user was saved to database
         User savedUser = userRepository.findByUsername("newuser");
         assertNotNull(savedUser);
     }

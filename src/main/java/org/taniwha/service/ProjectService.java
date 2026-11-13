@@ -1,11 +1,14 @@
 package org.taniwha.service;
 
+import org.taniwha.model.NodeMetadataDataset;
+
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.ProjectDTO;
 import org.taniwha.dto.SaveProjectRequestDTO;
 import org.taniwha.model.NodeInfo;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.Project;
+import org.taniwha.model.User;
 import org.taniwha.repository.NodeRepository;
 import org.taniwha.repository.ProjectRepository;
 import org.taniwha.repository.UserRepository;
@@ -13,7 +16,11 @@ import org.taniwha.repository.UserRepository;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 // Project related functionality
 @Service
@@ -24,40 +31,32 @@ public class ProjectService {
     private final UserRepository userRepository;
     private final NodeRepository nodeRepository;
     private final NodeService nodeService;
+    private final ProjectProvenanceService provenanceService;
 
-    public ProjectService(ProjectRepository projectRepository, NodeAccessService nodeAccessService, UserRepository userRepository, NodeRepository nodeRepository, NodeService nodeService) {
+    public ProjectService(ProjectRepository projectRepository,
+                          NodeAccessService nodeAccessService,
+                          UserRepository userRepository,
+                          NodeRepository nodeRepository,
+                          NodeService nodeService,
+                          ProjectProvenanceService provenanceService) {
         this.projectRepository = projectRepository;
         this.nodeAccessService = nodeAccessService;
         this.userRepository = userRepository;
         this.nodeRepository = nodeRepository;
         this.nodeService = nodeService;
+        this.provenanceService = provenanceService;
     }
 
     public List<ProjectDTO> listProjects() {
         List<Project> entities = projectRepository.findAll();
         List<ProjectDTO> out = new ArrayList<>();
-
-        int membersCount = (int) userRepository.count();
-        int nodesCount = (int) nodeRepository.count();
+        List<User> users = userRepository.findAll();
 
         Instant lastAccessInstant = nodeService.getLastNodeListAccess();
         String lastAccess = (lastAccessInstant != null) ? lastAccessInstant.toString() : null;
-        int dcatCount = computeDcatCountAllNodes();
 
         for (Project e : entities) {
-            ProjectDTO dto = new ProjectDTO();
-            dto.setId(e.getId());
-            dto.setName(e.getName());
-            dto.setDescription(e.getDescription());
-            dto.setBadge(e.getBadge());
-
-            dto.setMembersCount(membersCount);
-            dto.setNodesCount(nodesCount);
-            dto.setDcatCount(dcatCount);
-            dto.setLastAccess(lastAccess);
-
-            setImageInDTO(e, dto);
-            out.add(dto);
+            out.add(toDto(e, lastAccess, users));
         }
 
         return out;
@@ -65,14 +64,20 @@ public class ProjectService {
 
     public ProjectDTO saveProject(SaveProjectRequestDTO req) {
         Project p = new Project();
+        List<String> previousNodeIds = Collections.emptyList();
 
         if (req.getId() != null && !req.getId().trim().isEmpty()) {
             p.setId(req.getId().trim());
+            previousNodeIds = projectRepository.findById(p.getId())
+                    .map(Project::getNodeIds)
+                    .map(this::normalizeNodeIds)
+                    .orElse(Collections.emptyList());
         }
 
         p.setName(req.getName());
         p.setDescription(req.getDescription());
         p.setBadge(req.getBadge());
+        p.setNodeIds(normalizeNodeIds(req.getNodeIds()));
 
         // Persist image
         if (req.getImageBase64() != null && !req.getImageBase64().trim().isEmpty() && req.getImageContentType() != null && !req.getImageContentType().trim().isEmpty()) {
@@ -92,37 +97,97 @@ public class ProjectService {
         }
 
         Project saved = projectRepository.save(p);
-        ProjectDTO dto = new ProjectDTO();
-        dto.setId(saved.getId());
-        dto.setName(saved.getName());
-        dto.setDescription(saved.getDescription());
-        dto.setBadge(saved.getBadge());
-
-        // computed fields
-        dto.setMembersCount((int) userRepository.count());
-        dto.setNodesCount((int) nodeRepository.count());
-        dto.setDcatCount(computeDcatCountAllNodes());
-
+        recordProjectNodeChanges(saved, previousNodeIds);
         Instant lastAccessInstant = nodeService.getLastNodeListAccess();
-        dto.setLastAccess(lastAccessInstant != null ? lastAccessInstant.toString() : null);
+        return toDto(saved, lastAccessInstant != null ? lastAccessInstant.toString() : null,
+                userRepository.findAll());
+    }
 
-        setImageInDTO(saved, dto);
+    private void recordProjectNodeChanges(Project project, List<String> previousNodeIds) {
+        Set<String> previous = new LinkedHashSet<>(normalizeNodeIds(previousNodeIds));
+        Set<String> current = new LinkedHashSet<>(normalizeNodeIds(project.getNodeIds()));
+
+        current.stream()
+                .filter(nodeId -> !previous.contains(nodeId))
+                .forEach(nodeId -> provenanceService.recordProjectNodeMembershipAsCurrentActor(
+                        project.getId(), nodeId, resolveNodeName(nodeId), true));
+        previous.stream()
+                .filter(nodeId -> !current.contains(nodeId))
+                .forEach(nodeId -> provenanceService.recordProjectNodeMembershipAsCurrentActor(
+                        project.getId(), nodeId, resolveNodeName(nodeId), false));
+    }
+
+    private String resolveNodeName(String nodeId) {
+        return nodeRepository.findById(nodeId)
+                .map(NodeInfo::getName)
+                .orElse(null);
+    }
+
+    public List<String> getProjectNodeIds(String projectId) {
+        if (projectId == null || projectId.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return projectRepository.findById(projectId.trim())
+                .map(Project::getNodeIds)
+                .map(this::normalizeNodeIds)
+                .orElse(Collections.emptyList());
+    }
+
+    private ProjectDTO toDto(Project project, String lastAccess, List<User> users) {
+        ProjectDTO dto = new ProjectDTO();
+        dto.setId(project.getId());
+        dto.setName(project.getName());
+        dto.setDescription(project.getDescription());
+        dto.setBadge(project.getBadge());
+        dto.setNodeIds(normalizeNodeIds(project.getNodeIds()));
+        dto.setLastAccess(lastAccess);
+
+        List<NodeInfo> activeProjectNodes = getActiveProjectNodes(dto.getNodeIds());
+        dto.setMembersCount(computeMembersCount(activeProjectNodes, users));
+        dto.setNodesCount(activeProjectNodes.size());
+        dto.setDcatCount(computeDcatCount(activeProjectNodes));
+
+        setImageInDTO(project, dto);
         return dto;
     }
 
-    private void setImageInDTO(Project saved, ProjectDTO dto) {
-        if (saved.getImageBytes() != null && saved.getImageBytes().length > 0 && saved.getImageContentType() != null && !saved.getImageContentType().trim().isEmpty()) {
-            String b64 = Base64.getEncoder().encodeToString(saved.getImageBytes());
-            dto.setImageUrl("data:" + saved.getImageContentType().trim() + ";base64," + b64);
+    private List<NodeInfo> getActiveProjectNodes(List<String> nodeIds) {
+        if (nodeIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<NodeInfo> nodes = new ArrayList<>();
+        nodeRepository.findAllById(nodeIds).forEach(nodes::add);
+        return nodes.stream()
+                .filter(this::isActive)
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeNodeIds(List<String> nodeIds) {
+        if (nodeIds == null || nodeIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Set<String> normalized = nodeIds.stream()
+                .filter(nodeId -> nodeId != null && !nodeId.trim().isEmpty())
+                .map(String::trim)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return new ArrayList<>(normalized);
+    }
+
+    private void setImageInDTO(Project project, ProjectDTO dto) {
+        if (project.getImageBytes() != null && project.getImageBytes().length > 0 && project.getImageContentType() != null && !project.getImageContentType().trim().isEmpty()) {
+            String b64 = Base64.getEncoder().encodeToString(project.getImageBytes());
+            dto.setImageUrl("data:" + project.getImageContentType().trim() + ";base64," + b64);
         } else {
             dto.setImageUrl(null);
         }
     }
 
-    private int computeDcatCountAllNodes() {
+    private int computeDcatCount(List<NodeInfo> nodes) {
         int total = 0;
 
-        List<NodeInfo> nodes = nodeRepository.findAll();
         for (NodeInfo node : nodes) {
             if (node == null || node.getNodeId() == null) {
                 continue;
@@ -131,12 +196,43 @@ public class ProjectService {
             if (md == null) {
                 continue;
             }
-            List<NodeMetadata.Dataset> datasets = md.getDataset();
+            List<NodeMetadataDataset> datasets = md.getDataset();
             if (datasets != null) {
                 total += datasets.size();
             }
         }
 
         return total;
+    }
+
+    private int computeMembersCount(List<NodeInfo> nodes, List<User> users) {
+        if (nodes.isEmpty()) {
+            return 0;
+        }
+
+        Set<String> projectNodeIds = nodes.stream()
+                .map(NodeInfo::getNodeId)
+                .filter(nodeId -> nodeId != null && !nodeId.trim().isEmpty())
+                .map(String::trim)
+                .collect(Collectors.toSet());
+        if (projectNodeIds.isEmpty()) {
+            return 0;
+        }
+
+        if (users == null) {
+            return 0;
+        }
+
+        return (int) users.stream()
+                .filter(user -> user != null && user.getNodeIds() != null)
+                .filter(user -> user.getNodeIds().stream()
+                        .filter(node -> node != null && node.getNodeId() != null)
+                        .map(node -> node.getNodeId().trim())
+                        .anyMatch(projectNodeIds::contains))
+                .count();
+    }
+
+    private boolean isActive(NodeInfo nodeInfo) {
+        return nodeInfo != null && (nodeInfo.getActive() == null || nodeInfo.getActive());
     }
 }

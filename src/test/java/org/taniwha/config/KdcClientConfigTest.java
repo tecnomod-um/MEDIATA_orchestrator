@@ -18,7 +18,6 @@ class KdcClientConfigTest {
 
     @Test
     void krbClientBean_isCreatedWithTcpEnabledAndUdpDisabled(@TempDir Path tempDir) throws Exception {
-        // Create a dummy krb5.conf file in the temp directory
         File krb5Conf = tempDir.resolve("krb5.conf").toFile();
         try (FileWriter writer = new FileWriter(krb5Conf)) {
             writer.write(

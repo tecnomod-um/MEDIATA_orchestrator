@@ -1,10 +1,12 @@
 package org.taniwha.service.mapping;
 
+import org.taniwha.util.SchemaFieldDef;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -51,6 +53,7 @@ public class MappingService {
     private final ColumnClusterer columnClusterer;
     private final ColumnPicker columnPicker;
     private final MappingAssembler mappingAssembler;
+    private final SuggestionTerminologyPropagator terminologyPropagator;
     private final MappingEnrichmentHelper enrichmentHelper;
     private final SchemaColumnMatchGuard schemaColumnMatchGuard;
 
@@ -69,6 +72,7 @@ public class MappingService {
         this.columnClusterer   = new ColumnClusterer(mappingSettings);
         this.columnPicker      = new ColumnPicker();
         this.mappingAssembler  = new MappingAssembler(valueMappingBuilder);
+        this.terminologyPropagator = new SuggestionTerminologyPropagator();
         this.schemaColumnMatchGuard = new SchemaColumnMatchGuard();
         this.enrichmentHelper  = new MappingEnrichmentHelper(
                 openMedTerminologyService,
@@ -108,7 +112,8 @@ public class MappingService {
             }
             // Value vectors stay separate so domain similarity does not distort the main semantic embedding.
             float[] valueVec = ValueVectorUtil.build(rawValues);
-            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues, combined, valueVec, stats));
+            processedColumns.add(new EmbeddedColumn(nodeId, fileName, colName, concept, rawValues,
+                    combined, valueVec, stats, SuggestionTerminologyPropagator.conceptId(c.getTerminology())));
         });
         if (processedColumns.isEmpty()) return Collections.emptyList();
 
@@ -120,6 +125,7 @@ public class MappingService {
         } else {
             out = suggestWithSchema(schemaFields, processedColumns);
         }
+        terminologyPropagator.propagate(columnDTOs, out);
         return out;
     }
 
@@ -284,7 +290,8 @@ public class MappingService {
                     col.rawValues,
                     vec,
                     col.valueVec,
-                    col.stats
+                    col.stats,
+                    col.terminologyId
             ));
         }
         return out;
@@ -303,12 +310,12 @@ public class MappingService {
     }
 
     private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
-        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
+        List<SchemaFieldDef> defs =
                 JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schemaJson, mappingSettings.maxEnum());
         if (defs.isEmpty()) return Collections.emptyList();
 
         List<EmbeddedSchemaField> out = new ArrayList<>();
-        for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
+        for (SchemaFieldDef d : defs) {
             float[] combined = embeddingService.embedSchemaField(
                     d.getName(), d.getType(), d.getEnumValues(), d.getDescription());
             out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getDescription(), d.getEnumValues(), combined));

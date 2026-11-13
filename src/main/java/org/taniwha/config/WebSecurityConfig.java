@@ -14,7 +14,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.util.matcher.RegexRequestMatcher;
+import org.taniwha.security.PublicFairDataPointRoute;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -43,11 +43,12 @@ public class WebSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/actuator/health/**", "/actuator/info/**",
-                                "/taniwha/actuator/health/**", "/taniwha/actuator/info/**"
+                                "/taniwha/actuator/health/**", "/taniwha/actuator/info/**",
+                                "/v3/api-docs/**", "/v3/api-docs.yaml",
+                                "/swagger-ui.html", "/swagger-ui/**"
                         ).permitAll()
-                        .requestMatchers(new RegexRequestMatcher(".*/nodes/proxy/[^/]+/taniwha/fdp(?:/.*)?$", "GET")).permitAll()
-                        .requestMatchers(new RegexRequestMatcher(".*/nodes/proxy/[^/]+/taniwha/fdp(?:/.*)?$", "OPTIONS")).permitAll()
-                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/deregister").permitAll()
+                        .requestMatchers(PublicFairDataPointRoute::matches).permitAll()
+                        .requestMatchers("/api/user/login", "/api/user/register", "/api/error", "/nodes/register", "/nodes/heartbeat", "/nodes/provenance/batch", "/nodes/deregister").permitAll()
                         .requestMatchers("/**").authenticated()
                 )
                 .sessionManagement(session -> session

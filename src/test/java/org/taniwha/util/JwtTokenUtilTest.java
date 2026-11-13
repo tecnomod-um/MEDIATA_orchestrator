@@ -1,9 +1,16 @@
 package org.taniwha.util;
 
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.util.Base64;
+import java.util.Date;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -61,6 +68,23 @@ class JwtTokenUtilTest {
 
         assertThat(token).isNotBlank();
         assertThat(token.split("\\.")).hasSize(3); // JWT has 3 parts separated by dots
+        assertThat(util.isUserAccessToken(token)).isTrue();
+    }
+
+    @Test
+    void isUserAccessToken_rejectsNodePurposeToken() {
+        JwtTokenUtil util = loadWith("AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH", "3600");
+        String token = Jwts.builder()
+                .claims(Map.of("token_use", "node_access", "node_id", "node-1", "aud", "mediata-node-access"))
+                .issuer("mediata-node")
+                .subject("alice")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 3600_000))
+                .signWith(io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                        "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH".getBytes()))
+                .compact();
+
+        assertThat(util.isUserAccessToken(token)).isFalse();
     }
 
     @Test
@@ -80,7 +104,6 @@ class JwtTokenUtilTest {
         String token = util.generateToken("user");
         Thread.sleep(10); // Wait for token to expire
 
-        // Should throw ExpiredJwtException when trying to validate
         assertThatThrownBy(() -> util.validateToken(token, "user"))
                 .isInstanceOf(ExpiredJwtException.class);
     }
@@ -104,5 +127,37 @@ class JwtTokenUtilTest {
         assertThat(token).isNotBlank();
         boolean isValid = util.validateToken(token, "longuser");
         assertThat(isValid).isTrue();
+    }
+
+    @Test
+    void validateNodeSyncToken_requiresRegisteredKeyNodeAndEndpoint() throws Exception {
+        JwtTokenUtil util = loadWith("01234567890123456789012345678901", "3600");
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair nodeKey = generator.generateKeyPair();
+        KeyPair otherNodeKey = generator.generateKeyPair();
+        String token = Jwts.builder()
+                .claims(Map.of(
+                        "token_use", "node_sync",
+                        "node_id", "node-1",
+                        "sync_endpoint", "/nodes/provenance/batch",
+                        "aud", "mediata-orchestrator"))
+                .issuer("mediata-node")
+                .subject("node-1")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 120_000))
+                .signWith(nodeKey.getPrivate())
+                .compact();
+        String nodePublicKey = Base64.getEncoder().encodeToString(nodeKey.getPublic().getEncoded());
+        String otherPublicKey = Base64.getEncoder().encodeToString(otherNodeKey.getPublic().getEncoded());
+
+        assertThat(util.validateNodeSyncToken(
+                token, "node-1", "/nodes/provenance/batch", nodePublicKey)).isTrue();
+        assertThat(util.validateNodeSyncToken(
+                token, "node-2", "/nodes/provenance/batch", nodePublicKey)).isFalse();
+        assertThat(util.validateNodeSyncToken(
+                token, "node-1", "/nodes/heartbeat", nodePublicKey)).isFalse();
+        assertThat(util.validateNodeSyncToken(
+                token, "node-1", "/nodes/provenance/batch", otherPublicKey)).isFalse();
     }
 }

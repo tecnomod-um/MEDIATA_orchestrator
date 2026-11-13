@@ -5,13 +5,13 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class AlignmentResponseDTO {
+public class SemanticIntegrationResponseDTO {
     private boolean csvSaved;
     private String csvMessage;
     private boolean rdfGenerated;
     private String rdfMessage;
 
-    public AlignmentResponseDTO(boolean csvSaved, String csvMessage,
+    public SemanticIntegrationResponseDTO(boolean csvSaved, String csvMessage,
                                 boolean rdfGenerated, String rdfMessage) {
         this.csvSaved = csvSaved;
         this.csvMessage = csvMessage;

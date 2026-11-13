@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;
@@ -148,7 +148,7 @@ public class MappingServiceReportTest {
 
         @Bean
         public RDFService rdfService() {
-            // Mock RDFService to return realistic OntologyTermDTOs for SNOMED lookup.
+            // RDFService returns realistic OntologyTermDTOs for SNOMED lookup.
             // OntologyTermDTO(id, label, description, iri) – iri contains the SNOMED concept ID.
             RDFService mock = Mockito.mock(RDFService.class);
 
@@ -649,7 +649,6 @@ public class MappingServiceReportTest {
         System.out.println("Valid mappings: " + validatedMappings);
         System.out.println("================================\n");
         
-        // Assert that most mappings are valid
         assertTrue(validatedMappings > 0, "Should have at least some valid value mappings");
         if (totalValueMappings > 0) {
             double validRatio = (double) validatedMappings / totalValueMappings;
@@ -659,9 +658,7 @@ public class MappingServiceReportTest {
         }
     }
 
-    // -----------------------
     // Java 8 compatibility
-    // -----------------------
 
     private static byte[] readAllBytesCompat(Path p) throws IOException {
         InputStream in = null;

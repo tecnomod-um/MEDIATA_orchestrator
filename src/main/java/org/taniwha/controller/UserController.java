@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import com.mongodb.client.MongoClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +16,7 @@ import org.taniwha.service.UserService;
 // Requests related to the user system
 @RestController
 @RequestMapping("/api/user")
+@Tag(name = "Users", description = "Authenticate users and manage user registration.")
 public class UserController {
 
     private static final Logger logger = LoggerFactory.getLogger(UserController.class);
@@ -26,6 +29,7 @@ public class UserController {
         this.mongoClient = mongoClient;
     }
 
+    @Operation(summary = "Authenticate and issue a JWT")
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDTO> login(@RequestBody LoginRequestDTO loginRequest) {
         logger.debug("Login attempt for user: {}", loginRequest.getUsername());
@@ -57,6 +61,7 @@ public class UserController {
         }
     }
 
+    @Operation(summary = "Register a user")
     @PostMapping("/register")
     public ResponseEntity<String> register(
             @RequestBody RegisterRequestDTO registerRequest,

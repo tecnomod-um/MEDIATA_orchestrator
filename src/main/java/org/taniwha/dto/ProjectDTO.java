@@ -3,6 +3,8 @@ package org.taniwha.dto;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.List;
+
 @Setter
 @Getter
 public class ProjectDTO {
@@ -15,6 +17,7 @@ public class ProjectDTO {
     private String lastAccess;
     private String imageUrl;
     private String badge;
+    private List<String> nodeIds;
 
     public ProjectDTO() {
     }

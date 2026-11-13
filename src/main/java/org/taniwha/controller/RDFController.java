@@ -1,10 +1,12 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.taniwha.dto.AlignmentResponseDTO;
+import org.taniwha.dto.SemanticIntegrationResponseDTO;
 import org.taniwha.dto.FieldMetadataDTO;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.service.RDFService;
@@ -14,6 +16,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/rdf")
+@Tag(name = "Terminology and RDF", description = "Search terminology services and generate semantic integration artifacts.")
 public class RDFController {
 
     private static final Logger logger = LoggerFactory.getLogger(RDFController.class);
@@ -23,6 +26,7 @@ public class RDFController {
         this.rdfService = rdfService;
     }
 
+    @Operation(summary = "Search ontology classes")
     @GetMapping("/class")
     public ResponseEntity<List<OntologyTermDTO>> getClassSuggestions(
             @RequestParam(name = "query", required = false) String query) {
@@ -31,6 +35,7 @@ public class RDFController {
         return ResponseEntity.ok(suggestions);
     }
 
+    @Operation(summary = "List fields for an ontology class")
     @GetMapping("/class/{type}")
     public ResponseEntity<List<FieldMetadataDTO>> getClassFields(@PathVariable("type") String type) {
         logger.debug("Fetching fields for {}", type);
@@ -38,6 +43,7 @@ public class RDFController {
         return ResponseEntity.ok(fields);
     }
 
+    @Operation(summary = "Search SNOMED CT concepts")
     @GetMapping("/snomed")
     public ResponseEntity<List<OntologyTermDTO>> getSNOMEDTermSuggestions(@RequestParam(name = "query", required = false) String query) {
         logger.debug("Fetching SNOMED term suggestions for query: {}", query);
@@ -45,8 +51,9 @@ public class RDFController {
         return ResponseEntity.ok(suggestions);
     }
 
-    @PostMapping("/semanticalignment")
-    public ResponseEntity<AlignmentResponseDTO> uploadMappings(@RequestBody String csvText) {
+    @Operation(summary = "Generate semantic integration output")
+    @PostMapping("/semanticintegration")
+    public ResponseEntity<SemanticIntegrationResponseDTO> uploadMappings(@RequestBody String csvText) {
         logger.debug("Received mapping CSV ({} bytes)", csvText.length());
         boolean csvSaved;
         String csvMsg;
@@ -71,7 +78,7 @@ public class RDFController {
             }
         } else
             rdfMsg = "Skipped RDF generation because CSV write failed";
-        AlignmentResponseDTO result = new AlignmentResponseDTO(csvSaved, csvMsg, rdfGen, rdfMsg);
+        SemanticIntegrationResponseDTO result = new SemanticIntegrationResponseDTO(csvSaved, csvMsg, rdfGen, rdfMsg);
         return ResponseEntity.ok(result);
     }
 }

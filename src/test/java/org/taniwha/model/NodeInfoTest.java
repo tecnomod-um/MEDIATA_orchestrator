@@ -2,6 +2,8 @@ package org.taniwha.model;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class NodeInfoTest {
@@ -41,6 +43,9 @@ class NodeInfoTest {
         node.setDescription("A test node");
         node.setColor("red");
         node.setPublicKey("key456");
+        node.setActive(false);
+        Instant deregisteredAt = Instant.now();
+        node.setDeregisteredAt(deregisteredAt);
 
         assertEquals("node2", node.getNodeId());
         assertEquals("10.0.0.1", node.getIp());
@@ -49,6 +54,8 @@ class NodeInfoTest {
         assertEquals("A test node", node.getDescription());
         assertEquals("red", node.getColor());
         assertEquals("key456", node.getPublicKey());
+        assertFalse(node.getActive());
+        assertEquals(deregisteredAt, node.getDeregisteredAt());
     }
 
     @Test
@@ -93,7 +100,6 @@ class NodeInfoTest {
                 "password123", "Test description",
                 "blue", "publicKey123");
 
-        // Test that we can create two nodes with same values
         assertEquals(node1.getNodeId(), node2.getNodeId());
         assertEquals(node1.getIp(), node2.getIp());
         assertEquals(node1.getName(), node2.getName());

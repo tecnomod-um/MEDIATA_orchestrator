@@ -1,6 +1,9 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import org.taniwha.security.PublicFairDataPointRoute;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
@@ -16,22 +19,25 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.HandlerMapping;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.NodeInfo;
+import org.taniwha.service.NodeAccessService;
 import org.taniwha.service.NodeService;
 import org.taniwha.config.TrustedNodeProxyConfig;
 import org.taniwha.service.TrustedNodeSignatureService;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.util.Enumeration;
 import java.util.Optional;
 import java.util.Set;
 
-// Acts as a proxy for trusted http-only nodes
 @RestController
+@Tag(name = "Node proxy", description = "Proxy authenticated requests to a selected MEDIATA node.")
 public class NodeProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeProxyController.class);
     private static final String NODE_PROXY_HEADER = "X-Node-Proxy";
+    private static final String BEARER_PREFIX = "Bearer ";
     private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
             "connection",
             "content-length",
@@ -41,38 +47,73 @@ public class NodeProxyController {
     private static final String ACCESS_CONTROL_HEADER_PREFIX = "access-control-";
 
     private final NodeService nodeService;
+    private final NodeAccessService nodeAccessService;
     private final TrustedNodeProxyConfig trustedNodeProxyConfig;
     private final TrustedNodeSignatureService trustedNodeSignatureService;
     private final RestTemplateConfig restTemplateConfig;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     public NodeProxyController(NodeService nodeService,
+                               NodeAccessService nodeAccessService,
                                TrustedNodeProxyConfig trustedNodeProxyConfig,
                                TrustedNodeSignatureService trustedNodeSignatureService,
                                RestTemplateConfig restTemplateConfig) {
         this.nodeService = nodeService;
+        this.nodeAccessService = nodeAccessService;
         this.trustedNodeProxyConfig = trustedNodeProxyConfig;
         this.trustedNodeSignatureService = trustedNodeSignatureService;
         this.restTemplateConfig = restTemplateConfig;
     }
 
+    @Operation(
+            summary = "Proxy an authenticated request to a node",
+            description = "Forwards the HTTP method, headers, query string, and body. Replace the trailing ** "
+                    + "with the node-relative target path."
+    )
     @RequestMapping("/nodes/proxy/{nodeId}/**")
     public ResponseEntity<byte[]> proxyNodeRequest(@PathVariable String nodeId, HttpServletRequest request) throws IOException {
+        String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
+        boolean publicMetadata = PublicFairDataPointRoute.matches(request);
+        if (!publicMetadata && (authorization == null || !authorization.startsWith(BEARER_PREFIX))) {
+            return proxiedResponse(HttpStatus.UNAUTHORIZED, "Authentication required".getBytes(), new HttpHeaders());
+        }
+
         NodeInfo nodeInfo = nodeService.findNodeById(nodeId);
         if (nodeInfo == null) {
             return proxiedResponse(HttpStatus.NOT_FOUND, "Node not found".getBytes(), new HttpHeaders());
+        }
+        if (!publicMetadata && !nodeAccessService.checkUserAccess(nodeId, authorization.substring(BEARER_PREFIX.length()))) {
+            return proxiedResponse(HttpStatus.FORBIDDEN, "Node access denied".getBytes(), new HttpHeaders());
         }
 
         Optional<TrustedNodeProxyConfig.TrustedNodeRoute> route = trustedNodeProxyConfig.resolveRoute(nodeInfo);
         if (route.isEmpty()) {
             return proxiedResponse(HttpStatus.FORBIDDEN, "Proxying is not enabled for this node".getBytes(), new HttpHeaders());
         }
+        if (route.get().sharedSecret() == null || route.get().sharedSecret().length() < 32) {
+            logger.error("Trusted HTTP route for node {} has no strong shared secret", nodeId);
+            return proxiedResponse(HttpStatus.SERVICE_UNAVAILABLE, "Trusted proxy is not securely configured".getBytes(), new HttpHeaders());
+        }
 
         String downstreamPath = extractDownstreamPath(request);
+        if (publicMetadata && !PublicFairDataPointRoute.allows(request.getMethod(), "/" + downstreamPath)) {
+            return proxiedResponse(HttpStatus.FORBIDDEN, "Only public FAIR metadata can be relayed anonymously".getBytes(), new HttpHeaders());
+        }
+        // Dataset records must never enter this tunnel, even if node download policy permits them.
+        String inspected = downstreamPath;
+        for (int i = 0; i < 3; i++) inspected = org.springframework.web.util.UriUtils.decode(inspected, java.nio.charset.StandardCharsets.UTF_8);
+        inspected = URI.create("/" + inspected.replaceFirst("^/+", "").replaceAll(";[^/]*", "")).normalize().getPath();
+        if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && inspected.contains("/api/files/datasets/")) {
+            return proxiedResponse(HttpStatus.FORBIDDEN, "Dataset records cannot be relayed through the orchestrator".getBytes(), new HttpHeaders());
+        }
         String targetUrl = buildTargetUrl(route.get().upstreamBaseUrl(), downstreamPath, request.getQueryString());
         HttpMethod method = HttpMethod.valueOf(request.getMethod());
         HttpHeaders headers = buildForwardHeaders(request, downstreamPath);
-        byte[] body = StreamUtils.copyToByteArray(request.getInputStream());
+        if (publicMetadata) {
+            headers.remove(HttpHeaders.AUTHORIZATION);
+            headers.remove(HttpHeaders.COOKIE);
+        }
+        byte[] body = publicMetadata ? new byte[0] : StreamUtils.copyToByteArray(request.getInputStream());
         URI targetUri = URI.create(targetUrl);
         TrustedNodeSignatureService.SignedRequestContext signedRequestContext =
                 trustedNodeSignatureService.signRequestIfNeeded(
@@ -85,30 +126,43 @@ public class NodeProxyController {
                         .orElse(null);
 
         HttpEntity<byte[]> entity = new HttpEntity<>(body.length == 0 ? null : body, headers);
-        RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
+        RestTemplate restTemplate = restTemplateConfig.getNodeProxyRestTemplate();
 
         try {
             ResponseEntity<byte[]> response = restTemplate.exchange(targetUri, method, entity, byte[].class);
             if (!trustedNodeSignatureService.verifyResponseIfNeeded(
                     signedRequestContext, response.getStatusCode(), response.getHeaders(), response.getBody())) {
-                logger.warn("Trusted proxy signature verification failed for node {} at {}", nodeId, targetUrl);
+                logger.warn("Trusted proxy signature verification failed for node {}", nodeId);
                 return proxiedResponse(HttpStatus.BAD_GATEWAY, "Invalid proxied node response signature".getBytes(), new HttpHeaders());
             }
             return proxiedResponse(response.getStatusCode(), response.getBody(), response.getHeaders());
         } catch (HttpStatusCodeException e) {
             if (!trustedNodeSignatureService.verifyResponseIfNeeded(
                     signedRequestContext, e.getStatusCode(), e.getResponseHeaders(), e.getResponseBodyAsByteArray())) {
-                logger.warn("Trusted proxy signature verification failed for error response from node {} at {}", nodeId, targetUrl);
+                logger.warn("Trusted proxy signature verification failed for error response from node {}", nodeId);
                 return proxiedResponse(HttpStatus.BAD_GATEWAY, "Invalid proxied node response signature".getBytes(), new HttpHeaders());
             }
             return proxiedResponse(e.getStatusCode(), e.getResponseBodyAsByteArray(), e.getResponseHeaders());
         } catch (ResourceAccessException e) {
-            logger.error("I/O error proxying request to node {} at {}", nodeId, targetUrl, e);
+            if (hasCause(e, SocketTimeoutException.class)) {
+                logger.warn("Timed out proxying request to node {}", nodeId);
+                return proxiedResponse(HttpStatus.GATEWAY_TIMEOUT, "Proxied node request timed out".getBytes(), new HttpHeaders());
+            }
+            logger.warn("I/O error proxying request to node {}", nodeId);
             return proxiedResponse(HttpStatus.BAD_GATEWAY, "Failed to reach proxied node".getBytes(), new HttpHeaders());
         } catch (RestClientException e) {
-            logger.error("Unexpected error proxying request to node {} at {}", nodeId, targetUrl, e);
+            logger.error("Unexpected error proxying request to node {}", nodeId);
             return proxiedResponse(HttpStatus.BAD_GATEWAY, "Failed to proxy request to node".getBytes(), new HttpHeaders());
         }
+    }
+
+    private boolean hasCause(Throwable error, Class<? extends Throwable> causeType) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (causeType.isInstance(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String extractDownstreamPath(HttpServletRequest request) {

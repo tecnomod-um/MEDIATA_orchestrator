@@ -2,6 +2,7 @@ package org.taniwha.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,7 @@ import org.taniwha.dto.FieldMetadataDTO;
 import org.taniwha.dto.OntologyTermDTO;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -131,35 +133,47 @@ class RDFServiceTest {
         body.put("items", Arrays.asList(item1, item2));
 
         ResponseEntity<Map> ok = new ResponseEntity<>(body, HttpStatus.OK);
-        String expectedUrl = base + "/MAIN/concepts?term=q&activeFilter=true&termActive=true&limit=1000";
         when(rest.exchange(
-                eq(expectedUrl),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
                 eq(Map.class)
-        )).thenReturn(ok);
+        )).thenReturn(new ResponseEntity<>(Collections.emptyMap(), HttpStatus.OK), ok);
 
         List<OntologyTermDTO> out = svc.getSNOMEDTermSuggestions(q);
         assertThat(out).hasSize(2);
         assertThat(out).extracting(OntologyTermDTO::getLabel)
                 .containsExactly("Foo", "456Only");
-        verify(rest, never()).exchange(
-                eq(base + "/concepts"),
+
+        ArgumentCaptor<URI> uriCaptor = ArgumentCaptor.forClass(URI.class);
+        verify(rest, times(2)).exchange(
+                uriCaptor.capture(),
                 eq(HttpMethod.GET),
                 eq(null),
                 eq(Map.class)
         );
+        List<String> uris = uriCaptor.getAllValues().stream()
+                .map(URI::toString)
+                .toList();
+        assertThat(uris.get(0))
+                .startsWith(base + "/MAIN/concepts?")
+                .contains("term=q", "activeFilter=true", "termActive=true", "limit=100");
+        assertThat(uris.get(1))
+                .startsWith(base + "/browser/MAIN/descriptions?")
+                .contains("term=q", "active=true", "conceptActive=true", "groupByConcept=true", "limit=100");
 
+        reset(rest);
         when(rest.exchange(
-                eq(expectedUrl),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
                 eq(Map.class)
-        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
+        )).thenReturn(new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE), new ResponseEntity<>(HttpStatus.SERVICE_UNAVAILABLE));
         assertThat(svc.getSNOMEDTermSuggestions(q)).isEmpty();
 
+        reset(rest);
         when(rest.exchange(
-                eq(expectedUrl),
+                any(URI.class),
                 eq(HttpMethod.GET),
                 eq(null),
                 eq(Map.class)

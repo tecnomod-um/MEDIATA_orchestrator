@@ -25,7 +25,7 @@ public class CustomKdcServer extends KdcServer {
         super.init();
         this.kadmin = new LocalKadminImpl(this.getKdcSetting(), this.getIdentityService());
 
-        // Ensure builtin principals exist (krbtgt, kadmin, etc.)
+        // Kerby requires builtin principals such as krbtgt and kadmin.
         try {
             this.kadmin.checkBuiltinPrincipals();
         } catch (KrbException e) {

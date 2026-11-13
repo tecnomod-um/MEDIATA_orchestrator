@@ -46,7 +46,6 @@ public class DescriptionService {
         this.descExecutor = descExecutor;
     }
 
-    // Test constructor.
     public DescriptionService(OpenMedDescriptionService openMedDescriptionService,
                               ExecutorService descExecutor) {
         this.openMedDescriptionService = openMedDescriptionService;

@@ -17,6 +17,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.Arrays;
 
 // Sets up trusted nodes for tunneling http connexions
 @Component
@@ -31,8 +34,21 @@ public class TrustedNodeProxyConfig {
     private volatile Map<String, TrustedNodeRoute> trustedRoutes = Collections.emptyMap();
     private volatile long lastModifiedMillis = Long.MIN_VALUE;
 
+    @Value("${trusted.proxy.allow-http-upstream:false}")
+    private boolean allowHttpUpstream;
+
+    @Value("${trusted.proxy.allowed-upstream-hosts:localhost,127.0.0.1,host.docker.internal}")
+    private String allowedUpstreamHosts;
+
+    @org.springframework.beans.factory.annotation.Autowired
     public TrustedNodeProxyConfig(@Value("${trusted.servers.config.path:trusted-servers.config}") String configPathValue) {
+        this(configPathValue, "localhost,127.0.0.1,host.docker.internal");
+    }
+
+    public TrustedNodeProxyConfig(String configPathValue, String allowedUpstreamHosts) {
         this.configPath = Paths.get(configPathValue);
+        this.allowedUpstreamHosts = allowedUpstreamHosts;
+        this.allowHttpUpstream = true;
     }
 
     public boolean requiresProxy(NodeInfo nodeInfo) {
@@ -133,13 +149,13 @@ public class TrustedNodeProxyConfig {
     private TrustedNodeRoute parseRoute(String line) {
         String[] parts = line.split("\\|", -1);
         if (parts.length == 0 || parts[0].isBlank()) {
-            logger.warn("Ignoring invalid trusted node entry: {}", line);
+            logger.warn("Ignoring invalid trusted node entry");
             return null;
         }
 
         URI publicUri = parseUri(parts[0].trim());
         if (publicUri == null || !"http".equalsIgnoreCase(publicUri.getScheme())) {
-            logger.warn("Ignoring trusted node entry without an HTTP public origin: {}", line);
+            logger.warn("Ignoring trusted node entry without an HTTP public origin");
             return null;
         }
 
@@ -148,29 +164,45 @@ public class TrustedNodeProxyConfig {
                 ? parts[1].trim()
                 : publicOrigin;
         URI upstreamUri = parseUri(upstreamBaseUrl);
-        if (upstreamUri == null) {
-            logger.warn("Ignoring trusted node entry with invalid upstream URL: {}", line);
+        if (upstreamUri == null || (!"https".equalsIgnoreCase(upstreamUri.getScheme())
+                && !(allowHttpUpstream && "http".equalsIgnoreCase(upstreamUri.getScheme())))
+                || upstreamUri.getUserInfo() != null || upstreamUri.getFragment() != null
+                || !allowedUpstreamHosts().contains(upstreamUri.getHost().toLowerCase())) {
+            logger.warn("Ignoring trusted node entry with invalid upstream URL");
             return null;
         }
 
         String sharedSecret = parts.length > 2 ? parts[2].trim() : null;
-        if (sharedSecret != null && sharedSecret.isBlank()) {
-            sharedSecret = null;
+        if (sharedSecret == null || sharedSecret.length() < 32) {
+            logger.warn("Ignoring trusted node entry without a strong shared secret: {}", publicOrigin);
+            return null;
         }
 
         return new TrustedNodeRoute(publicOrigin, upstreamBaseUrl.replaceAll("/+$", ""), sharedSecret);
+    }
+
+    private Set<String> allowedUpstreamHosts() {
+        String configured = allowedUpstreamHosts;
+        if (configured == null || configured.isBlank()) {
+            configured = "localhost,127.0.0.1,host.docker.internal";
+        }
+        return Arrays.stream(configured.split(","))
+                .map(String::trim)
+                .filter(host -> !host.isBlank())
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
     }
 
     private URI parseUri(String value) {
         try {
             URI uri = new URI(value);
             if (uri.getScheme() == null || uri.getHost() == null) {
-                logger.warn("Ignoring invalid trusted node entry without scheme/host: {}", value);
+                logger.warn("Ignoring invalid trusted node entry without scheme/host");
                 return null;
             }
             return uri;
         } catch (URISyntaxException e) {
-            logger.warn("Ignoring invalid trusted node entry: {} ({})", value, e.getMessage());
+            logger.warn("Ignoring invalid trusted node entry ({})", e.getMessage());
             return null;
         }
     }

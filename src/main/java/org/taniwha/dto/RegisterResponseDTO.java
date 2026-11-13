@@ -8,4 +8,5 @@ import lombok.Setter;
 public class RegisterResponseDTO {
     private String message;
     private String keytab;
+    private String nodeId;
 }

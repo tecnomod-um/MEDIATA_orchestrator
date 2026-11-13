@@ -16,7 +16,7 @@ This is the central backend service of the MEDIATA platform. It handles user aut
 
 - Kerberos-based user authentication (KDC-hosted)
 - Node registration and heartbeat monitoring
-- Centralized orchestration of semantic alignment and mapping pipelines
+- Centralized orchestration of semantic integration and mapping pipelines
 - API endpoints for:
     - Mapping rule generation (YARRRML, RDF)
     - HL7 FHIR clustering and profile generation
@@ -47,7 +47,7 @@ Services will be available at:
 - **MongoDB**: mongodb://localhost:27017/mediata
 - **Snowstorm**: http://localhost:9100
 - **RDF Builder**: http://localhost:8000
-- **FHIR API**: http://localhost:8001
+- **FHIR API**: http://localhost:8003
 - **OpenMed**: http://localhost:8002
 
 The Docker compose file can also run partial stacks through profiles:
@@ -86,7 +86,7 @@ Services will be available at:
 - **MongoDB**: Your configured URI
 - **Snowstorm**: http://localhost:9100
 - **RDF Builder**: http://localhost:8000
-- **FHIR API**: http://localhost:8001
+- **FHIR API**: http://localhost:8003
 
 ### Default Admin Credentials
 

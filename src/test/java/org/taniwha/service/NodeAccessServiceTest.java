@@ -63,6 +63,7 @@ class NodeAccessServiceTest {
                 trustedNodeMessageSecurityService,
                 "TEST.REALM"
         );
+        when(jwtTokenUtil.isUserAccessToken(anyString())).thenReturn(true);
     }
 
     @Test
