@@ -78,16 +78,6 @@ public class TerminologyLookupService {
         this.paraphraseProvider = paraphraseProvider;
     }
 
-    public static class TerminologyRequest {
-        public final String term;
-        public final String context;
-
-        public TerminologyRequest(String term, String context) {
-            this.term = term;
-            this.context = context;
-        }
-    }
-
     // Non-blocking counterpart to batchLookupTerminology.
     public CompletableFuture<Map<String, String>> submitLookupAsync(List<TerminologyRequest> requests) {
         if (!snowstormEnabled || requests == null || requests.isEmpty()) {
@@ -223,16 +213,6 @@ public class TerminologyLookupService {
 
     private record LookupBatch(Map<String, String> results, List<CompletableFuture<Void>> futures) {}
 
-    private static final class LookupParts {
-        final String lookupTerm;
-        final String lookupContext;
-
-        LookupParts(String lookupTerm, String lookupContext) {
-            this.lookupTerm = lookupTerm;
-            this.lookupContext = lookupContext;
-        }
-    }
-
     private String lookupSingleTerminology(String term, String context) {
         String t = safe(term).trim();
         if (t.isEmpty()) return "";
@@ -352,7 +332,6 @@ public class TerminologyLookupService {
                 .findFirst()
                 .orElse("");
     }
-
 
     private String generateFallbackTerminologyCode(String term, String context) {
         try {

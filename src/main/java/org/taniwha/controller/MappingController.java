@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.MappingEnrichmentJobState;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -70,7 +72,7 @@ public class MappingController {
     @Operation(summary = "Get mapping enrichment status")
     @GetMapping("/enrich/status/{jobId}")
     public ResponseEntity<JobProgressDTO> enrichStatus(@PathVariable String jobId) {
-        MappingEnrichmentJobs.JobState s = enrichmentJobs.getJob(jobId);
+        MappingEnrichmentJobState s = enrichmentJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.status(404)
                     .body(new JobProgressDTO(jobId, "FAILED", 0, "Unknown jobId."));
@@ -87,7 +89,7 @@ public class MappingController {
     @Operation(summary = "Get mapping enrichment results")
     @GetMapping("/enrich/result/{jobId}")
     public ResponseEntity<MappingSuggestResponseDTO> enrichResult(@PathVariable String jobId) {
-        MappingEnrichmentJobs.JobState s = enrichmentJobs.getJob(jobId);
+        MappingEnrichmentJobState s = enrichmentJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.status(404)
                     .body(new MappingSuggestResponseDTO(false, "Unknown jobId.", Collections.emptyList()));

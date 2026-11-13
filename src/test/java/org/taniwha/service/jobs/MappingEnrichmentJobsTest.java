@@ -14,7 +14,7 @@ class MappingEnrichmentJobsTest {
         MappingEnrichmentJobs jobs = new MappingEnrichmentJobs();
 
         String jobId = jobs.createJob();
-        MappingEnrichmentJobs.JobState created = jobs.getJob(jobId);
+        MappingEnrichmentJobState created = jobs.getJob(jobId);
         assertThat(created).isNotNull();
         assertThat(created.state).isEqualTo("QUEUED");
         assertThat(created.percent.get()).isZero();
@@ -46,7 +46,7 @@ class MappingEnrichmentJobsTest {
         String jobId = jobs.createJob();
 
         jobs.update(jobId, -12, null);
-        MappingEnrichmentJobs.JobState state = jobs.getJob(jobId);
+        MappingEnrichmentJobState state = jobs.getJob(jobId);
         assertThat(state).isNotNull();
         assertThat(state.percent.get()).isZero();
         assertThat(state.message).isEqualTo("Queued…");

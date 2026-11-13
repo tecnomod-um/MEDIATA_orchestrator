@@ -31,7 +31,7 @@ class NodeMetadataTest {
         metadata.setType("dcat:Catalog");
         metadata.setSourceFile("catalog.ttl");
 
-        List<NodeMetadata.Dataset> datasets = new ArrayList<>();
+        List<NodeMetadataDataset> datasets = new ArrayList<>();
         metadata.setDataset(datasets);
 
         assertEquals("https://www.w3.org/ns/dcat.jsonld", metadata.getContext());
@@ -43,7 +43,7 @@ class NodeMetadataTest {
 
     @Test
     void testDatasetGettersAndSetters() {
-        NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
+        NodeMetadataDataset dataset = new NodeMetadataDataset();
 
         dataset.setTitle("Test Dataset");
         dataset.setDescription("A test dataset");
@@ -70,7 +70,7 @@ class NodeMetadataTest {
 
     @Test
     void testDatasetWithCollections() {
-        NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
+        NodeMetadataDataset dataset = new NodeMetadataDataset();
 
         List<Object> keywords = Arrays.asList("health", "data", "research");
         List<Object> themes = Arrays.asList("healthcare", "medicine");
@@ -90,17 +90,17 @@ class NodeMetadataTest {
 
     @Test
     void testDatasetWithDistributions() {
-        NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
+        NodeMetadataDataset dataset = new NodeMetadataDataset();
 
-        NodeMetadata.Distribution dist1 = new NodeMetadata.Distribution();
+        NodeMetadataDistribution dist1 = new NodeMetadataDistribution();
         dist1.setTitle("CSV Distribution");
         dist1.setFormat("CSV");
 
-        NodeMetadata.Distribution dist2 = new NodeMetadata.Distribution();
+        NodeMetadataDistribution dist2 = new NodeMetadataDistribution();
         dist2.setTitle("JSON Distribution");
         dist2.setFormat("JSON");
 
-        List<NodeMetadata.Distribution> distributions = Arrays.asList(dist1, dist2);
+        List<NodeMetadataDistribution> distributions = Arrays.asList(dist1, dist2);
         dataset.setDistribution(distributions);
 
         assertNotNull(dataset.getDistribution());
@@ -111,7 +111,7 @@ class NodeMetadataTest {
 
     @Test
     void testDistributionGettersAndSetters() {
-        NodeMetadata.Distribution distribution = new NodeMetadata.Distribution();
+        NodeMetadataDistribution distribution = new NodeMetadataDistribution();
 
         distribution.setTitle("CSV File");
         distribution.setDescription("CSV format data");
@@ -132,12 +132,12 @@ class NodeMetadataTest {
         metadata.setContext("https://www.w3.org/ns/dcat.jsonld");
         metadata.setType("dcat:Catalog");
 
-        NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
+        NodeMetadataDataset dataset = new NodeMetadataDataset();
         dataset.setTitle("Health Records");
         dataset.setDescription("Patient health records dataset");
         dataset.setIdentifier("hr-001");
 
-        NodeMetadata.Distribution distribution = new NodeMetadata.Distribution();
+        NodeMetadataDistribution distribution = new NodeMetadataDistribution();
         distribution.setTitle("CSV Export");
         distribution.setFormat("CSV");
         distribution.setDownloadURL("https://example.com/health.csv");
@@ -154,7 +154,7 @@ class NodeMetadataTest {
 
     @Test
     void testDatasetNullCollections() {
-        NodeMetadata.Dataset dataset = new NodeMetadata.Dataset();
+        NodeMetadataDataset dataset = new NodeMetadataDataset();
 
         assertNull(dataset.getKeyword());
         assertNull(dataset.getTheme());
@@ -164,7 +164,7 @@ class NodeMetadataTest {
 
     @Test
     void testDistributionNullValues() {
-        NodeMetadata.Distribution distribution = new NodeMetadata.Distribution();
+        NodeMetadataDistribution distribution = new NodeMetadataDistribution();
 
         assertNull(distribution.getTitle());
         assertNull(distribution.getDescription());
@@ -214,12 +214,12 @@ class NodeMetadataTest {
         assertNotNull(metadata.getDataset());
         assertEquals(1, metadata.getDataset().size());
 
-        NodeMetadata.Dataset dataset = metadata.getDataset().get(0);
+        NodeMetadataDataset dataset = metadata.getDataset().get(0);
         assertInstanceOf(Map.class, dataset.getPublisher());
         assertEquals("Guttmann", ((Map<?, ?>) dataset.getPublisher()).get("foaf:name"));
         assertTrue(dataset.getAdditionalProperties().containsKey("dct:isPartOf"));
 
-        NodeMetadata.Distribution distribution = dataset.getDistribution().get(0);
+        NodeMetadataDistribution distribution = dataset.getDistribution().get(0);
         assertEquals("text/csv", distribution.getMediaType());
         assertTrue(distribution.getAdditionalProperties().containsKey("dct:accessRights"));
     }

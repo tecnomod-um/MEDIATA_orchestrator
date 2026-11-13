@@ -7,7 +7,7 @@ import org.taniwha.dto.SuggestedRefDTO;
 import org.taniwha.dto.SuggestedValueDTO;
 import org.taniwha.model.EmbeddedColumn;
 import org.taniwha.model.EmbeddedSchemaField;
-import org.taniwha.service.ClinicalScaleCatalog.ScaleDomain;
+import org.taniwha.service.ScaleDomain;
 import org.taniwha.service.ClinicalScaleCatalog.ScaleKind;
 import org.taniwha.util.MappingMathUtil;
 import org.taniwha.util.NormalizationUtil;
@@ -234,7 +234,7 @@ public class ValueMappingBuilder {
                 if (srcDom.categories.size() < 2) continue;
 
                 // Map each canonical ordinal bucket back onto the corresponding source-scale partition.
-                RangeIdx r = mapCanonBucketToSourceIndexRangeByPartition(i, nCanon, srcDom.categories.size());
+                ValueMappingIndexRange r = mapCanonBucketToSourceIndexRangeByPartition(i, nCanon, srcDom.categories.size());
 
                 int loIdx = MappingMathUtil.clamp(r.lo, 0, srcDom.categories.size() - 1);
                 int hiIdx = MappingMathUtil.clamp(r.hi, 0, srcDom.categories.size() - 1);
@@ -281,8 +281,8 @@ public class ValueMappingBuilder {
         return out;
     }
 
-    private RangeIdx mapCanonBucketToSourceIndexRangeByPartition(int canonIndex, int canonSize, int srcSize) {
-        if (canonSize <= 1 || srcSize <= 1) return new RangeIdx(0, 0);
+    private ValueMappingIndexRange mapCanonBucketToSourceIndexRangeByPartition(int canonIndex, int canonSize, int srcSize) {
+        if (canonSize <= 1 || srcSize <= 1) return new ValueMappingIndexRange(0, 0);
 
         List<List<Integer>> assigned = new ArrayList<>(canonSize);
         for (int i = 0; i < canonSize; i++) assigned.add(new ArrayList<>());
@@ -301,7 +301,7 @@ public class ValueMappingBuilder {
         if (bucket.isEmpty()) {
             int nearest = (int) Math.round((double) canonIndex / (double) (canonSize - 1) * (srcSize - 1));
             nearest = MappingMathUtil.clamp(nearest, 0, srcSize - 1);
-            return new RangeIdx(nearest, nearest);
+            return new ValueMappingIndexRange(nearest, nearest);
         }
 
         int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
@@ -309,13 +309,7 @@ public class ValueMappingBuilder {
             if (j < lo) lo = j;
             if (j > hi) hi = j;
         }
-        return new RangeIdx(lo, hi);
-    }
-
-    private static final class RangeIdx {
-        final int lo;
-        final int hi;
-        RangeIdx(int lo, int hi) { this.lo = lo; this.hi = hi; }
+        return new ValueMappingIndexRange(lo, hi);
     }
 
     private Map<String, Object> makeRangeValue(double minValue, double maxValue, String type) {
@@ -383,11 +377,11 @@ public class ValueMappingBuilder {
     private List<SuggestedValueDTO> buildEnumValueMappings(EmbeddedSchemaField field, List<EmbeddedColumn> sources) {
         Map<String, float[]> vecCache = new HashMap<>();
 
-        List<EnumRef> enums = new ArrayList<>();
+        List<ValueMappingEnumReference> enums = new ArrayList<>();
         for (String ev : field.enumValues) {
             String nev = NormalizationUtil.normalizeValue(ev);
             float[] vec = vecCache.computeIfAbsent(nev, k -> embeddingService.embedSingleValue(k));
-            enums.add(new EnumRef(ev, vec));
+            enums.add(new ValueMappingEnumReference(ev, vec));
         }
 
         if (log.isDebugEnabled()) {
@@ -395,7 +389,7 @@ public class ValueMappingBuilder {
         }
 
         Map<String, List<SuggestedRefDTO>> bucket = new LinkedHashMap<>();
-        for (EnumRef er : enums) bucket.put(er.value, new ArrayList<>());
+        for (ValueMappingEnumReference er : enums) bucket.put(er.value, new ArrayList<>());
 
         int totalConsidered = 0;
         int totalMapped = 0;
@@ -416,9 +410,9 @@ public class ValueMappingBuilder {
 
                 float[] vvec = vecCache.computeIfAbsent(nv, k -> embeddingService.embedSingleValue(k));
 
-                EnumRef best = null;
+                ValueMappingEnumReference best = null;
                 double bestSim = -1;
-                for (EnumRef er : enums) {
+                for (ValueMappingEnumReference er : enums) {
                     double sim = MappingMathUtil.cosine(vvec, er.vec);
                     if (sim > bestSim) { bestSim = sim; best = er; }
                 }
@@ -466,16 +460,6 @@ public class ValueMappingBuilder {
         }
 
         return out;
-    }
-
-    private static final class EnumRef {
-        final String value;
-        final float[] vec;
-
-        EnumRef(String value, float[] vec) {
-            this.value = value;
-            this.vec = vec;
-        }
     }
 
     private List<SuggestedValueDTO> buildClosedDomainCategorical(String unionKey, List<EmbeddedColumn> sources) {
@@ -750,36 +734,8 @@ public class ValueMappingBuilder {
         return best == null ? tokens.get(0) : best;
     }
 
-    private static final class UnionFind {
-        final int[] parent;
-        final int[] rank;
-
-        UnionFind(int n) {
-            parent = new int[n];
-            rank = new int[n];
-            for (int i = 0; i < n; i++) parent[i] = i;
-        }
-
-        int find(int x) {
-            while (parent[x] != x) {
-                parent[x] = parent[parent[x]];
-                x = parent[x];
-            }
-            return x;
-        }
-
-        void union(int a, int b) {
-            int ra = find(a);
-            int rb = find(b);
-            if (ra == rb) return;
-            if (rank[ra] < rank[rb]) parent[ra] = rb;
-            else if (rank[ra] > rank[rb]) parent[rb] = ra;
-            else { parent[rb] = ra; rank[ra]++; }
-        }
-    }
-
     private List<SuggestedValueDTO> buildClusteredValueMappings(String unionName, List<EmbeddedColumn> sources) {
-        List<ValueItem> items = new ArrayList<>();
+        List<ValueMappingItem> items = new ArrayList<>();
         Map<String, Integer> freq = new HashMap<>();
 
         Map<String, float[]> vecCache = new HashMap<>();
@@ -812,7 +768,7 @@ public class ValueMappingBuilder {
 
                     float[] vec = vecCache.computeIfAbsent(nv, embeddingService::embedSingleValue);
                     String sourceKey = src.fileKey() + "::" + StringUtil.safe(src.column);
-                    items.add(new ValueItem(nv, vec, ref, sourceKey));
+                    items.add(new ValueMappingItem(nv, vec, ref, sourceKey));
                     used++;
                 }
             }
@@ -825,22 +781,22 @@ public class ValueMappingBuilder {
 
         log.info("[VMB] clustering: collected items={} (cap={})", items.size(), MAX_VALUES_PER_UNION);
 
-        List<Cluster> clusters = new ArrayList<>();
+        List<ValueMappingCluster> clusters = new ArrayList<>();
         int merges = 0;
 
-        for (ValueItem it : items) {
-            Cluster best = null;
+        for (ValueMappingItem it : items) {
+            ValueMappingCluster best = null;
             double bestSim = -1;
 
-            for (Cluster c : clusters) {
+            for (ValueMappingCluster c : clusters) {
                 double sim = MappingMathUtil.cosine(it.vec, c.centroid);
                 if (sim > bestSim) { bestSim = sim; best = c; }
             }
 
             if (it.normalized.length() == 1) {
                 // Single-character values only merge by identity.
-                Cluster identityCluster = null;
-                for (Cluster c : clusters) {
+                ValueMappingCluster identityCluster = null;
+                for (ValueMappingCluster c : clusters) {
                     if (c.normalizedValues.contains(it.normalized)) {
                         identityCluster = c;
                         break;
@@ -854,7 +810,7 @@ public class ValueMappingBuilder {
                                 it.normalized, identityCluster.repHint());
                     }
                 } else {
-                    Cluster c = new Cluster();
+                    ValueMappingCluster c = new ValueMappingCluster();
                     c.add(it);
                     clusters.add(c);
                     if (log.isTraceEnabled()) {
@@ -871,7 +827,7 @@ public class ValueMappingBuilder {
                             it.normalized, best.repHint(), round3(bestSim));
                 }
             } else {
-                Cluster c = new Cluster();
+                ValueMappingCluster c = new ValueMappingCluster();
                 c.add(it);
                 clusters.add(c);
                 if (log.isTraceEnabled()) {
@@ -887,7 +843,7 @@ public class ValueMappingBuilder {
         List<SuggestedValueDTO> out = new ArrayList<>();
         int shown = 0;
 
-        for (Cluster c : clusters) {
+        for (ValueMappingCluster c : clusters) {
             if (c.refs.isEmpty()) continue;
 
             String rep = pickRepresentative(c, freq);
@@ -980,7 +936,7 @@ public class ValueMappingBuilder {
                 || v.startsWith("step:");
     }
 
-    private String pickRepresentative(Cluster c, Map<String, Integer> freq) {
+    private String pickRepresentative(ValueMappingCluster c, Map<String, Integer> freq) {
         String best = null;
         int bestFreq = -1;
 
@@ -992,76 +948,6 @@ public class ValueMappingBuilder {
             }
         }
         return best == null ? c.normalizedValues.iterator().next() : best;
-    }
-
-    private static final class ValueItem {
-        final String normalized;
-        final float[] vec;
-        final SuggestedRefDTO ref;
-        final String sourceKey;
-
-        ValueItem(String normalized, float[] vec, SuggestedRefDTO ref, String sourceKey) {
-            this.normalized = normalized;
-            this.vec = vec;
-            this.ref = ref;
-            this.sourceKey = sourceKey;
-        }
-    }
-
-    private static final class Cluster {
-        final List<SuggestedRefDTO> refs = new ArrayList<>();
-        final Set<String> normalizedValues = new LinkedHashSet<>();
-        final Map<String, Set<String>> normalizedValuesBySource = new HashMap<>();
-        float[] centroid = null;
-        int count = 0;
-
-        void add(ValueItem it) {
-            refs.add(it.ref);
-            normalizedValues.add(it.normalized);
-            normalizedValuesBySource
-                    .computeIfAbsent(StringUtil.safe(it.sourceKey), k -> new HashSet<>())
-                    .add(it.normalized);
-
-            if (centroid == null) {
-                centroid = Arrays.copyOf(it.vec, it.vec.length);
-                count = 1;
-                return;
-            }
-
-            for (int i = 0; i < centroid.length; i++) {
-                centroid[i] = (centroid[i] * count + it.vec[i]) / (count + 1);
-            }
-            count++;
-
-            double sum = 0.0;
-            for (float x : centroid) sum += (double) x * (double) x;
-            double norm = Math.sqrt(sum);
-            if (norm > 1e-12) {
-                for (int i = 0; i < centroid.length; i++) centroid[i] = (float) (centroid[i] / norm);
-            }
-        }
-
-        String repHint() {
-            if (normalizedValues.isEmpty()) return "";
-            return normalizedValues.iterator().next();
-        }
-
-        boolean hasDifferentValueFromSource(String sourceKey, String normalized) {
-            Set<String> values = normalizedValuesBySource.get(StringUtil.safe(sourceKey));
-            if (values == null || values.isEmpty()) return false;
-            return !values.contains(normalized);
-        }
-
-        List<String> sampleNormVals(int n) {
-            List<String> out = new ArrayList<>();
-            int k = 0;
-            for (String s : normalizedValues) {
-                out.add(s);
-                k++;
-                if (k >= n) break;
-            }
-            return out;
-        }
     }
 
     private void debugPickedSources(String stage, String unionKey, List<EmbeddedColumn> picked) {

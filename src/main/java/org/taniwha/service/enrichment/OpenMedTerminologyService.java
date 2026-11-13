@@ -249,12 +249,6 @@ public class OpenMedTerminologyService {
         return out;
     }
 
-    private static final class OpenMedColumnTerms {
-        String colKey;
-        String colSearchTerm;
-        Map<String, String> valueTerms;
-    }
-
     private String firstSnowstormCode(List<OntologyTermDTO> suggestions) {
         if (suggestions == null || suggestions.isEmpty()) return "";
         return suggestions.stream()

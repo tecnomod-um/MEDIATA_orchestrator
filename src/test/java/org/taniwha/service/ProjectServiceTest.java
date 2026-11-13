@@ -1,5 +1,7 @@
 package org.taniwha.service;
 
+import org.taniwha.model.NodeMetadataDataset;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -97,8 +99,8 @@ class ProjectServiceTest {
                 firstProjectMember, secondProjectMember, inactiveOnlyUser));
 
         NodeMetadata metadata = new NodeMetadata();
-        NodeMetadata.Dataset ds1 = new NodeMetadata.Dataset();
-        NodeMetadata.Dataset ds2 = new NodeMetadata.Dataset();
+        NodeMetadataDataset ds1 = new NodeMetadataDataset();
+        NodeMetadataDataset ds2 = new NodeMetadataDataset();
         metadata.setDataset(Arrays.asList(ds1, ds2));
         when(nodeAccessService.getMetadata("n1")).thenReturn(metadata);
 
@@ -140,9 +142,9 @@ class ProjectServiceTest {
         when(nodeRepo.findAllById(Collections.singletonList("n1"))).thenReturn(Collections.singletonList(node));
 
         NodeMetadata metadata = new NodeMetadata();
-        NodeMetadata.Dataset ds1 = new NodeMetadata.Dataset();
+        NodeMetadataDataset ds1 = new NodeMetadataDataset();
         ds1.setTitle("Dataset 1");
-        NodeMetadata.Dataset ds2 = new NodeMetadata.Dataset();
+        NodeMetadataDataset ds2 = new NodeMetadataDataset();
         ds2.setTitle("Dataset 2");
         metadata.setDataset(Arrays.asList(ds1, ds2));
         when(nodeAccessService.getMetadata("n1")).thenReturn(metadata);

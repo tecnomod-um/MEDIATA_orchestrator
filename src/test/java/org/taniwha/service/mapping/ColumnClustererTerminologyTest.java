@@ -1,8 +1,7 @@
 package org.taniwha.service.mapping;
 
 import org.junit.jupiter.api.Test;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
-import org.taniwha.model.ColCluster;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.model.ColStats;
 import org.taniwha.model.EmbeddedColumn;
 

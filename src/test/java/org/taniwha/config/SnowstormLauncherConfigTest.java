@@ -167,16 +167,16 @@ class SnowstormLauncherConfigTest {
 
     @Test
     void defaultRunnerReportsInvalidHttpAsNotResponding() {
-        SnowstormLauncherConfig.DefaultLauncherCommandRunner runner =
-                new SnowstormLauncherConfig.DefaultLauncherCommandRunner();
+        DefaultLauncherCommandRunner runner =
+                new DefaultLauncherCommandRunner();
 
         assertFalse(runner.httpResponds("http://127.0.0.1:1/not-open"));
     }
 
     @Test
     void defaultRunnerReturnsCommandExitCodes() throws Exception {
-        SnowstormLauncherConfig.DefaultLauncherCommandRunner runner =
-                new SnowstormLauncherConfig.DefaultLauncherCommandRunner();
+        DefaultLauncherCommandRunner runner =
+                new DefaultLauncherCommandRunner();
 
         if (System.getProperty("os.name").startsWith("Windows")) {
             assertEquals(0, runner.runAndLogIfFails(null, "cmd.exe", "/c", "exit 0"));
@@ -203,7 +203,7 @@ class SnowstormLauncherConfigTest {
         return config;
     }
 
-    private static class FakeRunner implements SnowstormLauncherConfig.LauncherCommandRunner {
+    private static class FakeRunner implements LauncherCommandRunner {
         boolean dockerAvailable = true;
         final Map<String, String> containerStatuses = new HashMap<>();
         final Map<String, Integer> commandResults = new HashMap<>();

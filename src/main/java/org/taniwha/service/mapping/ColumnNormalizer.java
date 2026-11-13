@@ -2,7 +2,7 @@ package org.taniwha.service.mapping;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.model.LearnedNoise;
 import org.taniwha.util.NormalizationUtil;
 import org.taniwha.util.StringUtil;

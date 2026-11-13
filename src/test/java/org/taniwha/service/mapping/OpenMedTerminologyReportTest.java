@@ -1,5 +1,9 @@
 package org.taniwha.service.mapping;
 
+import org.taniwha.service.enrichment.TerminologyRequest;
+
+import org.taniwha.config.MappingServiceSettings;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -21,7 +25,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.taniwha.config.MappingConfig;
 import org.taniwha.config.RestTemplateConfig;
 import org.taniwha.model.ColumnEnrichmentInput;
 import org.taniwha.model.ColumnRecord;
@@ -196,8 +199,8 @@ public class OpenMedTerminologyReportTest {
         }
 
         @Bean
-        public MappingConfig.MappingServiceSettings mappingSettings() {
-            return new MappingConfig.MappingServiceSettings(
+        public MappingServiceSettings mappingSettings() {
+            return new MappingServiceSettings(
                     60, 120, 0.33, 0.56, 6, 40, 10, 0.22, 4, 2, 2, 6);
         }
 
@@ -209,7 +212,7 @@ public class OpenMedTerminologyReportTest {
                 DescriptionService descriptionGenerator,
                 ValueMappingBuilder valueMappingBuilder,
                 ObjectMapper objectMapper,
-                MappingConfig.MappingServiceSettings mappingSettings) {
+                MappingServiceSettings mappingSettings) {
             return new MappingService(embeddingService, terminologyLookupService,
                     openMedTerminologyService,
                     descriptionGenerator, valueMappingBuilder, objectMapper, mappingSettings);
@@ -802,20 +805,20 @@ public class OpenMedTerminologyReportTest {
         System.out.println("\n=== Step 2: building Snowstorm lookup requests ===");
         Map<String, String> colLookupKeys = new LinkedHashMap<>();
         Map<String, String> valLookupKeys = new LinkedHashMap<>();
-        List<TerminologyLookupService.TerminologyRequest> requests = new ArrayList<>();
+        List<TerminologyRequest> requests = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
 
         for (OpenMedTerminologyService.InferredTerm t : inferred) {
             String colKey = t.colKey() + "|" + t.colSearchTerm();
             colLookupKeys.put(t.colKey(), colKey);
             if (seen.add(colKey))
-                requests.add(new TerminologyLookupService.TerminologyRequest(colKey, null));
+                requests.add(new TerminologyRequest(colKey, null));
             if (t.valueSearchTerms() != null) {
                 t.valueSearchTerms().forEach((rawVal, valTerm) -> {
                     String vKey = t.colKey() + "|" + valTerm;
                     valLookupKeys.put(t.colKey() + "|" + rawVal, vKey);
                     if (seen.add(vKey))
-                        requests.add(new TerminologyLookupService.TerminologyRequest(vKey, t.colKey()));
+                        requests.add(new TerminologyRequest(vKey, t.colKey()));
                 });
             }
         }

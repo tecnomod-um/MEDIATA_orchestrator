@@ -184,7 +184,7 @@ public class RDFService {
         List<OntologyTermDTO> suggestions = new ArrayList<>();
 
         for (String variant : searchVariants) {
-            for (SearchRequest request : buildSearchRequests(variant)) {
+            for (OntologySearchRequest request : buildSearchRequests(variant)) {
                 List<OntologyTermDTO> items = executeSnowstormSearch(request);
                 for (OntologyTermDTO item : items) {
                     if (item == null) continue;
@@ -328,7 +328,7 @@ public class RDFService {
         return s == null ? "" : s;
     }
 
-    private List<OntologyTermDTO> executeSnowstormSearch(SearchRequest request) {
+    private List<OntologyTermDTO> executeSnowstormSearch(OntologySearchRequest request) {
         RestTemplate restTemplate = restTemplateConfig.getRestTemplate();
         URI uri = buildSnowstormUri(request);
         try {
@@ -385,7 +385,7 @@ public class RDFService {
         }
     }
 
-    private URI buildSnowstormUri(SearchRequest request) {
+    private URI buildSnowstormUri(OntologySearchRequest request) {
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(request.url);
         request.params.forEach(builder::queryParam);
         return builder.build().encode().toUri();
@@ -528,13 +528,13 @@ public class RDFService {
         return builder.toString().trim();
     }
 
-    private List<SearchRequest> buildSearchRequests(String query) {
+    private List<OntologySearchRequest> buildSearchRequests(String query) {
         int tokenCount = query.isBlank() ? 0 : query.split("\\s+").length;
         int expandedLimit = tokenCount <= 1 ? 100 : Math.min(Math.max(12 * 3, 20), 100);
         String branchPath = normalizedSnowstormBranchPath();
 
-        List<SearchRequest> requests = new ArrayList<>(2);
-        requests.add(new SearchRequest(
+        List<OntologySearchRequest> requests = new ArrayList<>(2);
+        requests.add(new OntologySearchRequest(
                 buildSnowstormUrl(branchPath + "/concepts"),
                 "concepts",
                 query,
@@ -545,7 +545,7 @@ public class RDFService {
                         "limit", String.valueOf(expandedLimit)
                 )
         ));
-        requests.add(new SearchRequest(
+        requests.add(new OntologySearchRequest(
                 buildSnowstormUrl("browser/" + branchPath + "/descriptions"),
                 "descriptions",
                 query,
@@ -615,17 +615,4 @@ public class RDFService {
     private static final Pattern DIGIT_ALPHA_PATTERN = Pattern.compile("([0-9])([A-Za-z])");
     private static final Pattern NON_WORD_PATTERN = Pattern.compile("[^\\w\\s]");
 
-    private static final class SearchRequest {
-        final String url;
-        final String kind;
-        final String query;
-        final Map<String, ?> params;
-
-        SearchRequest(String url, String kind, String query, Map<String, ?> params) {
-            this.url = url;
-            this.kind = kind;
-            this.query = query;
-            this.params = params;
-        }
-    }
 }

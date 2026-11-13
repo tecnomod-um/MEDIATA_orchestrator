@@ -1,10 +1,12 @@
 package org.taniwha.service.mapping;
 
+import org.taniwha.util.SchemaFieldDef;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.ColumnInFileDTO;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
@@ -308,12 +310,12 @@ public class MappingService {
     }
 
     private List<EmbeddedSchemaField> embedSchemaFields(String schemaJson) {
-        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
+        List<SchemaFieldDef> defs =
                 JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schemaJson, mappingSettings.maxEnum());
         if (defs.isEmpty()) return Collections.emptyList();
 
         List<EmbeddedSchemaField> out = new ArrayList<>();
-        for (JsonSchemaParsingUtil.SchemaFieldDef d : defs) {
+        for (SchemaFieldDef d : defs) {
             float[] combined = embeddingService.embedSchemaField(
                     d.getName(), d.getType(), d.getEnumValues(), d.getDescription());
             out.add(new EmbeddedSchemaField(d.getName(), d.getType(), d.getDescription(), d.getEnumValues(), combined));

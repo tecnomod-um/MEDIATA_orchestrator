@@ -26,7 +26,7 @@ class JsonSchemaParsingUtilTest {
                 }
                 """;
 
-        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
+        List<SchemaFieldDef> defs =
                 JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, wrapped, 2);
 
         assertThat(defs).hasSize(1);
@@ -48,10 +48,10 @@ class JsonSchemaParsingUtilTest {
                 }
                 """;
 
-        List<JsonSchemaParsingUtil.SchemaFieldDef> defs =
+        List<SchemaFieldDef> defs =
                 JsonSchemaParsingUtil.parseSchemaProperties(objectMapper, schema, 5);
 
-        assertThat(defs).extracting(JsonSchemaParsingUtil.SchemaFieldDef::getType)
+        assertThat(defs).extracting(SchemaFieldDef::getType)
                 .containsExactly("array<string>", "number", "array<integer>", "string|boolean");
     }
 

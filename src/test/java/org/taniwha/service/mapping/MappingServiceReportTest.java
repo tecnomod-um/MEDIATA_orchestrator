@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.OntologyTermDTO;
 import org.taniwha.dto.SuggestedGroupDTO;

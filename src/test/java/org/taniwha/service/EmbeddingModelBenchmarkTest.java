@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.MappingSuggestRequestDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.service.enrichment.DescriptionService;

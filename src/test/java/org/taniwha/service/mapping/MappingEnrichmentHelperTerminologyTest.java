@@ -8,7 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.taniwha.config.MappingConfig.MappingServiceSettings;
+import org.taniwha.config.MappingServiceSettings;
 import org.taniwha.dto.SuggestedGroupDTO;
 import org.taniwha.dto.SuggestedMappingDTO;
 import org.taniwha.dto.SuggestedValueDTO;

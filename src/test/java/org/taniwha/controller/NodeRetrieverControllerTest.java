@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.model.NodeMetadataDataset;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -202,7 +204,7 @@ class NodeRetrieverControllerTest {
     void getNodeMetadata_success_returnsMetadata() throws Exception {
         when(nodeAccessService.isFairDataPointEnabled("n1")).thenReturn(false);
         NodeMetadata md = new NodeMetadata();
-        NodeMetadata.Dataset ds = new NodeMetadata.Dataset();
+        NodeMetadataDataset ds = new NodeMetadataDataset();
         ds.setTitle("T");
         md.setDataset(Collections.singletonList(ds));
         when(nodeAccessService.getMetadata("n1")).thenReturn(md);

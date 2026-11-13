@@ -1,5 +1,7 @@
 package org.taniwha.service;
 
+import org.taniwha.model.NodeMetadataDataset;
+
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.ProjectDTO;
 import org.taniwha.dto.SaveProjectRequestDTO;
@@ -194,7 +196,7 @@ public class ProjectService {
             if (md == null) {
                 continue;
             }
-            List<NodeMetadata.Dataset> datasets = md.getDataset();
+            List<NodeMetadataDataset> datasets = md.getDataset();
             if (datasets != null) {
                 total += datasets.size();
             }
