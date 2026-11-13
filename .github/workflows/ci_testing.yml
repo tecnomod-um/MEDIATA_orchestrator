@@ -48,35 +48,3 @@ jobs:
           else
             echo "Coverage badge unchanged"
           fi
-
-  update-parent:
-    name: Bump orchestrator in umbrella repo
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout combined repo (@main)
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: tecnomod-um/MEDIATA_project
-          token: ${{ secrets.PARENT_REPO_TOKEN }}
-          ref: main
-          path: monorepo
-          fetch-depth: 0
-          submodules: recursive
-          persist-credentials: true
-
-      - name: Bump orchestrator submodule
-        working-directory: monorepo
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git -C MEDIATA_orchestrator fetch origin "${{ github.sha }}"
-          git -C MEDIATA_orchestrator checkout "${{ github.sha }}"
-          git add MEDIATA_orchestrator
-          if ! git diff --cached --quiet; then
-            git commit -m "ci: bump MEDIATA_orchestrator to ${{ github.sha }}"
-            git push origin main
-          else
-            echo "No changes to submodule"
-          fi
