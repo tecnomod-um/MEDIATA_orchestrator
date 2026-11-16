@@ -39,6 +39,35 @@ dc() {
   fi
 }
 
+wait_for_healthy() {
+  local service="$1"
+  local container state polls=0
+  container="$(dc ps -a -q "$service")"
+  if [[ -z "$container" ]]; then
+    echo "ERROR: Docker Compose did not create $service." >&2
+    return 1
+  fi
+
+  while true; do
+    state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")" || return 1
+    case "$state" in
+      "running healthy") return 0 ;;
+      "running starting"|"running unhealthy")
+        if (( polls % 6 == 0 )); then
+          echo "Waiting for $service to become healthy (${state#running })..."
+        fi
+        polls=$((polls + 1))
+        sleep 5
+        ;;
+      *)
+        echo "ERROR: $service cannot finish starting ($state)." >&2
+        dc logs --tail 40 "$service" >&2 || true
+        return 1
+        ;;
+    esac
+  done
+}
+
 mkdir_safe() {
   mkdir -p "$@" 2>/dev/null || true
 }
@@ -115,9 +144,23 @@ fi
 
 echo "Starting Docker Compose..."
 if (( ${#profiles[@]} > 0 )); then
-  dc "${profiles[@]}" up -d --build
+  dc "${profiles[@]}" build
 else
-  dc up -d --build
+  dc build
+fi
+
+# Start dependencies in order so slow first-boot health checks can recover.
+dc up -d --no-build --no-deps mongodb elasticsearch openmed
+wait_for_healthy elasticsearch
+dc up -d --no-build --no-deps snowstorm
+wait_for_healthy mongodb
+wait_for_healthy snowstorm
+wait_for_healthy openmed
+
+if (( ${#profiles[@]} > 0 )); then
+  dc "${profiles[@]}" up -d --no-build
+else
+  dc up -d --no-build
 fi
 
 echo
