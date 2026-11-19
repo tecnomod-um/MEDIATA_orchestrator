@@ -90,6 +90,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 || path.equals("/nodes/register")
                 || path.equals("/nodes/heartbeat")
                 || path.equals("/nodes/provenance/batch")
+                || path.equals("/nodes/secure-pool/roster")
                 || path.equals("/nodes/deregister")
                 || path.startsWith("/v3/api-docs")
                 || path.equals("/swagger-ui.html")
