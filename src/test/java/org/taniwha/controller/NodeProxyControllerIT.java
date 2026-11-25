@@ -148,6 +148,27 @@ class NodeProxyControllerIT {
     }
 
     @Test
+    void proxyPreservesProtectedCountsAndTheirUncertaintyWithoutReconstructingThem() throws Exception {
+        customResponseBody = """
+                {"version":5,"group":"North","rowEpsilon":2.77,"selectionScope":"group",
+                 "cohortCount":{"count":19,"noiseVariance":4},
+                 "features":{"Arm":{"domain":{"type":"categorical","categories":["A","B"],"missingAllowed":true},
+                   "counts":[16,-2,0,3],"noiseVariance":4}}}
+                """;
+        String selection = """
+                {"fileName":"measurements.csv","filters":{"operator":"AND","conditions":{
+                  "Partition":{"conditions":[{"type":"equal","filterType":"categorical","value":"North"}],"operators":[]}}}}
+                """;
+        var result = mockMvc.perform(post("/nodes/proxy/node1/taniwha/api/data/approximatePool")
+                        .header("Authorization", "Bearer central-token")
+                        .header("X-Node-Authorization", "Bearer node-token")
+                        .contentType("application/json").content(selection))
+                .andExpect(status().isOk()).andReturn();
+        assertEquals(customResponseBody, result.getResponse().getContentAsString());
+        assertEquals(selection, capturedRequests.get(0).body());
+    }
+
+    @Test
     void tamperedSuccessAndErrorResponsesNeverReachTheCaller() throws Exception {
         tamperSignature = true;
         customResponseBody = "synthetic-payload-must-not-be-relayed";
